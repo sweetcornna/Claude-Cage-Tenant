@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -43,7 +44,7 @@ func (r *IncusRuntime) validateProfile(profile incusProfile) error {
 	if err != nil || cpu < 1 || !positiveIncusSize(profile.Config["limits.memory"]) {
 		return errors.New("Incus profile needs explicit CPU and memory limits")
 	}
-	if !safeInstanceConfig(profile.Config) {
+	if !r.safeInstanceConfig(profile.Config) {
 		return errors.New("Incus profile contains an unsupported configuration key")
 	}
 	roots, nics := 0, 0
@@ -76,8 +77,13 @@ func (r *IncusRuntime) validateInstance(record *instance, profile incusProfile) 
 	if len(record.Profiles) != 1 || record.Profiles[0] != r.cfg.Profile {
 		return errors.New("Incus instance must use only the trusted project profile")
 	}
-	if !safeInstanceConfig(record.ExpandedConfig) || record.ExpandedConfig["limits.cpu"] != profile.Config["limits.cpu"] || record.ExpandedConfig["limits.memory"] != profile.Config["limits.memory"] {
+	if !r.safeInstanceConfig(record.ExpandedConfig) {
 		return errors.New("Incus instance configuration does not match the trusted CPU and memory policy")
+	}
+	for _, key := range r.pinnedKeys() {
+		if record.ExpandedConfig[key] != profile.Config[key] {
+			return errors.New("Incus instance configuration does not match the trusted CPU and memory policy")
+		}
 	}
 	if !maps.EqualFunc(record.ExpandedDevices, profile.Devices, maps.Equal[map[string]string]) {
 		return errors.New("Incus instance devices do not match the trusted profile")
@@ -85,10 +91,33 @@ func (r *IncusRuntime) validateInstance(record *instance, profile incusProfile) 
 	return nil
 }
 
-func safeInstanceConfig(config map[string]string) bool {
+// containerKeys are the extra settings a trusted container profile may use.
+// Containers share the host kernel: nesting runs Cage's rootless engine inside
+// an unprivileged container, the ID map keys give it its own range, swap lets
+// a frozen container leave memory, and limits.processes caps its tasks.
+// Privileged containers and every raw.* key stay refused.
+var containerKeys = []string{
+	"security.nesting", "security.idmap.isolated", "security.idmap.size",
+	"security.syscalls.intercept.mknod", "security.syscalls.intercept.setxattr",
+	"limits.memory.swap", "limits.memory.swap.priority", "limits.processes",
+}
+
+// pinnedKeys are the resource and isolation keys whose effective value must
+// come from the trusted profile alone.
+func (r *IncusRuntime) pinnedKeys() []string {
+	keys := []string{"limits.cpu", "limits.memory"}
+	if r.instanceType() == InstanceContainer {
+		keys = append(keys, containerKeys...)
+	}
+	return keys
+}
+
+func (r *IncusRuntime) safeInstanceConfig(config map[string]string) bool {
 	for key := range config {
-		switch key {
-		case "limits.cpu", "limits.memory", "boot.autostart", "boot.autostart.delay", "boot.autostart.priority", "security.secureboot":
+		switch {
+		case key == "limits.cpu" || key == "limits.memory" || key == "boot.autostart" || key == "boot.autostart.delay" || key == "boot.autostart.priority":
+		case key == "security.secureboot" && r.instanceType() == InstanceVM:
+		case slices.Contains(containerKeys, key) && r.instanceType() == InstanceContainer:
 		default:
 			if !strings.HasPrefix(key, "volatile.") && !strings.HasPrefix(key, "image.") && !strings.HasPrefix(key, "user.") {
 				return false

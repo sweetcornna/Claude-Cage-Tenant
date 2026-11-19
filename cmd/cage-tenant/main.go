@@ -30,7 +30,8 @@ func main() {
 func run() error {
 	var config tenant.Config
 	var incus tenant.IncusConfig
-	var listen, uiDir, image, systemsFile, guestAccountFile string
+	var listen, uiDir, image, systemsFile, guestAccountFile, instanceType string
+	var busyPercent float64
 	flag.StringVar(&listen, "listen", "127.0.0.1:8080", "loopback HTTP listen address")
 	flag.StringVar(&config.Origin, "origin", "", "public portal origin, without a trailing slash")
 	flag.BoolVar(&config.Development, "dev", false, "enable HTTP development on cage.localhost")
@@ -50,10 +51,23 @@ func run() error {
 	flag.StringVar(&guestAccountFile, "guest-account-file", "", "private JSON ({username, secret}) used to enter tenant VM workbenches without a second prompt")
 	flag.StringVar(&config.LegacyDebianImage, "legacy-debian-image", "", "verified original Debian VM fingerprint for migrating legacy state (not a catalog alias)")
 	flag.StringVar(&incus.ControlPath, "guest-control-path", "/home/cage/.claude-cage/control.json", "absolute control.json path inside every VM")
+	flag.StringVar(&instanceType, "incus-instance-type", "vm", "vm (needs KVM) or container (Incus system containers; no hardware virtualization needed)")
+	flag.DurationVar(&config.FreezeAfter, "freeze-after", 15*time.Minute, "freeze a workspace after this much idle time; its memory moves to swap and it resumes on the next request (0 disables idle cooling)")
+	flag.DurationVar(&config.StopAfter, "stop-after", 72*time.Hour, "shut a frozen workspace down after this much idle time, keeping its disk (0 keeps it frozen)")
+	flag.Float64Var(&busyPercent, "idle-cpu-percent", 5, "guest CPU use, in percent of one CPU, that counts as activity (0 ignores guest CPU)")
 	flag.Parse()
 	if flag.NArg() != 0 {
 		return errors.New("unexpected positional arguments")
 	}
+	switch instanceType {
+	case "vm":
+		incus.InstanceType = tenant.InstanceVM
+	case "container":
+		incus.InstanceType = tenant.InstanceContainer
+	default:
+		return errors.New("incus-instance-type must be vm or container")
+	}
+	config.BusyCPU = busyPercent / 100
 	host, port, err := net.SplitHostPort(listen)
 	address := net.ParseIP(host)
 	portNumber, portErr := strconv.Atoi(port)

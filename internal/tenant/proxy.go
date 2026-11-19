@@ -91,14 +91,34 @@ func (s *Server) workbench(w http.ResponseWriter, r *http.Request, id string) {
 		unauthenticated(w)
 		return
 	}
+	if s.coolingLocked(id) {
+		// Frozen while idle: resume it (tens of milliseconds) and continue.
+		s.mu.Unlock()
+		if s.wake(r.Context(), id) != nil {
+			unavailable(w)
+			return
+		}
+		s.mu.Lock()
+		if !s.validGrant(grant, id, s.now()) {
+			s.mu.Unlock()
+			unauthenticated(w)
+			return
+		}
+	}
 	workspace := s.workspaces[id]
 	available := workspace != nil && !workspace.checkedAt.IsZero()
 	vmName := s.store.VMs[id].Name
+	var awake context.Context
+	if available {
+		awake = workspace.awake
+		workspace.touch()
+	}
 	s.mu.Unlock()
 	if !available {
 		unavailable(w)
 		return
 	}
+	defer workspace.touch()
 	select {
 	case workspace.slots <- struct{}{}:
 		defer func() { <-workspace.slots }()
@@ -112,8 +132,15 @@ func (s *Server) workbench(w http.ResponseWriter, r *http.Request, id string) {
 	defer stopLogin()
 	stopWorkspace := context.AfterFunc(workspace.ctx, cancel)
 	defer stopWorkspace()
+	// A freeze ends this request; the browser's retry wakes the workspace.
+	stopAwake := context.AfterFunc(awake, cancel)
+	defer stopAwake()
 	if grant.login.ctx.Err() != nil || workspace.ctx.Err() != nil || ctx.Err() != nil {
 		unauthenticated(w)
+		return
+	}
+	if awake.Err() != nil {
+		unavailable(w)
 		return
 	}
 	writer := &revocableWriter{ResponseWriter: w, ctx: ctx}
@@ -247,7 +274,7 @@ func selectHeaders(src http.Header, names ...string) http.Header {
 
 func (workspace *Workspace) proxy(origin string, fault, suspect func()) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
-		Transport:     proxyTransport{RoundTripper: workspace.transport, fault: fault, suspect: suspect},
+		Transport:     proxyTransport{RoundTripper: workspace.transport, fault: fault, suspect: suspect, touch: workspace.touch},
 		FlushInterval: -1,
 		ErrorLog:      log.New(io.Discard, "", 0),
 		ErrorHandler:  func(w http.ResponseWriter, _ *http.Request, _ error) { unavailable(w) },
@@ -313,6 +340,9 @@ type proxyTransport struct {
 	http.RoundTripper
 	fault   func()
 	suspect func()
+	// touch records activity for idle cooling: every chunk that moves through
+	// a request or stream, in either direction, counts.
+	touch func()
 }
 
 type withoutTrace struct{ context.Context }
@@ -322,7 +352,7 @@ func (withoutTrace) Value(any) any { return nil }
 func (transport proxyTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	outbound := request.WithContext(withoutTrace{request.Context()})
 	if outbound.Body != nil && outbound.Body != http.NoBody {
-		outbound.Body = clientBody{outbound.Body}
+		outbound.Body = clientBody{ReadCloser: outbound.Body, touch: transport.touch}
 	}
 	response, err := transport.RoundTripper.RoundTrip(outbound)
 	if err != nil {
@@ -341,19 +371,25 @@ func (transport proxyTransport) RoundTrip(request *http.Request) (*http.Response
 	forward.Trailer = nil
 	if response.StatusCode == http.StatusSwitchingProtocols {
 		if stream, ok := response.Body.(io.ReadWriteCloser); ok {
-			forward.Body = guestSocket{ReadWriteCloser: stream, ctx: request.Context(), suspect: transport.suspect}
+			forward.Body = guestSocket{ReadWriteCloser: stream, ctx: request.Context(), suspect: transport.suspect, touch: transport.touch}
 		}
 	} else {
-		forward.Body = guestBody{ReadCloser: response.Body, ctx: request.Context(), fault: transport.fault}
+		forward.Body = guestBody{ReadCloser: response.Body, ctx: request.Context(), fault: transport.fault, touch: transport.touch}
 	}
 	return &forward, nil
 }
 
-type clientBody struct{ io.ReadCloser }
+type clientBody struct {
+	io.ReadCloser
+	touch func()
+}
 type clientReadError struct{ error }
 
 func (body clientBody) Read(buffer []byte) (int, error) {
 	count, err := body.ReadCloser.Read(buffer)
+	if count > 0 && body.touch != nil {
+		body.touch()
+	}
 	if err != nil && err != io.EOF {
 		return count, clientReadError{err}
 	}
@@ -364,10 +400,14 @@ type guestBody struct {
 	io.ReadCloser
 	ctx   context.Context
 	fault func()
+	touch func()
 }
 
 func (body guestBody) Read(buffer []byte) (int, error) {
 	count, err := body.ReadCloser.Read(buffer)
+	if count > 0 && body.touch != nil {
+		body.touch()
+	}
 	if err != io.EOF && body.ctx.Err() == nil && connectionFailure(err) {
 		body.fault()
 	}
@@ -378,10 +418,14 @@ type guestSocket struct {
 	io.ReadWriteCloser
 	ctx     context.Context
 	suspect func()
+	touch   func()
 }
 
 func (socket guestSocket) Read(buffer []byte) (int, error) {
 	count, err := socket.ReadWriteCloser.Read(buffer)
+	if count > 0 && socket.touch != nil {
+		socket.touch()
+	}
 	if err != nil && socket.ctx.Err() == nil {
 		// EOF also occurs during an ordinary WebSocket close. Confirm through HTTP.
 		socket.suspect()
@@ -391,6 +435,9 @@ func (socket guestSocket) Read(buffer []byte) (int, error) {
 
 func (socket guestSocket) Write(buffer []byte) (int, error) {
 	count, err := socket.ReadWriteCloser.Write(buffer)
+	if count > 0 && socket.touch != nil {
+		socket.touch()
+	}
 	if err != nil && socket.ctx.Err() == nil {
 		socket.suspect()
 	}
