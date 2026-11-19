@@ -14,6 +14,7 @@
 
 - 每个账号只能看到和打开自己的虚拟机。点击左栏 **虚拟机** 查看当前环境和切换目标。
 - 新建只填名称，首次打开时才配备运行环境。切换、刷新或退出网页保留正在运行的任务。
+- 每台虚拟机的设置各自独立：代理订阅、节点、链路、代理端口和出口 IP 规则，以及 DNS、时区、语言、客机身份和共享项目都按虚拟机保存，改一台不影响其他。详见[接口契约](docs/api-contract.md#每台虚拟机的独立设置)。
 - 同一服务器上的不同账号也可复用同一系统镜像。使用 Incus 和匹配容量的 ZFS 根盘时，同一镜像指纹的虚拟机共用一份只读基础盘，各自保存账号、文件和运行时写入。
 
 ## 开始使用
@@ -33,8 +34,8 @@
 3. **启动网关**：下载与主机架构对应的服务端归档并校验，然后运行：
 
    ```sh
-   tar -xzf Cage-Tenant-Server-0.1.9-linux-amd64.tar.gz
-   cd Cage-Tenant-Server-0.1.9-linux-amd64
+   tar -xzf Cage-Tenant-Server-0.1.10-linux-amd64.tar.gz
+   cd Cage-Tenant-Server-0.1.10-linux-amd64
    ./cage-tenant -origin https://cage.example.org \
      -state-dir /var/lib/cage-tenant -incus-image cage-blank
    ```

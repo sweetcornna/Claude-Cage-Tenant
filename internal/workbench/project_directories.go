@@ -29,14 +29,17 @@ func (s *Server) projectDirectories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reserved, err := privateProjectDirectories(s.profile)
+	var siblings []string
 	if err == nil {
-		var home string
-		home, err = os.UserHomeDir()
-		if err == nil {
-			var other []string
-			other, err = privateProjectDirectories(filepath.Join(home, ".claude-cage"))
-			reserved = append(reserved, other...)
+		siblings, err = localVMSiblingProfiles(s.profile)
+	}
+	for _, sibling := range siblings {
+		if err != nil {
+			break
 		}
+		var other []string
+		other, err = privateProjectDirectories(sibling)
+		reserved = append(reserved, other...)
 	}
 	if err != nil {
 		http.Error(w, "无法验证环境存储目录", 500)

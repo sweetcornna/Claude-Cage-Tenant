@@ -152,6 +152,11 @@ func (d *desktopGateway) context() ClientContext {
 	c.HostID, c.InstanceID = c.State.HostID, c.State.InstanceID
 	if active.mode == "local" {
 		c.VirtualMachines = d.localVMs != nil
+		if c.VirtualMachines {
+			// Local VMs share this gateway's browser origin; the renderer keeps
+			// each VM's workbench layout under its own storage keys.
+			c.VirtualMachine = normalizedLocalVMID(active.vmID)
+		}
 		c.Name, c.ServerPlatform = d.localVMName(active.vmID), runtime.GOOS
 	} else {
 		c.ServerPlatform = "linux"

@@ -532,8 +532,9 @@ func TestTenantBrowserContextUsesCloudWorkbench(t *testing.T) {
 		VirtualMachines bool   `json:"virtual_machines"`
 		PortalOrigin    string `json:"portal_origin"`
 		DesktopGateway  bool   `json:"desktop_gateway"`
+		Name            string `json:"name"`
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil || view.Mode != "local" || view.ConnectionID != "local" || view.ServerPlatform != "linux" || !view.TenantWorkspace || !view.VirtualMachines || view.PortalOrigin != portalOrigin || view.DesktopGateway {
+	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil || view.Mode != "local" || view.ConnectionID != "local" || view.ServerPlatform != "linux" || !view.TenantWorkspace || !view.VirtualMachines || view.PortalOrigin != portalOrigin || view.DesktopGateway || view.Name != "first" {
 		t.Fatalf("browser workspace context = %+v, %v", view, err)
 	}
 	wantStatus(t, fixture.request("POST", vmOrigin(a.ID), "/api/client/about", "{}", cookie), 404, "not_found")

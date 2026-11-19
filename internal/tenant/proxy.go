@@ -93,6 +93,7 @@ func (s *Server) workbench(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	workspace := s.workspaces[id]
 	available := workspace != nil && !workspace.checkedAt.IsZero()
+	vmName := s.store.VMs[id].Name
 	s.mu.Unlock()
 	if !available {
 		unavailable(w)
@@ -136,7 +137,7 @@ func (s *Server) workbench(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method == http.MethodGet && r.URL.Path == "/api/client/context" && !upgrade {
 		jsonReply(w, http.StatusOK, map[string]any{
 			"mode": "local", "connection_id": "local", "server_platform": "linux", "tenant_workspace": true,
-			"virtual_machines": true, "portal_origin": s.site.origin,
+			"virtual_machines": true, "portal_origin": s.site.origin, "name": vmName,
 		})
 		return
 	}

@@ -323,6 +323,11 @@ func (s *Server) applyProxy(p managedproxy.Store, old cage.Config, resumeVersion
 	if err != nil {
 		return err
 	}
+	if p.Port != previous.Port || old.ProxyURL != p.Endpoint() {
+		if err := checkProxyPortOwner(s.profile, p.Port); err != nil {
+			return err
+		}
+	}
 	s.setMessage("正在验证节点配置…")
 	if err := validateProxyCore(ctx, s.profile, p); err != nil {
 		return err
