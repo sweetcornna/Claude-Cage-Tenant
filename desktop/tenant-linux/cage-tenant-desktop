@@ -1,0 +1,9 @@
+#!/usr/bin/python3 -I
+"""Cage Tenant for Linux (cage-tenant-desktop package)."""
+import sys
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, "/usr/share/cage-tenant-desktop")
+from cage_tenant_desktop.launcher import main  # noqa: E402
+
+sys.exit(main())

@@ -1,0 +1,138 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"io/fs"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"runtime"
+	"strconv"
+	"syscall"
+	"time"
+
+	"github.com/sylvinus/agent-vm/internal/tenant"
+)
+
+func main() {
+	if err := run(); err != nil {
+		log.Print(err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	var config tenant.Config
+	var incus tenant.IncusConfig
+	var listen, uiDir, image, systemsFile string
+	flag.StringVar(&listen, "listen", "127.0.0.1:8080", "loopback HTTP listen address")
+	flag.StringVar(&config.Origin, "origin", "", "public portal origin, without a trailing slash")
+	flag.BoolVar(&config.Development, "dev", false, "enable HTTP development on cage.localhost")
+	flag.BoolVar(&config.EnablePreviewRegistration, "enable-preview-registration", false, "enable self-service registration for a trusted preview audience only")
+	flag.StringVar(&config.StateDir, "state-dir", ".cage-tenant", "private account and VM state directory")
+	flag.StringVar(&uiDir, "ui-dir", "ui/tenant", "directory containing the three portal assets")
+	flag.IntVar(&config.AccountVMLimit, "account-vm-limit", 5, "maximum VM records per account")
+	flag.IntVar(&config.TotalVMLimit, "total-vm-limit", 20, "maximum VM records across all accounts")
+	flag.IntVar(&config.ParallelStarts, "parallel-starts", 2, "maximum simultaneous gateway VM preparation and recheck tasks")
+	flag.BoolVar(&config.TrustLoopbackClientIP, "trust-loopback-client-ip", false, "trust one X-Real-IP value from the loopback TLS proxy for rate limits")
+	flag.StringVar(&incus.Executable, "incus-bin", "/usr/bin/incus", "trusted absolute Incus CLI path")
+	flag.StringVar(&incus.Project, "incus-project", "cage-tenant", "dedicated local Incus project")
+	flag.StringVar(&incus.Profile, "incus-profile", "default", "trusted profile within the dedicated Incus project")
+	flag.StringVar(&incus.Network, "incus-network", "", "allow one NIC on this trusted managed Incus network (default: no NIC)")
+	flag.StringVar(&image, "incus-image", "", "local Debian 12 VM fingerprint or alias for single-image deployments")
+	flag.StringVar(&systemsFile, "systems-file", "", "trusted JSON catalog of systems and full local Incus VM fingerprints")
+	flag.StringVar(&config.LegacyDebianImage, "legacy-debian-image", "", "verified original Debian VM fingerprint for migrating legacy state (not a catalog alias)")
+	flag.StringVar(&incus.ControlPath, "guest-control-path", "/home/cage/.claude-cage/control.json", "absolute control.json path inside every VM")
+	flag.Parse()
+	if flag.NArg() != 0 {
+		return errors.New("unexpected positional arguments")
+	}
+	host, port, err := net.SplitHostPort(listen)
+	address := net.ParseIP(host)
+	portNumber, portErr := strconv.Atoi(port)
+	if err != nil || address == nil || !address.IsLoopback() || portErr != nil || portNumber < 1 || portNumber > 65535 || strconv.Itoa(portNumber) != port {
+		return errors.New("listen must be a numeric loopback IP and a fixed port")
+	}
+	if config.Development {
+		expected := "http://cage.localhost:" + port
+		if config.Origin != "" && config.Origin != expected {
+			return errors.New("development origin must match http://cage.localhost:<listen port>")
+		}
+		config.Origin = expected
+		if config.TrustLoopbackClientIP {
+			return errors.New("client IP forwarding is disabled in development")
+		}
+	}
+	if runtime.GOOS != "linux" && !config.Development {
+		return errors.New("production requires a Linux Incus host")
+	}
+	if runtime.GOOS == "linux" {
+		if info, err := os.Stat(incus.Executable); err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
+			return errors.New("configured Incus CLI is not executable")
+		}
+	}
+	incusRuntime, err := tenant.NewIncus(incus)
+	if err != nil {
+		return err
+	}
+	config.Runtime = incusRuntime
+	switch {
+	case systemsFile != "" && image != "":
+		return errors.New("choose either -systems-file or -incus-image")
+	case systemsFile != "":
+		config.Systems, err = tenant.LoadSystems(systemsFile)
+		if err != nil {
+			return err
+		}
+	case image != "":
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		fingerprint, err := incusRuntime.ResolveImage(ctx, image)
+		cancel()
+		if err != nil {
+			return err
+		}
+		config.Systems = []tenant.System{tenant.DefaultSystem(fingerprint)}
+	}
+	root, err := os.OpenRoot(uiDir)
+	if err != nil {
+		return fmt.Errorf("open portal UI: %w", err)
+	}
+	defer root.Close()
+	config.UI = root.FS()
+	for _, name := range []string{"index.html", "app.mjs", "styles.css"} {
+		if info, err := fs.Stat(config.UI, name); err != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("portal UI asset unavailable: %s", name)
+		}
+	}
+	gateway, err := tenant.NewServer(config)
+	if err != nil {
+		return err
+	}
+	defer gateway.Close()
+	listener, err := net.Listen("tcp", listen)
+	if err != nil {
+		return err
+	}
+	server := &http.Server{
+		Handler: gateway, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second,
+		MaxHeaderBytes: 32 << 10, ErrorLog: log.New(io.Discard, "", 0),
+	}
+	signals, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-signals.Done()
+		gateway.Close()
+		_ = server.Close()
+	}()
+	log.Printf("cage-tenant listening on %s for %s", listen, config.Origin)
+	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}

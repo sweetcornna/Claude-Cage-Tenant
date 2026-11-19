@@ -1,0 +1,11 @@
+# Isolated test environment for the Linux client: builds the .deb with the
+# real dpkg-deb, installs it with apt (resolving the declared dependencies),
+# and runs the window under Xvfb. Never used to build release artifacts.
+ARG BASE=ubuntu:24.04
+FROM ${BASE}
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates openssl python3 dpkg-dev lintian desktop-file-utils \
+      procps xvfb xauth x11-utils xdotool imagemagick fonts-noto-cjk \
+ && rm -rf /var/lib/apt/lists/*

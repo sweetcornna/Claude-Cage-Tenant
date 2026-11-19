@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Cage Tenant
+Name[zh_CN]=Cage Tenant
+GenericName=Multi-tenant Portal Client
+GenericName[zh_CN]=多租户门户客户端
+Comment=Show a Cage multi-tenant portal hosted on a Linux Incus server
+Comment[zh_CN]=在独立窗口中显示部署在 Linux Incus 服务器上的 Cage 多租户门户
+Exec=cage-tenant-desktop
+Icon=io.github.sweetcornna.claude-cage.tenant
+Terminal=false
+Categories=Network;RemoteAccess;
+Keywords=Cage;Incus;VM;Portal;
+StartupNotify=true
+StartupWMClass=io.github.sweetcornna.claude-cage.tenant

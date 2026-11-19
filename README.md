@@ -1,0 +1,266 @@
+<div align="center">
+
+<h1>Claude Cage 多租户版</h1>
+
+一台 Linux 服务器供多人使用。每个账号可以有多台独立的 Cage 虚拟机，在浏览器或桌面客户端里随时切换。
+
+[![Release](https://img.shields.io/github/v/release/sweetcornna/Claude-Cage-Tenant?include_prereleases&color=D97757)](https://github.com/sweetcornna/Claude-Cage-Tenant/releases) [![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+<img src="docs/tenant/images/portal-overview.png" alt="门户总览：顶部标签切换虚拟机" width="860" />
+
+</div>
+
+## 功能
+
+- **账号隔离**：每个账号只能看到和打开自己的虚拟机。
+- **一人多台**：新建时选择系统（例如 Debian 12、Ubuntu 24.04），用顶部标签切换。切换、刷新或退出都不会让虚拟机停机。
+- **独立环境**：每台虚拟机有自己的可写根盘和工作台账号，首次打开时单独配置。同一系统的虚拟机可以共享 ZFS 只读快照，节省磁盘。
+- **浏览器或客户端**：门户可以直接用浏览器打开，也可以用 macOS、Windows、Linux 客户端打开。客户端还能一键安装单机版 Cage。
+
+<table>
+  <tr>
+    <th>新建虚拟机</th>
+    <th>桌面客户端</th>
+  </tr>
+  <tr>
+    <td><img src="docs/tenant/images/portal-create.png" alt="新建虚拟机：选择系统并命名" width="400" /></td>
+    <td>
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/tenant/images/desktop-start-dark.png" />
+        <img src="docs/tenant/images/desktop-start-light.png" alt="客户端启动页：本地安装或连接远程" width="400" />
+      </picture>
+    </td>
+  </tr>
+</table>
+
+## 安装客户端
+
+从[发布页](https://github.com/sweetcornna/Claude-Cage-Tenant/releases/tag/v0.1.8-preview.2)下载安装包，并用同一页的 `SHA256SUMS` 校验。
+
+| 系统 | 下载 | 安装 |
+| --- | --- | --- |
+| macOS 14+ | [DMG](https://github.com/sweetcornna/Claude-Cage-Tenant/releases/download/v0.1.8-preview.2/Cage-Tenant-0.1.8-macos-universal.dmg) | 打开 DMG，把 **Cage Tenant** 拖进“应用程序” |
+| Windows 10 / 11 x64 | [ZIP](https://github.com/sweetcornna/Claude-Cage-Tenant/releases/download/v0.1.8-preview.2/Cage-Tenant-0.1.8-windows-x64-unsigned.zip) | 解压整个文件夹，运行 `CageTenant.exe` |
+| Debian / Ubuntu | [DEB](https://github.com/sweetcornna/Claude-Cage-Tenant/releases/download/v0.1.8-preview.2/cage-tenant-desktop_0.1.8_all.deb) | 在下载目录运行下面的命令 |
+
+```sh
+sudo apt install ./cage-tenant-desktop_0.1.8_all.deb
+```
+
+首次使用：
+
+1. 打开客户端，选择 **连接远程**，填写管理员提供的门户地址，例如 `https://cage.example.org`。
+2. 登录门户，点击 **新建虚拟机**，选择系统并命名。
+3. 点击 **打开工作台**。以后用顶部标签切换虚拟机。
+
+选择 **本地安装** 会打开本机已安装的单机版 Cage。尚未安装时，客户端会下载上游 Cage 0.1.8 安装包，校验后交给系统安装。这一功能需要 Apple Silicon Mac、x64 Windows 或 x86_64 的 Debian/Ubuntu。
+
+> [!NOTE]
+> 预览版的 macOS 包已签名但尚未公证，Windows 包未签名。macOS 提示无法打开时，到“系统设置 → 隐私与安全性”点击“仍要打开”。Windows SmartScreen 拦截时，点击“更多信息 → 仍要运行”。
+
+不想装客户端，也可以直接用浏览器打开门户地址。
+
+## 部署服务端
+
+服务端需要一台支持 KVM 的 Linux 主机，并已安装和初始化 Incus。下面是大致步骤，具体命令和安全要求见[部署指南](deploy/tenant/README.md)。
+
+1. **创建专用项目**：在 Incus 中创建 `cage-tenant` 项目和存储池，并设置 CPU、内存和磁盘配额。
+2. **准备系统镜像**：为每个系统制作不含用户数据的空白 VM 镜像，导入项目，例如命名为 `cage-blank`。
+3. **启动网关**：下载与主机架构对应的服务端归档并校验，然后运行：
+
+   ```sh
+   tar -xzf Cage-Tenant-Server-0.1.8-linux-amd64.tar.gz
+   cd Cage-Tenant-Server-0.1.8-linux-amd64
+   ./cage-tenant -origin https://cage.example.org \
+     -state-dir /var/lib/cage-tenant -incus-image cage-blank
+   ```
+
+   网关默认监听 `127.0.0.1:8080`。状态目录的权限应为 `0700`。正式环境请配置为 systemd 服务。
+4. **配置域名和 TLS**：把 `cage.example.org` 和 `*.cage.example.org` 指向同一个 TLS 反向代理，转发到 `127.0.0.1:8080`，并开启 WebSocket。部署指南里有 Nginx 示例。
+5. **开放首批账号**：生产模式默认关闭注册。先在受限入口临时加上 `-enable-preview-registration`，等获准用户注册完再去掉。
+
+## 当前状态
+
+这是预览版。真实 Incus 环境上已经验证了 Debian 12 和 Ubuntu 24.04、两个账号共三台虚拟机，覆盖账号隔离、切换、刷新恢复和磁盘持久化。切换到已运行的虚拟机通常只需 65–405 毫秒。完整图形工作环境和 Claude CLI 流程还没有验证，Windows 客户端也还没有在 Windows 上实际运行过。
+
+## 文档
+
+- 服务端：[部署指南](deploy/tenant/README.md) · [接口契约](docs/api-contract.md)
+- 客户端：[macOS](desktop/tenant/README.md) · [Windows](desktop/tenant-windows/README.md) · [Linux](desktop/tenant-linux/README.md)
+
+本项目基于 [Lee-xeo/Claude-Cage](https://github.com/Lee-xeo/Claude-Cage)（MIT）开发，同样按 MIT 许可发布，与 Anthropic 没有隶属关系。
+
+---
+
+<details>
+<summary><b>上游 Claude Cage 说明</b>（单机桌面版，也就是“本地安装”打开的应用）</summary>
+
+<div align="center">
+
+<h1>Claude Cage</h1>
+
+**把 Claude 大小姐关起来，为了更好地保护我们的相遇**
+
+<img src="assets/claude-cage-character.png" alt="Claude Cage" width="320" />
+
+[![Release](https://img.shields.io/github/v/release/Lee-xeo/Claude-Cage?include_prereleases)](https://github.com/Lee-xeo/Claude-Cage/releases) [![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+<a href="https://trendshift.io/repositories/339051#achievements"><img src="https://trendshift.io/api/badge/trendshift/repositories/339051/daily?language=Go" alt="Trendshift — Go Repository of the Day" width="250" height="55" /></a> <a href="https://trendshift.io/repositories/339051#achievements"><img src="https://trendshift.io/api/badge/trendshift/repositories/339051/weekly?language=Go" alt="Trendshift — Go Repository of the Week" width="250" height="55" /></a>
+
+<a href="https://trendshift.io/repositories/339051#achievements"><img src="https://trendshift.io/api/badge/trendshift/repositories/339051/daily" alt="Trendshift — Repository of the Day" width="250" height="55" /></a> <a href="https://trendshift.io/repositories/339051#achievements"><img src="https://trendshift.io/api/badge/trendshift/repositories/339051/weekly" alt="Trendshift — Repository of the Week" width="250" height="55" /></a>
+
+**[项目主页](https://claude-cage.com/) · [下载应用](https://claude-cage.com/#download) · [使用文档](https://claude-cage.com/docs/) · [常见问题](https://claude-cage.com/docs/troubleshooting/)**
+
+[简体中文](README.md) · [繁體中文](README.zh-TW.md) · [Русский](README.ru.md) · [العربية](README.ar.md) · [فارسی](README.fa.md) · [한국어](README.ko.md) · [Español](README.es.md) · [မြန်မာဘာသာ](README.my.md) · [Беларуская](README.be.md) · [پښتو](README.ps.md) · [دری](README.prs.md) · [አማርኛ](README.am.md) · [Soomaali](README.so.md) · [ትግርኛ](README.ti.md) · [Français](README.fr.md)
+
+</div>
+
+## 受够了 Anthropic
+
+作为一个只是想和 Claude 对话与合作的正常用户，受够了折腾各种 VPS，指纹浏览器，环境检测，面对封号的担惊受怕和财产损失。我们提出 **Claude Cage** 项目：**一个开箱即用的桌面程序，配置好自己的网络代理，集中管理隔离环境、时区语言和环境检查。**
+
+Claude Cage 让你在熟悉的系统里与 Claude 一起工作：Mac 上用 macOS 虚拟机，Windows 上用 Windows 虚拟机，也可以选择轻量的 Linux 环境。终端、浏览器、编辑器和官方 Claude Desktop 汇集在同一个工作台，项目按需共享，网络独立管理；还可以连接自己的服务器，或用手机接续电脑上的任务。支持以下几个重点功能：
+
+- 和主机隔离的网络设置，Cage 自己接管和代理内部的所有网络流量
+- 和主机隔离的指纹设置，包括时区、语言等，支持自动与代理 IP 同步
+- 针对 Claude 使用过程中的全链路适配（浏览器登录，授权，claude code 进程）
+- 内置网络与隔离检查，关键检查失败或证据不完整时暂停外网；社区和第三方检测提供补充参考
+
+**使用 Cage 的环境检测结果：**
+
+| 网络与隔离检查 | 浏览器环境检测（社区参考） |
+| :---: | :---: |
+| <a href="assets/network-checks.png"><img src="assets/network-checks.png" alt="网络与隔离检查" width="400" /></a> | <a href="assets/community-browser-check.png"><img src="assets/community-browser-check-cropped.png" alt="浏览器环境检测（社区参考）" width="400" /></a> |
+
+[FuckClaude](https://fuck-claude.vercel.app/) · [LinXiaoTao / GitHub](https://github.com/LinXiaoTao/FuckClaude)
+
+**Cage 运行主界面：**
+
+![Cage](www/public/workbench-2026-11.jpg)
+
+## 你可以用它做什么
+
+- **在一个窗口里完成工作。** 用终端运行 Claude Code，用编辑器查看改动，用 Cage 浏览器预览服务和完成登录。
+- **用熟悉的系统开发。** 选择 macOS、Windows 或 Linux 客机，使用对应平台的工具；也可自动匹配本机系统版本，下载官方镜像并创建独立环境。 [选择客机系统](docs/guide/guest-systems.md)
+- **控制共享范围。** 只共享默认工作区和明确打开的项目文件夹；主机的 Claude 登录、浏览器配置和 SSH 密钥不会自动导入。
+- **看清网络状态。** 内置代理管理支持导入订阅、选择节点和检查出口。关键检查未通过时，环境保持离线；代理不可用时没有直连回退。
+- **下次继续使用。** 工具、文件和登录状态保存在虚拟磁盘里，关闭窗口可以保留后台任务。
+- **管理多个 Claude Code 订阅。** 查看额度、为新会话分配账号，并在明确授权后切换账号接续历史。 [Claude Code](docs/guide/accounts.md)
+- **从手机继续处理任务。** Android / iPhone 配对电脑，接续 Claude Code 对话与工具审批，或操作远程浏览器和 Claude Desktop。[手机连接](docs/guide/mobile.md)
+- **把环境放到自己的服务器。** 通过 SSH 部署或连接 Linux VPS，工具、任务和数据留在服务器，无需 KVM。[云端部署与 SSH](docs/guide/cloud.md)
+- **通过私网连接设备。** 在 Cage 内登录 Tailscale，查看网络中的设备，使用 SSH、Web 与其他 TCP 服务。 [Tailscale 私网](docs/guide/tailscale.md)
+
+浏览器收藏、无痕会话、Cookie、扩展、密码保险箱，以及外观、资源、存储和工具更新，见[完整使用文档](https://claude-cage.com/docs/)。
+
+## 快速开始
+
+把这句话发给你的 agent（codex，dsh，workbuddy，反正不会是 claude code😁）
+
+```markdown
+帮我拉取 https://github.com/Lee-xeo/Claude-Cage 的最新源码，打包安装，并把 Cage 的代理配置通过我本机 clash 的 xx 节点走我的 xx ip 出口，全过程你盯着，有问题直接修复，且有必要的话顺手给项目提交 issue 帮助他们优化兼容性。
+```
+
+你唯一需要的，是一个靠谱的代理节点，本项目不做任何代理推广，可以自行搜索黑色错误网站解决。
+
+## 下载与安装
+
+Cage 支持 macOS、Windows 和 Linux：macOS 14+ 的 Apple Silicon Mac、Windows 10 22H2 / 11 x64，以及 Debian 12 / Ubuntu 22.04 / 24.04 x86_64。Windows 11 客机需要支持 Hyper-V 的 Windows 11 专业版、企业版或教育版主机；其他受支持的 Windows 主机可使用 Debian 或 Ubuntu 22.04。Intel Mac、Windows ARM64 和 Linux ARM64 暂不支持。 [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md)。
+
+开发构建另提供 Intel Mac 本机 Linux 客机，以及 macOS 15.4+ 主机上的本机 macOS 客机实验路线，使用独立测试包；公开发行版尚未包含此能力。条件、构建方式和验收范围见 [Intel macOS 开发说明](docs/intel-macos-development.md)。
+
+1. 打开[项目主页](https://claude-cage.com/#download)，点击“下载应用”并选择平台。
+2. macOS：打开安装包，将 **Cage** 拖入 **Applications（应用程序）**，再从“应用程序”启动。Windows：[安装说明](docs/windows.md#安装并开始工作) · Linux：[安装说明](docs/linux.md#安装并开始工作)。
+3. 按应用内引导配置自己的代理，启动环境后打开项目。
+
+安装包随附工作台和代理核心，无需先安装 Go、Node.js、Docker 或 Clash。首次创建环境时选择客机系统与存储位置，再准备对应的官方系统镜像和开发工具。macOS、Windows 系统按各自许可使用；Cage 不提供系统授权、代理服务或 Claude 账户。
+
+源码与安装包公开，版本说明和校验文件见 [GitHub Releases](https://github.com/Lee-xeo/Claude-Cage/releases)。从源码构建工作台需安装 `uv`，平台工具详见[构建说明](.github/CONTRIBUTING.md#工作台构建)。系统选择、镜像来源与数据保留方式见[客机系统指南](docs/guide/guest-systems.md)。
+
+功能以所用构建为准，公开安装包的能力与验证范围以发行说明为准。
+
+macOS 和已签名 Windows 版本支持通过所选代理更新；Windows 未签名预览版与 Linux 使用安装包手动更新。更新前保存并停止任务，个人数据继续保留。 [升级与卸载](docs/guide/maintenance.md)
+
+## 三步开始
+
+### 1. 选择代理
+
+导入 Clash/Mihomo YAML 订阅或本地配置，选择节点并点击“应用代理”；需要中转时可配置链式代理。[网络与代理](docs/guide/network.md)
+
+### 2. 启动环境
+
+首次选择客机系统或“自动匹配本机系统版本”，再选择存储位置。点击“安装客户机”或“启动 Cage 环境”，按引导完成安装与授权；进度和错误可在“操作详情”查看。以后启动复用原环境。
+
+### 3. 打开项目，运行 Claude
+
+点击“打开项目”选择本机上的文件夹，再新建终端，输入 `claude`，在 Cage 浏览器中完成自己的账户授权。也可以先使用默认工作区，无需提前准备项目。完整步骤见[开始使用](docs/getting-started.md)。
+
+## 使用前了解这些边界
+
+- 共享项目中的修改和删除直接影响本机原文件，包括 Git 操作。请使用版本控制或备份，并核对提交结果。
+- 同一份 Cage 配置中的项目共用所选客机系统、工具、账户与文件系统，项目之间没有独立隔离。更换客机系统需要独立安装，原环境的数据继续保留。
+- 默认公网出站支持 IPv4 TCP，DNS 通过同一代理；公网 UDP、IPv6、ICMP 及主机和局域网直连受限。主动启用 Tailscale 后，可按私网权限连接设备。
+- 网络检查展示当前配置和采样证据，无法保证账户不会受到平台限制，也不能代替完整的虚拟化安全审计。
+
+详细机制见[网络与数据边界](docs/getting-started.md#网络与数据边界)。
+
+## 文档与贡献
+
+面向用户的[官网使用文档](https://claude-cage.com/docs/)支持按功能浏览、搜索与章节直达。各项操作见[使用文档导航](docs/README.md)。
+
+| 你要做什么 | 从这里开始 |
+|---|---|
+| 让自己的 Agent 下载、安装、配置和排查 Cage | [Agent 使用指南](https://claude-cage.com/docs/agent/) |
+| 第一次安装、配置代理、打开项目 | [安装与首次启动](https://claude-cage.com/docs/installation/) |
+| 选择 macOS、Windows、Debian 或 Ubuntu 22.04 客机，使用原生开发工具 | [选择客机系统](https://claude-cage.com/docs/guest-systems/) |
+| 添加多个订阅、查看额度和分配终端 | [多账号与额度](https://claude-cage.com/docs/accounts/) |
+| 手机扫码、工具审批、远程浏览器 | [手机连接与远程会话](https://claude-cage.com/docs/mobile/) |
+| 在自己的 VPS 部署和连接环境 | [云端部署与 SSH](https://claude-cage.com/docs/cloud/) |
+| 了解每一项设置及何时生效 | [设置参考](https://claude-cage.com/docs/settings/) |
+| 维护存储、资源、更新与备份 | [维护、资源与数据](https://claude-cage.com/docs/maintenance/) |
+| 处理下载、启动、联网和登录问题 | [故障排查](https://claude-cage.com/docs/troubleshooting/) |
+| 了解文件、按键和关闭与退出行为 | [项目、终端与文件](https://claude-cage.com/docs/workbench/) |
+| 报告可复现问题 | [GitHub Issues](https://github.com/Lee-xeo/Claude-Cage/issues) |
+| 提交修复、功能实现或文档改进 | [贡献指南](.github/CONTRIBUTING.md) |
+
+代码与文档贡献采用“`contribution` Issue 审核 → 邀请成为协作者 → 提交 PR → 审查合入”的流程。请先提交[方案贡献 Issue](https://github.com/Lee-xeo/Claude-Cage/issues/new?template=05-contribution.yml)；维护者审核通过并添加 `accepted` 标签后，自动化会发送协作者邀请。接受邀请后再创建 PR，详细步骤与权限说明见[贡献指南](.github/CONTRIBUTING.md)。
+
+本项目仍在快速迭代中，欢迎加入交流群提意见，欢迎社区大佬一起维护
+
+| QQ 群 · 273237690 | 微信 |
+| :---: | :---: |
+| <a href="assets/community-qq.png"><img src="assets/community-qq.png" alt="QQ 群 · 273237690" width="240" /></a> | <a href="www/src/assets/community-wechat.png"><img src="www/src/assets/community-wechat.png" alt="微信" width="240" /></a> |
+
+[Telegram](https://t.me/claude_cage)
+
+## 来源与许可
+
+Cage 基于 [agent-vm](https://github.com/sylvinus/agent-vm) 二次开发。
+
+项目主许可为 [MIT](LICENSE)。随附组件保留各自许可，Mihomo 作为独立可执行文件按 GPL-3.0 分发；请同时参阅 [NOTICE](NOTICE) · [第三方许可](THIRD_PARTY_LICENSES) · [noVNC](ui/vendor/novnc/LICENSE.txt)。
+
+Cage 是独立社区项目，与 Anthropic 无隶属关系。
+
+## 参考与致谢
+
+感谢以下项目为 Cage 提供基础能力或设计参考：
+
+- [agent-vm](https://github.com/sylvinus/agent-vm)：Cage 的二次开发底座。
+- [Lima](https://github.com/lima-vm/lima)：虚拟机管理与 macOS、Linux 客机的运行基础。
+- [gvisor-tap-vsock](https://github.com/containers/gvisor-tap-vsock)：虚拟机网络能力。
+- [sshocker](https://github.com/lima-vm/sshocker) 和 [SFTP](https://github.com/pkg/sftp)：虚拟机与主机之间的文件共享能力。
+- [noVNC](https://github.com/novnc/noVNC)：浏览器中的远程画面与交互。
+- [Mihomo](https://github.com/MetaCubeX/mihomo)：内置代理核心。
+- [code-server](https://github.com/coder/code-server)：浏览器中的代码编辑器。
+- [AIO Sandbox](https://github.com/agent-infra/sandbox)：工作环境和交互体验参考。
+- [claude-switcher](https://github.com/YOURSJEYO/claude-switcher) 和 [Claude-Guardian](https://github.com/DUNHKpcc/Claude-Guardian)：网络检查和安全诊断方法参考。
+- [claude-post-ban-cleanup](https://github.com/l2461090/claude-post-ban-cleanup): 精确盘点、保护用户资料与可恢复缓存清理的流程参考；Cage 独立实现。
+
+<a href="https://www.star-history.com/?repos=Lee-xeo%2FClaude-Cage&amp;type=date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Lee-xeo/Claude-Cage&amp;type=Date&amp;theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Lee-xeo/Claude-Cage&amp;type=Date" />
+    <img alt="Claude Cage 的 GitHub Star 增长曲线" src="https://api.star-history.com/svg?repos=Lee-xeo/Claude-Cage&amp;type=Date" width="800" />
+  </picture>
+</a>
+
+</details>

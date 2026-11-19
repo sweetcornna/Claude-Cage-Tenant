@@ -1,0 +1,166 @@
+package tenant
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"strconv"
+	"sync/atomic"
+	"time"
+)
+
+var errController = errors.New("workspace controller is unavailable")
+var errControllerSession = errors.New("workspace controller session has expired")
+
+type Workspace struct {
+	origin          *url.URL
+	cookie          *http.Cookie
+	transport       *http.Transport
+	control         *http.Transport
+	ctx             context.Context
+	cancel          context.CancelFunc
+	slots           chan struct{}
+	checkedAt       time.Time
+	nextProbe       time.Time
+	nextFaultProbe  time.Time
+	faults          uint64
+	verify          func(context.Context) error
+	checkingSession atomic.Bool
+}
+
+func newWorkspace(port int, dial func(context.Context) (net.Conn, error)) *Workspace {
+	ctx, cancel := context.WithCancel(context.Background())
+	origin := &url.URL{Scheme: "http", Host: net.JoinHostPort("localhost", strconv.Itoa(port))}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if network != "tcp" || address != origin.Host {
+				return nil, errController
+			}
+			return dial(ctx)
+		},
+		MaxConnsPerHost: 64, MaxIdleConns: 8, MaxIdleConnsPerHost: 8,
+		IdleConnTimeout: 15 * time.Second, ResponseHeaderTimeout: 90 * time.Second,
+		ExpectContinueTimeout: time.Second, MaxResponseHeaderBytes: 64 << 10,
+	}
+	// Reserve one connection for rechecks and one for fault confirmation.
+	// Long-lived HTTP and WebSocket traffic cannot occupy either slot.
+	control := transport.Clone()
+	control.MaxConnsPerHost = 2
+	control.MaxIdleConns = 1
+	control.MaxIdleConnsPerHost = 1
+	return &Workspace{origin: origin, transport: transport, control: control, ctx: ctx, cancel: cancel, slots: make(chan struct{}, 64)}
+}
+
+func (w *Workspace) close() {
+	w.cancel()
+	w.transport.CloseIdleConnections()
+	w.control.CloseIdleConnections()
+}
+
+func (w *Workspace) request(ctx context.Context, method, path, token string) (*http.Response, error) {
+	var body io.Reader
+	if token != "" {
+		data, _ := json.Marshal(map[string]string{"token": token})
+		body = bytes.NewReader(data)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, w.origin.String()+path, body)
+	if err != nil {
+		return nil, errController
+	}
+	request.Header.Set("Origin", w.origin.String())
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	if w.cookie != nil {
+		request.AddCookie(w.cookie)
+	}
+	response, err := w.control.RoundTrip(request)
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode != http.StatusOK {
+		response.Body.Close()
+		if response.StatusCode == http.StatusUnauthorized {
+			return nil, errControllerSession
+		}
+		return nil, errController
+	}
+	return response, nil
+}
+
+func (w *Workspace) bootstrap(ctx context.Context, launcherToken string) error {
+	if !secretPattern.MatchString(launcherToken) {
+		return errController
+	}
+	response, err := w.request(ctx, http.MethodPost, "/api/launch", launcherToken)
+	if err != nil {
+		return err
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 8193))
+	response.Body.Close()
+	var launch struct {
+		URL            string `json:"url"`
+		ClientOnly     bool   `json:"client_only"`
+		DesktopGateway bool   `json:"desktop_gateway"`
+	}
+	if err != nil || len(body) > 8192 || json.Unmarshal(body, &launch) != nil || launch.ClientOnly || launch.DesktopGateway {
+		return errController
+	}
+	entry, err := url.Parse(launch.URL)
+	if err != nil || entry.Scheme != w.origin.Scheme || entry.Host != w.origin.Host || entry.User != nil || entry.Path != "/" || !secretPattern.MatchString(entry.Fragment) {
+		return errController
+	}
+	session, err := w.request(ctx, http.MethodPost, "/api/session", entry.Fragment)
+	if err != nil {
+		return err
+	}
+	defer session.Body.Close()
+	if size, err := io.Copy(io.Discard, io.LimitReader(session.Body, 8193)); err != nil || size > 8192 {
+		return errController
+	}
+	name := "cage_session_" + w.origin.Port()
+	var cookie *http.Cookie
+	for _, candidate := range session.Cookies() {
+		if candidate.Name == name {
+			if cookie != nil || !secretPattern.MatchString(candidate.Value) || candidate.Domain != "" || candidate.Path != "/" {
+				return errController
+			}
+			cookie = &http.Cookie{Name: name, Value: candidate.Value}
+		}
+	}
+	if cookie == nil {
+		return errController
+	}
+	w.cookie = cookie
+	return w.check(ctx)
+}
+
+func (w *Workspace) check(ctx context.Context) error {
+	response, err := w.request(ctx, http.MethodGet, "/api/client/about", "")
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	size, err := io.Copy(io.Discard, io.LimitReader(response.Body, 8193))
+	if err != nil {
+		return err
+	}
+	if size > 8192 {
+		return errController
+	}
+	return nil
+}
+
+func (w *Workspace) recheck(ctx context.Context) error {
+	if w.verify != nil {
+		if err := w.verify(ctx); err != nil {
+			return err
+		}
+	}
+	return w.check(ctx)
+}
