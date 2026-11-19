@@ -313,10 +313,9 @@ export function createApi({ fetch: fetchImpl = globalThis.fetch?.bind(globalThis
     register: (username, password, options) =>
       call("POST", "/api/tenant/register", { ...options, body: { username, password } }),
     logout: (options) => call("POST", "/api/tenant/logout", { ...options, body: {} }),
-    listSystems: (options) => call("GET", "/api/tenant/systems", options),
     listVms: (options) => call("GET", "/api/tenant/vms", options),
-    createVm: (name, systemId, options) =>
-      call("POST", "/api/tenant/vms", { ...options, body: { name, system_id: systemId } }),
+    createVm: (name, options) =>
+      call("POST", "/api/tenant/vms", { ...options, body: { name } }),
     openVm: (id, options) =>
       isValidVmId(id)
         ? call("POST", `/api/tenant/vms/${id}/open`, { ...options, body: {} })
@@ -397,8 +396,7 @@ export function createSelectionStore({
 /* ------------------------------------------------------------------ */
 
 const DEFAULT_AUTH = Object.freeze({ mode: "login", busy: false, error: null, notice: null });
-const NO_SYSTEMS = Object.freeze({ status: "idle", items: Object.freeze([]), error: null });
-const CLOSED_CREATE = Object.freeze({ open: false, seq: 0, busy: false, error: null, systems: NO_SYSTEMS, systemId: null });
+const CLOSED_CREATE = Object.freeze({ open: false, seq: 0, busy: false, error: null });
 
 function errorView(error) {
   return {
@@ -475,7 +473,6 @@ export function createPortal({
   let targetAbort = null;
   let listAbort = null;
   let authAbort = null;
-  let systemsAbort = null;
   let checkAbort = null;
   let createSeq = 0;
   let pollTimer = null;
@@ -533,8 +530,6 @@ export function createPortal({
     listAbort = null;
     authAbort?.abort();
     authAbort = null;
-    systemsAbort?.abort();
-    systemsAbort = null;
     checkAbort?.abort();
     checkAbort = null;
     pendingRestore = false;
@@ -995,7 +990,7 @@ export function createPortal({
     set({ target: null, selectedId: null });
   }
 
-  /* ---- 新建：每次打开都重新读取系统目录、清空选择 ---- */
+  /* ---- 新建 ---- */
 
   function setCreate(patch) {
     set({ create: { ...state.create, ...patch } });
@@ -1005,47 +1000,11 @@ export function createPortal({
     if (state.phase !== "signed-in" || state.logout.busy || state.create.open) return;
     const seq = ++createSeq;
     set({ create: { ...CLOSED_CREATE, open: true, seq } });
-    void loadSystems(seq);
   }
 
   function closeCreate() {
     if (!state.create.open || state.create.busy) return;
-    systemsAbort?.abort();
-    systemsAbort = null;
     set({ create: CLOSED_CREATE });
-  }
-
-  async function loadSystems(seq = state.create.seq) {
-    if (!state.create.open || state.create.seq !== seq) return;
-    const gen = sessionGen;
-    systemsAbort?.abort();
-    const controller = new AbortController();
-    systemsAbort = controller;
-    setCreate({ systems: { status: "loading", items: state.create.systems.items, error: null } });
-    try {
-      const { data } = await api.listSystems(expected({ signal: controller.signal }));
-      if (gen !== sessionGen || state.create.seq !== seq || !state.create.open) return;
-      systemsAbort = null;
-      const items = normalizeSystemList(data?.systems);
-      // 用户已做的选择若已下架则清空，不自动换成其他系统；仅在尚未选择时预选唯一系统。
-      const previous = state.create.systemId;
-      const kept = items.some((system) => system.id === previous) ? previous : null;
-      const systemId = previous ? kept : items.length === 1 ? items[0].id : null;
-      const error = state.create.error?.field === "system" ? null : state.create.error;
-      setCreate({ systems: { status: "ready", items, error: null }, systemId, error });
-    } catch (error) {
-      if (gen !== sessionGen || error?.aborted || state.create.seq !== seq) return;
-      systemsAbort = null;
-      if (handleSessionError(error)) return;
-      setCreate({ systems: { status: "error", items: [], error: errorView(error) }, systemId: null });
-    }
-  }
-
-  function chooseSystem(id) {
-    if (!state.create.open || state.create.busy) return;
-    if (!state.create.systems.items.some((system) => system.id === id)) return;
-    const error = state.create.error?.field === "system" ? null : state.create.error;
-    setCreate({ systemId: id, error });
   }
 
   const atLimit = () => state.limit !== null && state.vms.length >= state.limit;
@@ -1057,14 +1016,6 @@ export function createPortal({
     if (!checked.ok) {
       return setCreate({ error: { field: "name", code: "invalid_input", message: checked.message } });
     }
-    const system = state.create.systems.items.find((item) => item.id === state.create.systemId);
-    if (!system) {
-      const message =
-        state.create.systems.status === "ready" && !state.create.systems.items.length
-          ? "暂无可安装的系统，无法新建虚拟机。"
-          : "请选择要安装的系统。";
-      return setCreate({ error: { field: "system", code: "invalid_input", message } });
-    }
     if (atLimit()) {
       return setCreate({
         error: { field: null, code: "vm_limit", message: `已达到每个账户 ${state.limit} 台虚拟机的上限。` },
@@ -1073,21 +1024,20 @@ export function createPortal({
     const gen = sessionGen;
     setCreate({ busy: true, error: null });
     try {
-      const { data } = await api.createVm(checked.value, system.id, expected());
+      const { data } = await api.createVm(checked.value, expected());
       if (gen !== sessionGen) return;
       const vm = normalizeVm(data?.vm);
       if (!vm) throw new ApiError({ status: 201, code: "bad_response" });
       localAdds.set(vm.id, ++membershipEpoch);
       upsertVm(vm);
       if (state.create.seq === seq) set({ create: CLOSED_CREATE });
-      select(vm.id); // 新建默认选中并尝试打开，进入该 VM 原有的 Cage 工作台配置
+      select(vm.id);
     } catch (error) {
       if (gen !== sessionGen || error?.aborted) return;
       if (handleSessionError(error)) return;
       if (state.create.seq !== seq) return;
       setCreate({ busy: false, error: { field: null, ...errorView(error) } });
       if (error?.code === "vm_limit") void refreshList();
-      if (error?.code === "invalid_input") void loadSystems(seq); // 系统可能刚被下架
     }
   }
 
@@ -1118,8 +1068,6 @@ export function createPortal({
     visibilityChanged,
     openCreate,
     closeCreate,
-    loadSystems: () => loadSystems(),
-    chooseSystem,
     createVm,
     dismissBanner,
   };
@@ -1540,7 +1488,9 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
       dialog.el,
     ]);
 
-    let mountedFrame = null; // { key, el, listeners: AbortController }
+    let mountedFrame = null;
+    const shellListeners = new AbortController();
+    let frameRequest = 0;
     let parkedFocus = null;
     let overlaySig = null;
     let liveKey = "";
@@ -1554,6 +1504,26 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
 
     skipToSwitcher.addEventListener("click", () => (selectedTab() || home).focus());
     skipToStage.addEventListener("click", () => (mountedFrame?.el || stage).focus());
+
+    win.addEventListener("message", async (event) => {
+      const frame = mountedFrame;
+      if (!frame || event.source !== frame.el.contentWindow || event.origin !== frame.origin) return;
+      const { type, vm_id: id } = event.data || {};
+      if (type === "cage:virtual-machines-changed") {
+        void portal.refreshList();
+        return;
+      }
+      if (type !== "cage:open-virtual-machine" || !isValidVmId(id)) return;
+      const request = ++frameRequest;
+      if (!current.vms.some((vm) => vm.id === id)) await portal.refreshList();
+      if (request !== frameRequest || mountedFrame !== frame || current.logout.busy) return;
+      if (current.vms.some((vm) => vm.id === id)) {
+        event.source.postMessage({ type: "cage:open-virtual-machine-accepted", vm_id: id }, frame.origin);
+        portal.select(id);
+      } else {
+        event.source.postMessage({ type: "cage:open-virtual-machine-failed", vm_id: id }, frame.origin);
+      }
+    }, { signal: shellListeners.signal });
 
     tablist.addEventListener("keydown", (event) => {
       const tabs = [...tablist.querySelectorAll("[role=tab]")];
@@ -1697,7 +1667,7 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
       iframe.addEventListener("load", () => portal.frameLoaded(key), { signal: listeners.signal });
       iframe.addEventListener("error", () => portal.frameFailed(key), { signal: listeners.signal });
       iframe.setAttribute("src", checked.url);
-      mountedFrame = { key, el: iframe, listeners };
+      mountedFrame = { key, el: iframe, listeners, origin: checked.origin };
       frameHost.append(iframe);
     }
 
@@ -1928,6 +1898,7 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
         parkedFocus = preferred ? null : target;
       },
       destroy() {
+        shellListeners.abort();
         unmountFrame();
         if (ticker !== null) win.clearInterval(ticker);
         ticker = null;
@@ -1941,14 +1912,8 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
       title: uid("create-title"),
       name: uid("create-name"),
       nameError: uid("create-name-error"),
-      systems: uid("create-systems"),
-      systemError: uid("create-system-error"),
-      radio: uid("create-system"),
     };
-    const heading = h("h2", { id: ids.title, tabindex: "-1", text: "新建虚拟机" });
-    const systemStatus = h("div", { class: "system-status" });
-    const systemList = h("div", { class: "system-list", role: "radiogroup", "aria-labelledby": ids.systems, "aria-describedby": ids.systemError });
-    const systemError = h("p", { id: ids.systemError, class: "field-error", hidden: true });
+    const heading = h("h2", { id: ids.title, text: "新建虚拟机" });
     const input = h("input", {
       id: ids.name,
       name: "vm-name",
@@ -1965,12 +1930,6 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
     const submit = h("button", { type: "submit", class: "btn btn-primary" }, "创建并打开");
     const form = h("form", { class: "dialog-form", novalidate: true }, [
       heading,
-      h("fieldset", { class: "field system-field" }, [
-        h("legend", { id: ids.systems, text: "系统" }),
-        systemStatus,
-        systemList,
-        systemError,
-      ]),
       h("div", { class: "field" }, [
         h("label", { for: ids.name, text: "名称" }),
         input,
@@ -1983,9 +1942,6 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       portal.createVm(input.value);
-    });
-    systemList.addEventListener("change", (event) => {
-      if (event.target?.name === ids.radio) portal.chooseSystem(event.target.value);
     });
     const el = h("dialog", { class: "dialog", "aria-labelledby": ids.title }, [form]);
     el.addEventListener("cancel", (event) => {
@@ -2000,8 +1956,6 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
     });
 
     let shownSeq = 0;
-    let listSig = null;
-    let statusSig = null;
     let lastError = null;
 
     function show(seq) {
@@ -2009,74 +1963,19 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
       if (fresh) {
         shownSeq = seq;
         input.value = ""; // 每次打开都重新开始
-        listSig = null;
-        statusSig = null;
         lastError = null;
       }
       if (!el.open) {
         if (typeof el.showModal === "function") el.showModal();
         else el.setAttribute("open", "");
       }
-      if (fresh) heading.focus();
+      if (fresh) input.focus();
     }
 
     function hide() {
       if (!el.open) return;
       if (typeof el.close === "function") el.close();
       else el.removeAttribute("open");
-    }
-
-    function renderStatus(systems) {
-      const sig = `${systems.status}|${systems.items.length}|${systems.error?.message || ""}`;
-      if (sig === statusSig) return;
-      statusSig = sig;
-      const hadFocus = systemStatus.contains(doc.activeElement);
-      let content = [];
-      if (systems.status === "loading" || systems.status === "idle") {
-        content = [h("p", { class: "system-note", role: "status" }, [h("span", { class: "spinner", "aria-hidden": "true" }), "正在读取可安装的系统…"])];
-      } else if (systems.status === "error") {
-        content = [
-          h("div", { class: "system-note is-error", role: "alert" }, [
-            h("span", { text: `无法读取系统列表：${systems.error?.message || "请稍后重试。"}` }),
-            h("button", { type: "button", class: "btn btn-sm", "data-focus-key": "systems-reload", onclick: () => portal.loadSystems() }, "重新加载"),
-          ]),
-        ];
-      } else if (!systems.items.length) {
-        content = [
-          h("div", { class: "system-note is-empty", role: "alert" }, [
-            h("strong", { text: "暂无可安装的系统" }),
-            h("span", { text: "请联系管理员。" }),
-            h("button", { type: "button", class: "btn btn-sm", "data-focus-key": "systems-reload", onclick: () => portal.loadSystems() }, "重新加载"),
-          ]),
-        ];
-      }
-      systemStatus.replaceChildren(...content);
-      systemStatus.hidden = content.length === 0;
-      if (hadFocus && !focusByKey(systemStatus, "systems-reload")) heading.focus();
-    }
-
-    function renderList(create) {
-      const items = create.systems.status === "ready" ? create.systems.items : [];
-      const sig = items.map((system) => `${system.id}:${system.label}`).join("|");
-      if (sig !== listSig) {
-        listSig = sig;
-        const options = items.map((system) => {
-          const radio = h("input", { type: "radio", name: ids.radio, value: system.id, class: "system-radio" });
-          return h("label", { class: "system-option" }, [
-            radio,
-            h("span", { class: "system-option-body" }, [
-              h("span", { class: "system-option-label", text: system.label }),
-              h("span", { class: "system-option-id mono", text: system.id }),
-            ]),
-          ]);
-        });
-        systemList.replaceChildren(...options);
-        systemList.hidden = options.length === 0;
-      }
-      for (const radio of systemList.querySelectorAll("input[type=radio]")) {
-        radio.checked = radio.value === create.systemId;
-        radio.disabled = create.busy;
-      }
     }
 
     return {
@@ -2088,35 +1987,18 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
           return;
         }
         show(create.seq);
-        renderStatus(create.systems);
-        renderList(create);
         const full = state.limit !== null && state.vms.length >= state.limit;
-        const noSystems = create.systems.status !== "ready" || !create.systems.items.length;
         quota.textContent = state.limit !== null ? `已创建 ${state.vms.length} / ${state.limit} 台${full ? "，已达上限" : ""}` : `已创建 ${state.vms.length} 台`;
-        setBusy(submit, create.busy || full || noSystems);
+        setBusy(submit, create.busy || full);
         setBusy(cancel, create.busy);
         input.readOnly = create.busy;
         submit.textContent = create.busy ? "正在创建…" : "创建并打开";
         const error = create.error;
         setFieldError(input, nameError, error?.field === "name" ? error.message : "");
-        systemError.textContent = error?.field === "system" ? error.message : "";
-        systemError.hidden = error?.field !== "system";
-        systemList.setAttribute("aria-invalid", error?.field === "system" ? "true" : "false");
         const general = error && !error.field ? error.message : "";
         formError.textContent = general;
         formError.hidden = !general;
-        // 系统读取完成后，若焦点仍在标题上，把焦点交给系统选择。
-        if (doc.activeElement === heading && create.systems.status === "ready" && create.systems.items.length) {
-          const radios = [...systemList.querySelectorAll("input[type=radio]")];
-          (radios.find((radio) => radio.checked) || radios[0])?.focus();
-        }
-        if (error && error !== lastError) {
-          if (error.field === "name") input.focus();
-          else if (error.field === "system") {
-            const radios = [...systemList.querySelectorAll("input[type=radio]")];
-            (radios.find((radio) => radio.checked) || radios[0] || heading).focus();
-          }
-        }
+        if (error?.field === "name" && error !== lastError) input.focus();
         lastError = error;
       },
       destroy: hide,

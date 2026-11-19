@@ -842,8 +842,8 @@ static gboolean bridge_received(WebKitUserContentManager *manager, JSCValue *val
         else reply_error(reply, "Linux 版本使用 Cage 账户密码解锁。");
     } else if (!strcmp(name, "appReference")) {
         const char *kind = text_member(request, "kind");
-        const char *uri = !strcmp(kind, "source") ? "https://github.com/Lee-xeo/Claude-Cage/commits/main"
-            : !strcmp(kind, "releases") ? "https://github.com/Lee-xeo/Claude-Cage/releases" : NULL;
+        const char *uri = !strcmp(kind, "source") ? "https://github.com/sweetcornna/Claude-Cage-Tenant/commits/main"
+            : !strcmp(kind, "releases") ? "https://github.com/sweetcornna/Claude-Cage-Tenant/releases" : NULL;
         if (!uri) reply_error(reply, "未知的项目页面");
         else {
             GError *error = NULL;

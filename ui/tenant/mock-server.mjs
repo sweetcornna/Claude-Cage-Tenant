@@ -90,6 +90,7 @@ export async function startMockServer({
   ticketTtlMs = 60_000,
   registrationOpen = true,
   uiDir = HERE,
+  workbenchDir,
 } = {}) {
   const state = {
     users: new Map(), // username -> { id, username, salt, hash }
@@ -308,27 +309,7 @@ export async function startMockServer({
     }
     if (route === "GET /api/tenant/systems") return json(res, 200, { systems: state.systems.map((s) => ({ ...s })) });
     if (route === "GET /api/tenant/vms") return json(res, 200, { vms: userVms(auth.user).map(publicVm), limit: vmLimit });
-    if (route === "POST /api/tenant/vms") {
-      const name = typeof body.name === "string" ? body.name.trim() : "";
-      const length = Array.from(name).length;
-      if (!length || length > 64 || /\p{Cc}/u.test(name)) return problem(res, 400, "invalid_input", "名称需为 1–64 个字符且不含控制字符。");
-      const system = typeof body.system_id === "string" && SYSTEM_ID.test(body.system_id) ? state.systems.find((s) => s.id === body.system_id) : null;
-      if (!system) return problem(res, 400, "invalid_input", "所选系统不可用，请重新选择。");
-      if (userVms(auth.user).length >= vmLimit) return problem(res, 409, "vm_limit", `每个账户最多 ${vmLimit} 台虚拟机。`);
-      if (state.vms.size >= globalLimit) return problem(res, 409, "vm_limit", "服务器虚拟机总数已达上限。");
-      const vm = {
-        id: randomBytes(16).toString("hex"),
-        owner: auth.user.id,
-        name,
-        system_id: system.id,
-        system_label: system.label,
-        state: "stopped",
-        created_at: new Date().toISOString(),
-        seq: state.vms.size,
-      };
-      state.vms.set(vm.id, vm);
-      return json(res, 201, { vm: publicVm(vm) });
-    }
+    if (route === "POST /api/tenant/vms") return createVM(res, body, auth.user.id);
     const openMatch = /^\/api\/tenant\/vms\/([^/]+)\/open$/.exec(url.pathname);
     if (req.method === "POST" && openMatch) {
       const vm = state.vms.get(openMatch[1]);
@@ -344,6 +325,46 @@ export async function startMockServer({
       return json(res, 202, { vm: publicVm(vm) });
     }
     return problem(res, 404, "not_found", "未找到。");
+  }
+
+  function createVM(res, body, owner) {
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const length = Array.from(name).length;
+    if (!length || length > 64 || /\p{Cc}/u.test(name)) return problem(res, 400, "invalid_input", "名称需为 1–64 个字符且不含控制字符。");
+    const system = body.system_id === undefined ? state.systems[0]
+      : typeof body.system_id === "string" && SYSTEM_ID.test(body.system_id)
+        ? state.systems.find((s) => s.id === body.system_id) : null;
+    if (!system) return problem(res, 400, "invalid_input", "暂无可安装的系统，请联系管理员。");
+    if (userVms({ id: owner }).length >= vmLimit) return problem(res, 409, "vm_limit", `每个账户最多 ${vmLimit} 台虚拟机。`);
+    if (state.vms.size >= globalLimit) return problem(res, 409, "vm_limit", "服务器虚拟机总数已达上限。");
+    const vm = {
+      id: randomBytes(16).toString("hex"), owner, name,
+      system_id: system.id, system_label: system.label, state: "stopped",
+      created_at: new Date().toISOString(), seq: state.vms.size,
+    };
+    state.vms.set(vm.id, vm);
+    return json(res, 201, { vm: publicVm(vm) });
+  }
+
+  async function workbenchVMs(req, res, pathname, id, auth) {
+    const endpoint = "/api/client/virtual-machines";
+    if (pathname === endpoint && req.method === "GET") {
+      return json(res, 200, { vms: userVms({ id: auth.session.userId }).map(publicVm), current_id: id });
+    }
+    if (req.method !== "POST") return problem(res, 404, "not_found", "未找到。");
+    if (req.headers.origin !== vmOrigin(id)) return problem(res, 403, "origin_refused", "请求来源无效。");
+    if (!isJson(req)) return problem(res, 415, "invalid_content_type", "请求必须使用 application/json。");
+    const body = await readJson(req).catch(() => null);
+    if (!body || typeof body !== "object" || Array.isArray(body)) return problem(res, 400, "invalid_input", "请求内容无效。");
+    if (pathname === endpoint && Object.keys(body).length === 1) return createVM(res, { name: body.name }, auth.session.userId);
+    const target = /^\/api\/client\/virtual-machines\/([0-9a-f]{32})\/open$/.exec(pathname)?.[1];
+    if (target && Object.keys(body).length === 0) {
+      const vm = state.vms.get(target);
+      if (!vm || vm.owner !== auth.session.userId) return problem(res, 404, "vm_not_found", "虚拟机不存在。");
+      if (vm.state === "stopped" || vm.state === "error") boot(vm);
+      return json(res, 200, { vm_id: target, vm: publicVm(vm) });
+    }
+    return problem(res, 400, "invalid_input", "请求内容无效。");
   }
 
   function vmAuth(req, id) {
@@ -388,6 +409,31 @@ export async function startMockServer({
     }
     const auth = vmAuth(req, id);
     if (!auth) return problem(res, 401, "unauthenticated", "需要从门户重新进入工作台。");
+    if (url.pathname.startsWith("/api/client/virtual-machines")) return workbenchVMs(req, res, url.pathname, id, auth);
+    if (workbenchDir && req.method === "GET") {
+      if (url.pathname === "/api/client/context") return json(res, 200, {
+        mode: "local", connection_id: "local", server_platform: "linux",
+        tenant_workspace: true, virtual_machines: true, portal_origin: origin,
+      });
+      if (url.pathname === "/api/account") return json(res, 200, { exists: true, unlocked: true, username: "fixture" });
+      if (url.pathname === "/api/environment/initialization") return json(res, 200, { required: false });
+      if (url.pathname === "/api/status") return json(res, 200, { job: { running: false }, ready: false, projects: [] });
+      if (url.pathname === "/api/browser/tabs") return json(res, 200, { tabs: [] });
+      if (url.pathname.startsWith("/api/")) return json(res, 200, {});
+
+      const asset = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
+      if (/^(?:assets\/[\w.-]+|cage\.(?:png|svg)|index\.html)$/.test(asset)) {
+        const types = { html: "text/html", js: "text/javascript", css: "text/css", png: "image/png", svg: "image/svg+xml", woff2: "font/woff2" };
+        const type = types[asset.split(".").at(-1)];
+        if (type) {
+          const file = await readFile(join(workbenchDir, asset)).catch(() => null);
+          if (!file) return problem(res, 404, "not_found", "未找到。");
+          res.setHeader("Content-Security-Policy", `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; base-uri 'none'; form-action 'self'; ${ancestors}`);
+          if (asset === "index.html") state.served.push({ vmId: id, userId: auth.session.userId });
+          return send(res, 200, file, type);
+        }
+      }
+    }
     if (url.pathname === "/" && req.method === "GET") {
       state.served.push({ vmId: id, userId: auth.session.userId });
       res.setHeader("Content-Security-Policy", `default-src 'none'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; ${ancestors}`);

@@ -18,13 +18,13 @@ import {
   Settings,
 } from "lucide-react";
 import { api, native, nativeAvailable, writeClipboard } from "./api";
-import { getClientContext, isRemoteClient } from "./client-context.mjs";
+import { getClientContext, isCloudWorkbench } from "./client-context.mjs";
 import logo from "./logo.png";
 import "./account.css";
 
 const AccountContext = createContext(null);
 export const useAccount = () => useContext(AccountContext);
-const localDesktop = () => getClientContext().desktop_gateway && !isRemoteClient();
+const localDesktop = () => getClientContext().desktop_gateway && !isCloudWorkbench();
 const trustedLogin = (action, password) => api("/client/trusted-login", {
   action, password, connection_id: getClientContext().connection_id,
 });
@@ -151,7 +151,7 @@ export function AccountAvatar({ account, large = false }) {
   );
 }
 
-export function MacOSAccountGate({ children }) {
+export function MacOSAccountGate({ children, onBack }) {
   const { account, act } = useAccount();
   const [name, setName] = useState(account?.macos_guest_user || account?.username || "");
   const [password, setPassword] = useState("");
@@ -179,6 +179,7 @@ export function MacOSAccountGate({ children }) {
       {error && <p role="alert" className="account-error">{error}</p>}
       <button className="primary account-submit" disabled={busy}>{busy ? "正在保存…" : "保存账密并继续"}</button>
     </fieldset></form>
+    {onBack && <button type="button" className="quiet-button" disabled={busy} onClick={onBack}>返回系统选择</button>}
   </section></main>;
 }
 
@@ -304,7 +305,7 @@ export function AccountGate({ children }) {
       </div>
       <section
         className="account-entry"
-        aria-label={creating ? isRemoteClient() ? "创建云端账户" : "创建本地账户" : "解锁 Cage"}
+        aria-label={creating ? isCloudWorkbench() ? "创建云端账户" : "创建本地账户" : "解锁 Cage"}
       >
         {creating ? (
           <img className="account-welcome-logo" src={logo} alt="" />
@@ -320,10 +321,10 @@ export function AccountGate({ children }) {
         </h1>
         <p className="account-entry-intro">
           {creating
-            ? isRemoteClient() ? "在云端创建账户，保护这台主机上的工作与登录状态。" : "先注册用户名和密码，再选择客机系统并安装环境。macOS 客机会使用同一套账密。"
+            ? isCloudWorkbench() ? "在云端创建账户，保护这台主机上的工作与登录状态。" : "先注册用户名和密码，再选择客机系统并安装环境。macOS 客机会使用同一套账密。"
             : account
               ? account.trusted_local ? "本机工作区" : "输入密码，继续你的工作。"
-              : isRemoteClient() ? "正在读取云端账户…" : "正在读取本机账户…"}
+              : isCloudWorkbench() ? "正在读取云端账户…" : "正在读取本机账户…"}
         </p>
         {account?.background_running && (
           <div className="account-background">
@@ -405,7 +406,7 @@ export function AccountGate({ children }) {
                 className="primary account-submit"
                 disabled={busy || !password || (creating && (!username.trim() || (!localDesktop() && nativeAvailable() && deviceSupport === null)))}
               >
-                {busy ? "正在解锁…" : creating ? isRemoteClient() ? "创建云端账户" : "创建本地账户" : "解锁 Cage"}
+                {busy ? "正在解锁…" : creating ? isCloudWorkbench() ? "创建云端账户" : "创建本地账户" : "解锁 Cage"}
               </button>
               {!creating && <button type="button" className="text-button" onClick={() => { setPassword(""); setError(""); setRecovering(true); }}>忘记密码？</button>}
             </fieldset>
@@ -421,7 +422,7 @@ export function AccountGate({ children }) {
         )}
         <p className="account-local-note">
           <LockKeyhole size={14} />
-          {isRemoteClient() ? "账户资料保存在当前云端主机" : "账户资料仅保存在这台设备上"}
+          {isCloudWorkbench() ? "账户资料保存在当前云端主机" : "账户资料仅保存在这台设备上"}
         </p>
         {!account?.trusted_local && <p className="account-recovery-note">
           {creating
@@ -564,7 +565,7 @@ export function AccountMenu({ onSettings, onConfirm, onStatus, busy }) {
     if (
       action === "logout" &&
       !(await onConfirm({
-        title: isRemoteClient() ? "退出云端账户？" : "退出本地账户？",
+        title: isCloudWorkbench() ? "退出云端账户？" : "退出本地账户？",
         body: "这会停止 Cage 环境与后台任务，并锁定登录凭据。请先保存文件。",
         confirm: "停止环境并退出账户",
       }))
@@ -588,12 +589,12 @@ export function AccountMenu({ onSettings, onConfirm, onStatus, busy }) {
         <AccountAvatar account={account} />
         <span className="account-trigger-name">
           <strong>{account.username}</strong>
-          <small>{account.trusted_local ? "受信任的本机" : isRemoteClient() ? "云端账户" : "本地账户"}</small>
+          <small>{account.trusted_local ? "受信任的本机" : isCloudWorkbench() ? "云端账户" : "本地账户"}</small>
         </span>
         <ChevronDown size={15} />
       </button>
       {open && (
-        <div className="account-menu" role="menu" aria-label={isRemoteClient() ? "云端账户菜单" : "本地账户菜单"}
+        <div className="account-menu" role="menu" aria-label={isCloudWorkbench() ? "云端账户菜单" : "本地账户菜单"}
           onKeyDown={(event) => {
             if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
             event.preventDefault();
@@ -837,7 +838,7 @@ export function AccountSettings({ busy: environmentBusy, onDirty }) {
       {!account.trusted_local && <AccountDeviceSettings />}
       <p className="account-settings-note">
         <LockKeyhole size={15} />
-        {isRemoteClient() ? "账户、应用资料与登录凭据保存在当前云端主机。" : "一个本地账户，一个持久工作环境。资料与凭据不上传到 Cage 服务器。"}
+        {isCloudWorkbench() ? "账户、应用资料与登录凭据保存在当前云端主机。" : "一个本地账户，一个持久工作环境。资料与凭据不上传到 Cage 服务器。"}
       </p>
     </div>
   );

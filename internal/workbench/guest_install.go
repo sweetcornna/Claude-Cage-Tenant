@@ -345,6 +345,7 @@ func (s *Server) beginGuestInstallMode(w http.ResponseWriter, r *http.Request, i
 			if !unstarted {
 				minimumGiB = 0
 			}
+			reuseLocalVMInstallMedia(s.operationContext(), s.profile, cache, install.Source)
 			minimumGiB += int((install.Source.RemainingBytes(cache) + (1 << 30) - 1) / (1 << 30))
 			if available, ok := host.FreeGiB(cache); ok && available < minimumGiB {
 				return fmt.Errorf("创建所选系统至少需要 %d GiB 可用空间，当前有 %d GiB，请在存储设置中选择空间充足的位置", minimumGiB, available)

@@ -37,6 +37,7 @@ type Config struct {
 	UI                        fs.FS
 	Runtime                   Runtime
 	Systems                   []System
+	GuestAccount              *GuestAccount
 	AccountVMLimit            int
 	TotalVMLimit              int
 	ParallelStarts            int
@@ -44,26 +45,27 @@ type Config struct {
 }
 
 type Server struct {
-	site        site
-	cfg         Config
-	context     context.Context
-	cancel      context.CancelFunc
-	mu          sync.Mutex
-	workers     sync.WaitGroup
-	closeOnce   sync.Once
-	store       *store
-	sessions    map[string]*loginSession
-	grants      map[string]vmGrant
-	tickets     map[string]entryTicket
-	rates       map[rateKey]rateWindow
-	workspaces  map[string]*Workspace
-	systems     map[string]System
-	starting    map[string]bool
-	startFailed map[string]bool
-	startSlots  chan struct{}
-	hashSlots   chan struct{}
-	now         func() time.Time
-	sessionTTL  time.Duration
+	site          site
+	cfg           Config
+	context       context.Context
+	cancel        context.CancelFunc
+	mu            sync.Mutex
+	workers       sync.WaitGroup
+	closeOnce     sync.Once
+	store         *store
+	sessions      map[string]*loginSession
+	grants        map[string]vmGrant
+	tickets       map[string]entryTicket
+	rates         map[rateKey]rateWindow
+	workspaces    map[string]*Workspace
+	systems       map[string]System
+	defaultSystem System
+	starting      map[string]bool
+	startFailed   map[string]bool
+	startSlots    chan struct{}
+	hashSlots     chan struct{}
+	now           func() time.Time
+	sessionTTL    time.Duration
 }
 
 func NewServer(cfg Config) (*Server, error) {
@@ -89,6 +91,16 @@ func NewServer(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.GuestAccount == nil {
+		// New blank deployments get a managed guest account by default. The
+		// private per-deployment secret is created beside the tenant state and
+		// reused across restarts; an explicit -guest-account-file overrides it.
+		cfg.GuestAccount, err = loadOrCreateGuestAccount(cfg.StateDir)
+		if err != nil {
+			state.close()
+			return nil, err
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	server := &Server{
 		site: site, cfg: cfg, context: ctx, cancel: cancel, store: state,
@@ -97,6 +109,9 @@ func NewServer(cfg Config) (*Server, error) {
 		startFailed: make(map[string]bool),
 		startSlots:  make(chan struct{}, cfg.ParallelStarts), hashSlots: make(chan struct{}, 4),
 		now: time.Now, sessionTTL: 24 * time.Hour,
+	}
+	if len(cfg.Systems) != 0 {
+		server.defaultSystem = cfg.Systems[0]
 	}
 	server.workers.Go(server.maintain)
 	return server, nil

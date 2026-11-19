@@ -49,7 +49,9 @@ type desktopCandidate struct {
 // so opening a second host never closes or reroutes the current workbench.
 type desktopTarget struct {
 	id, mode  string
+	vmID      string
 	remote    *remotehost.Manager
+	local     DesktopLocalController
 	ctx       context.Context
 	cancel    context.CancelFunc
 	mu        sync.Mutex
@@ -124,6 +126,8 @@ type desktopGateway struct {
 	mu              sync.RWMutex
 	store           *remotehost.Store
 	local           DesktopLocalController
+	localVMs        *localVMStore
+	localFor        func(string) (DesktopLocalController, error)
 	generation      string
 	active, pending *desktopTarget
 	closed          bool
@@ -147,7 +151,8 @@ func (d *desktopGateway) context() ClientContext {
 	c.Mode, c.State = active.mode, active.state()
 	c.HostID, c.InstanceID = c.State.HostID, c.State.InstanceID
 	if active.mode == "local" {
-		c.Name, c.ServerPlatform = "本机环境", runtime.GOOS
+		c.VirtualMachines = d.localVMs != nil
+		c.Name, c.ServerPlatform = d.localVMName(active.vmID), runtime.GOOS
 	} else {
 		c.ServerPlatform = "linux"
 		if p, err := d.store.Get(c.HostID); err == nil {
@@ -169,6 +174,7 @@ type switchRequest struct {
 	CandidateID       string `json:"candidate_id,omitempty"`
 	Mode              string `json:"mode,omitempty"`
 	HostID            string `json:"host_id,omitempty"`
+	VMID              string `json:"-"`
 	Deploy            bool   `json:"deploy,omitempty"`
 	Passphrase        string `json:"passphrase,omitempty"`
 	LocalAction       string `json:"local_action,omitempty"`
@@ -188,6 +194,12 @@ func (d *desktopGateway) checkGeneration(id string) error {
 func (d *desktopGateway) prepare(in switchRequest) (*desktopCandidate, error) {
 	d.change.Lock()
 	defer d.change.Unlock()
+	return d.prepareLocked(in)
+}
+
+// prepareLocked is shared with the native VM open action, which already holds
+// the change lock for the whole ready/commit sequence.
+func (d *desktopGateway) prepareLocked(in switchRequest) (*desktopCandidate, error) {
 	if err := d.checkGeneration(in.ConnectionID); err != nil {
 		return nil, err
 	}
@@ -195,7 +207,7 @@ func (d *desktopGateway) prepare(in switchRequest) (*desktopCandidate, error) {
 		return nil, errors.New("请先取消当前候选连接")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	t := &desktopTarget{mode: in.Mode, ctx: ctx, cancel: cancel}
+	t := &desktopTarget{mode: in.Mode, vmID: in.VMID, ctx: ctx, cancel: cancel}
 	switch in.Mode {
 	case "remote":
 		t.remote = remotehost.NewManager(d.store)
@@ -208,19 +220,26 @@ func (d *desktopGateway) prepare(in switchRequest) (*desktopCandidate, error) {
 		}
 		t.id = st.ConnectionID
 	case "local":
-		if d.active != nil && d.active.mode == "local" && d.active.state().State == "connected" {
+		t.vmID = normalizedLocalVMID(in.VMID)
+		local, err := d.localController(t.vmID)
+		if err != nil {
+			t.close()
+			return nil, err
+		}
+		if d.active != nil && d.active.mode == "local" && d.active.state().State == "connected" && targetLocalVMID(d.active) == t.vmID {
 			t.close()
 			return nil, errors.New("已连接当前本机工作台")
 		}
 		t.id = randomToken()
-		if d.local == nil {
+		if local == nil {
 			t.close()
 			return nil, errors.New("本机运行组件不可用")
 		}
+		t.local = local
 		t.localDone = make(chan struct{})
 		go func() {
 			defer close(t.localDone)
-			session, err := d.local.Connect(ctx)
+			session, err := local.Connect(ctx)
 			t.mu.Lock()
 			t.session, t.localErr = session, err
 			t.mu.Unlock()
@@ -263,10 +282,10 @@ func (d *desktopGateway) cancelCandidate(in switchRequest) error {
 // can release that exact fresh process after rechecking its private launch ID.
 func (d *desktopGateway) discard(t *desktopTarget) {
 	t.close()
-	if t == nil || t.mode != "local" || t.session == nil {
+	if t == nil || t.mode != "local" || t.session == nil || t.local == nil {
 		return
 	}
-	if owner, ok := d.local.(interface {
+	if owner, ok := t.local.(interface {
 		ReleaseUnused(context.Context, *remotehost.Session) error
 	}); ok {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -277,18 +296,18 @@ func (d *desktopGateway) discard(t *desktopTarget) {
 	}
 }
 
-func (d *desktopGateway) stopLocal(ctx context.Context, expected string) error {
-	if d.local == nil || expected == "" {
+func (d *desktopGateway) stopLocal(ctx context.Context, local DesktopLocalController, expected string) error {
+	if local == nil || expected == "" {
 		return errors.New("无法确认本机后台身份，请刷新本机状态")
 	}
-	st, err := d.local.Status(ctx)
+	st, err := local.Status(ctx)
 	if err != nil {
 		return err
 	}
 	if !st.Known || st.ControllerID != expected {
 		return errors.New("本机后台已变化，请刷新状态后再停止")
 	}
-	return d.local.Release(ctx, st, true)
+	return local.Release(ctx, st, true)
 }
 
 func (d *desktopGateway) stopLocalCard(ctx context.Context, in switchRequest) error {
@@ -297,12 +316,19 @@ func (d *desktopGateway) stopLocalCard(ctx context.Context, in switchRequest) er
 	if err := d.checkGeneration(in.ConnectionID); err != nil {
 		return err
 	}
-	selected := d.active != nil && d.active.mode == "local"
+	local := d.local
+	selected := false
+	if t := d.active; t != nil && t.mode == "local" {
+		selected = true
+		if t.local != nil {
+			local = t.local
+		}
+	}
 	if selected {
 		resume := d.freezeView()
 		defer resume()
 	}
-	if err := d.stopLocal(ctx, in.LocalControllerID); err != nil {
+	if err := d.stopLocal(ctx, local, in.LocalControllerID); err != nil {
 		return err
 	}
 	if selected {
@@ -334,26 +360,30 @@ func suspendLocalView(ctx context.Context, t *desktopTarget) error {
 }
 
 func (d *desktopGateway) leaveLocal(ctx context.Context, in switchRequest, old *desktopTarget) error {
+	local := d.local
+	if old != nil && old.mode == "local" && old.local != nil {
+		local = old.local
+	}
 	switch in.LocalAction {
 	case "stop":
-		return d.stopLocal(ctx, in.LocalControllerID)
+		return d.stopLocal(ctx, local, in.LocalControllerID)
 	case "keep":
 		if old != nil && old.mode == "local" {
 			return suspendLocalView(ctx, old)
 		}
 		return nil
 	case "", "auto":
-		if d.local == nil {
+		if local == nil {
 			return nil
 		}
-		st, err := d.local.Status(ctx)
+		st, err := local.Status(ctx)
 		if err != nil || !st.Known || st.Running || st.Busy || st.LiveTerminals > 0 {
 			return errors.New("本机环境可能仍有任务，请选择保留运行或停止本机")
 		}
 		if !st.ServiceRunning {
 			return nil
 		}
-		released, err := d.local.ReleaseOwnedIdle(ctx, st)
+		released, err := local.ReleaseOwnedIdle(ctx, st)
 		if err != nil {
 			return err
 		}
@@ -369,6 +399,12 @@ func (d *desktopGateway) leaveLocal(ctx context.Context, in switchRequest, old *
 func (d *desktopGateway) commit(ctx context.Context, in switchRequest) error {
 	d.change.Lock()
 	defer d.change.Unlock()
+	return d.commitLocked(ctx, in)
+}
+
+// commitLocked is shared with the native VM open action. Callers hold the
+// change lock and must recheck their owner generation immediately before it.
+func (d *desktopGateway) commitLocked(ctx context.Context, in switchRequest) error {
 	t, err := d.matchesCandidate(in)
 	if err != nil {
 		return err
@@ -469,6 +505,19 @@ func (d *desktopGateway) close() {
 }
 
 func (d *desktopGateway) handle(path string, w http.ResponseWriter, r *http.Request) bool {
+	if path == "virtual-machines" {
+		d.virtualMachines(w, r)
+		return true
+	}
+	if strings.HasPrefix(path, "virtual-machines/") {
+		rest := strings.TrimPrefix(path, "virtual-machines/")
+		if id, action, ok := strings.Cut(rest, "/"); ok && id != "" && action == "open" {
+			d.openVirtualMachine(w, r, id)
+			return true
+		}
+		http.NotFound(w, r)
+		return true
+	}
 	if path == "trusted-login" {
 		d.trustedLogin(w, r)
 		return true

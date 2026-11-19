@@ -30,7 +30,7 @@ func main() {
 func run() error {
 	var config tenant.Config
 	var incus tenant.IncusConfig
-	var listen, uiDir, image, systemsFile string
+	var listen, uiDir, image, systemsFile, guestAccountFile string
 	flag.StringVar(&listen, "listen", "127.0.0.1:8080", "loopback HTTP listen address")
 	flag.StringVar(&config.Origin, "origin", "", "public portal origin, without a trailing slash")
 	flag.BoolVar(&config.Development, "dev", false, "enable HTTP development on cage.localhost")
@@ -47,6 +47,7 @@ func run() error {
 	flag.StringVar(&incus.Network, "incus-network", "", "allow one NIC on this trusted managed Incus network (default: no NIC)")
 	flag.StringVar(&image, "incus-image", "", "local Debian 12 VM fingerprint or alias for single-image deployments")
 	flag.StringVar(&systemsFile, "systems-file", "", "trusted JSON catalog of systems and full local Incus VM fingerprints")
+	flag.StringVar(&guestAccountFile, "guest-account-file", "", "private JSON ({username, secret}) used to enter tenant VM workbenches without a second prompt")
 	flag.StringVar(&config.LegacyDebianImage, "legacy-debian-image", "", "verified original Debian VM fingerprint for migrating legacy state (not a catalog alias)")
 	flag.StringVar(&incus.ControlPath, "guest-control-path", "/home/cage/.claude-cage/control.json", "absolute control.json path inside every VM")
 	flag.Parse()
@@ -98,6 +99,12 @@ func run() error {
 			return err
 		}
 		config.Systems = []tenant.System{tenant.DefaultSystem(fingerprint)}
+	}
+	if guestAccountFile != "" {
+		config.GuestAccount, err = tenant.LoadGuestAccount(guestAccountFile)
+		if err != nil {
+			return err
+		}
 	}
 	root, err := os.OpenRoot(uiDir)
 	if err != nil {

@@ -174,6 +174,12 @@ func fixtureGuest(id string) http.Handler {
 		switch r.URL.Path {
 		case "/api/client/about":
 			jsonReply(w, 200, map[string]string{"version": "fixture"})
+		case "/api/account":
+			if r.Method != http.MethodGet {
+				http.Error(w, "fixture account is read-only", http.StatusMethodNotAllowed)
+				return
+			}
+			jsonReply(w, 200, map[string]any{"exists": true, "unlocked": true, "username": "cage"})
 		case "/api/echo/file name":
 			for _, header := range []string{"Authorization", "Forwarded", "X-Forwarded-For", "X-Real-IP", "Referer", "X-Cage-Connection", "X-Cage-Agent-Window"} {
 				if r.Header.Get(header) != "" {
@@ -222,6 +228,96 @@ func fixtureGuest(id string) http.Handler {
 			_, _ = io.WriteString(w, id)
 		}
 	})
+}
+
+// fixtureAccountGuest models the parts of the workbench account API that the
+// tenant gateway uses, while delegating all other paths to fixtureGuest.
+type fixtureAccountGuest struct {
+	mu       sync.Mutex
+	username string
+	password string
+	exists   bool
+	unlocked bool
+	reads    int
+	creates  int
+	unlocks  int
+}
+
+func (a *fixtureAccountGuest) handler(id string) http.Handler {
+	base := fixtureGuest(id)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/account" && !strings.HasPrefix(r.URL.Path, "/api/account/") {
+			base.ServeHTTP(w, r)
+			return
+		}
+		if r.Host != "localhost:45001" || r.Header.Get("Origin") != guestOrigin || r.Header.Get("Cookie") != guestCookie+"="+fixtureSession {
+			http.Error(w, "wrong fixture account request", http.StatusUnauthorized)
+			return
+		}
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		switch r.URL.Path {
+		case "/api/account":
+			if r.Method != http.MethodGet {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			a.reads++
+			jsonReply(w, 200, map[string]any{"exists": a.exists, "unlocked": a.unlocked, "username": a.username})
+		case "/api/account/create":
+			var input struct {
+				Username        string `json:"username"`
+				Password        string `json:"password"`
+				ConfirmPassword string `json:"confirm_password"`
+			}
+			if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&input) != nil || input.Username == "" || input.Password != input.ConfirmPassword || len(input.Password) < 8 {
+				http.Error(w, "invalid account", http.StatusBadRequest)
+				return
+			}
+			if a.exists {
+				http.Error(w, "已有账户", http.StatusBadRequest)
+				return
+			}
+			a.exists, a.unlocked, a.username, a.password = true, true, input.Username, input.Password
+			a.creates++
+			jsonReply(w, 200, map[string]any{"exists": true, "unlocked": true, "username": a.username, "recovery_key": strings.Repeat("f", 64)})
+		case "/api/account/unlock":
+			var input struct {
+				Password string `json:"password"`
+			}
+			if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&input) != nil {
+				http.Error(w, "invalid account", http.StatusBadRequest)
+				return
+			}
+			a.unlocks++
+			if !a.exists || input.Password != a.password {
+				http.Error(w, "密码不正确", http.StatusBadRequest)
+				return
+			}
+			a.unlocked = true
+			jsonReply(w, 200, map[string]any{"exists": true, "unlocked": true, "username": a.username})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+func (a *fixtureAccountGuest) snapshot() (exists, unlocked bool, username, password string, reads, creates, unlocks int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.exists, a.unlocked, a.username, a.password, a.reads, a.creates, a.unlocks
+}
+
+func (a *fixtureAccountGuest) setLocked() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.unlocked = false
+}
+
+func (a *fixtureAccountGuest) setExistingAccount(username, password string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.username, a.password, a.exists, a.unlocked = username, password, true, false
 }
 
 type portalFixture struct {
@@ -418,6 +514,31 @@ func (f *portalFixture) connect(login *http.Cookie, id string) *http.Cookie {
 	return onlyCookie(f.t, response, "__Host-cage-workspace", true)
 }
 
+func TestTenantBrowserContextUsesCloudWorkbench(t *testing.T) {
+	fixture := newFixture(t, false)
+	login, _ := fixture.login("register", "alice")
+	a, b := fixture.create(login, "first"), fixture.create(login, "second")
+	cookie := fixture.connect(login, a.ID)
+	const endpoint = "/api/client/context"
+	wantStatus(t, fixture.request("GET", vmOrigin(a.ID), endpoint, "", nil), 401, "unauthenticated")
+	wantStatus(t, fixture.request("GET", vmOrigin(b.ID), endpoint, "", cookie), 401, "unauthenticated")
+	response := fixture.request("GET", vmOrigin(a.ID), endpoint, "", cookie)
+	wantStatus(t, response, 200, "")
+	var view struct {
+		Mode            string `json:"mode"`
+		ConnectionID    string `json:"connection_id"`
+		ServerPlatform  string `json:"server_platform"`
+		TenantWorkspace bool   `json:"tenant_workspace"`
+		VirtualMachines bool   `json:"virtual_machines"`
+		PortalOrigin    string `json:"portal_origin"`
+		DesktopGateway  bool   `json:"desktop_gateway"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil || view.Mode != "local" || view.ConnectionID != "local" || view.ServerPlatform != "linux" || !view.TenantWorkspace || !view.VirtualMachines || view.PortalOrigin != portalOrigin || view.DesktopGateway {
+		t.Fatalf("browser workspace context = %+v, %v", view, err)
+	}
+	wantStatus(t, fixture.request("POST", vmOrigin(a.ID), "/api/client/about", "{}", cookie), 404, "not_found")
+}
+
 func TestTenantExpectedUserGuardsSessionAndVMs(t *testing.T) {
 	fixture := newFixture(t, false)
 	alice, aliceUser := fixture.login("register", "alice")
@@ -544,7 +665,13 @@ func TestTenantOwnershipPersistenceAndConcurrentOpen(t *testing.T) {
 	}
 	fixture.runtime.mu.Lock()
 	calls := fixture.runtime.calls[first.ID]
+	aliceLaunch, bobLaunch := fixture.runtime.specs[first.ID], fixture.runtime.specs[third.ID]
 	fixture.runtime.mu.Unlock()
+	// The storage backend sees the same pinned image across account boundaries,
+	// with a separate instance identity for every VM.
+	if aliceLaunch.VMID != first.ID || bobLaunch.VMID != third.ID || aliceLaunch.Image != fixture.config.Systems[0].Image || bobLaunch.Image != aliceLaunch.Image {
+		t.Fatalf("wrong launch specs across accounts: %+v and %+v", aliceLaunch, bobLaunch)
+	}
 	if calls != 1 {
 		t.Fatalf("same VM started %d times", calls)
 	}
@@ -736,7 +863,7 @@ func TestTenantCatalogRetirementPreservesBindings(t *testing.T) {
 	if options.Body.String() != "{\"systems\":[{\"id\":\"debian-12\",\"label\":\"Debian 12\"},{\"id\":\"ubuntu-2404\",\"label\":\"Ubuntu 24.04\"}]}\n" {
 		t.Fatal("system directory does not match the configured public fields")
 	}
-	for _, invalid := range []string{`{"name":"missing"}`, `{"name":"unknown","system_id":"fedora"}`, `{"name":"override","system_id":"debian-12","image":"other"}`} {
+	for _, invalid := range []string{`{"name":"   "}`, `{"name":"unknown","system_id":"fedora"}`, `{"name":"override","system_id":"debian-12","image":"other"}`} {
 		wantStatus(t, fixture.request("POST", portalOrigin, "/api/tenant/vms", invalid, alice), 400, "invalid_input")
 	}
 	current := fixture.createWithSystem(alice, "existing", "ubuntu-2404")
@@ -1183,4 +1310,193 @@ func TestTenantLogoutAndExpiryRevokeLiveConnections(t *testing.T) {
 	expiringCookie := fixture.connect(expiring, record.ID)
 	checkRevocation(openStream(expiringCookie), openSocket(expiringCookie))
 	wantStatus(t, fixture.request("GET", portalOrigin, "/api/tenant/session", "", expiring), 401, "unauthenticated")
+}
+
+func TestTenantNameOnlyPortalCreateUsesDefaultSystem(t *testing.T) {
+	fixture := newFixture(t, false)
+	alice, _ := fixture.login("register", "alice")
+	response := fixture.request("POST", portalOrigin, "/api/tenant/vms", `{"name":"only a name"}`, alice)
+	wantStatus(t, response, 201, "")
+	var created struct{ VM vm }
+	if json.Unmarshal(response.Body.Bytes(), &created) != nil || created.VM.SystemID != defaultSystemID || created.VM.SystemLabel != "Debian 12" || created.VM.State != stopped {
+		t.Fatalf("name-only create did not use the configured default: %+v", created.VM)
+	}
+	response = fixture.request("POST", portalOrigin, "/api/tenant/vms", `{"name":"explicit","system_id":"ubuntu-2404"}`, alice)
+	wantStatus(t, response, 201, "")
+	if json.Unmarshal(response.Body.Bytes(), &created) != nil || created.VM.SystemID != "ubuntu-2404" || created.VM.SystemLabel != "Ubuntu 24.04" {
+		t.Fatalf("explicit system_id compatibility was lost: %+v", created.VM)
+	}
+}
+
+func TestTenantBrowserVirtualMachineControls(t *testing.T) {
+	fixture := newFixture(t, false)
+	alice, aliceUser := fixture.login("register", "alice")
+	bob, _ := fixture.login("register", "bob")
+	first := fixture.create(alice, "first")
+	bobVM := fixture.create(bob, "bob workspace")
+	cookie := fixture.connect(alice, first.ID)
+	const listPath = "/api/client/virtual-machines"
+
+	wantStatus(t, fixture.request("GET", vmOrigin(first.ID), listPath, "", nil), 401, "unauthenticated")
+	wantStatus(t, fixture.request("GET", vmOrigin(bobVM.ID), listPath, "", cookie), 401, "unauthenticated")
+	response := fixture.request("GET", vmOrigin(first.ID), listPath, "", cookie)
+	wantStatus(t, response, 200, "")
+	var list struct {
+		VMs       []vm   `json:"vms"`
+		CurrentID string `json:"current_id"`
+	}
+	if json.Unmarshal(response.Body.Bytes(), &list) != nil || list.CurrentID != first.ID || len(list.VMs) != 1 || list.VMs[0].ID != first.ID {
+		t.Fatalf("wrong owner-scoped VM list: %+v", list)
+	}
+
+	response = fixture.request("POST", vmOrigin(first.ID), listPath, `{"name":"second"}`, cookie)
+	wantStatus(t, response, 201, "")
+	var created struct{ VM vm }
+	if json.Unmarshal(response.Body.Bytes(), &created) != nil || !vmIDPattern.MatchString(created.VM.ID) || created.VM.Name != "second" || created.VM.SystemID != defaultSystemID || created.VM.State != stopped {
+		t.Fatalf("invalid browser create response: %s", response.Body.String())
+	}
+	fixture.runtime.mu.Lock()
+	started := fixture.runtime.calls[created.VM.ID]
+	fixture.runtime.mu.Unlock()
+	if started != 0 {
+		t.Fatal("VM creation did more than persist metadata")
+	}
+	wantStatus(t, fixture.request("POST", vmOrigin(first.ID), listPath, `{"name":"third","system_id":"ubuntu-2404"}`, cookie), 400, "invalid_input")
+	wantStatus(t, fixture.request("POST", vmOrigin(first.ID), listPath, `{"name":"third"}`, cookie), 409, "vm_limit")
+
+	wantStatus(t, fixture.request("POST", vmOrigin(first.ID), "/api/client/virtual-machines/"+bobVM.ID+"/open", "{}", cookie), 404, "vm_not_found")
+	wantStatus(t, fixture.request("POST", vmOrigin(first.ID), "/api/client/virtual-machines/not-an-id/open", "{}", cookie), 404, "not_found")
+
+	fixture.server.mu.Lock()
+	tickets := len(fixture.server.tickets)
+	fixture.server.mu.Unlock()
+	response = fixture.request("POST", vmOrigin(first.ID), "/api/client/virtual-machines/"+created.VM.ID+"/open", "{}", cookie)
+	wantStatus(t, response, 200, "")
+	var opened struct {
+		VMID string `json:"vm_id"`
+		VM   vm     `json:"vm"`
+	}
+	if json.Unmarshal(response.Body.Bytes(), &opened) != nil || opened.VMID != created.VM.ID || (opened.VM.State != starting && opened.VM.State != ready) {
+		t.Fatalf("invalid browser open response: %s", response.Body.String())
+	}
+	fixture.server.mu.Lock()
+	if len(fixture.server.tickets) != tickets {
+		fixture.server.mu.Unlock()
+		t.Fatal("browser open issued a duplicate ticket")
+	}
+	fixture.server.mu.Unlock()
+
+	fixture.state(alice, created.VM.ID, ready)
+	response = fixture.request("POST", vmOrigin(first.ID), "/api/client/virtual-machines/"+created.VM.ID+"/open", "{}", cookie)
+	wantStatus(t, response, 200, "")
+	if json.Unmarshal(response.Body.Bytes(), &opened) != nil || opened.VM.State != ready {
+		t.Fatalf("ready open did not report the ready VM: %s", response.Body.String())
+	}
+	fixture.server.mu.Lock()
+	if len(fixture.server.tickets) != tickets {
+		fixture.server.mu.Unlock()
+		t.Fatal("ready open issued a duplicate ticket")
+	}
+	fixture.server.mu.Unlock()
+
+	wantStatus(t, fixture.request("POST", vmOrigin(first.ID), "/api/client/virtual-machines/"+created.VM.ID+"/open", "{}", cookie, strings.Repeat("a", 32)), 409, "session_changed")
+
+	request := httptest.NewRequest("POST", listPath, strings.NewReader(`{"name":"origin"}`))
+	request.Host = strings.TrimPrefix(vmOrigin(first.ID), "https://")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", portalOrigin)
+	request.AddCookie(cookie)
+	wantStatus(t, fixture.serve(request), 403, "origin_refused")
+	request.Header.Set("Origin", vmOrigin(first.ID))
+	request.Header.Set("Sec-Fetch-Site", "cross-site")
+	wantStatus(t, fixture.serve(request), 403, "origin_refused")
+
+	bobCookie := fixture.connect(bob, bobVM.ID)
+	response = fixture.request("GET", vmOrigin(bobVM.ID), listPath, "", bobCookie)
+	wantStatus(t, response, 200, "")
+	if json.Unmarshal(response.Body.Bytes(), &list) != nil || list.CurrentID != bobVM.ID || len(list.VMs) != 1 || list.VMs[0].ID != bobVM.ID {
+		t.Fatalf("wrong second-account list: %+v", list)
+	}
+
+	wantStatus(t, fixture.request("POST", portalOrigin, "/api/tenant/logout", "{}", alice, aliceUser.ID), 204, "")
+	wantStatus(t, fixture.request("GET", vmOrigin(first.ID), listPath, "", cookie), 401, "unauthenticated")
+}
+
+func TestTenantManagedGuestAccount(t *testing.T) {
+	fixture := newFixture(t, false)
+	guest := &fixtureAccountGuest{}
+	fixture.runtime.guestHandler = func(id string) http.Handler { return guest.handler(id) }
+	alice, _ := fixture.login("register", "alice")
+	record := fixture.create(alice, "managed workspace")
+
+	path := filepath.Join(fixture.config.StateDir, guestAccountStateFile)
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("managed account secret was not persisted privately: %v", err)
+	}
+	loaded, err := LoadGuestAccount(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	derived := string(loaded.password(record.ID))
+	if !secretPattern.MatchString(derived) || len(derived) != 64 {
+		t.Fatal("derived guest password is not a 32-byte hex secret")
+	}
+
+	cookie := fixture.connect(alice, record.ID)
+	exists, unlocked, username, password, reads, creates, unlocks := guest.snapshot()
+	if !exists || !unlocked || username != defaultGuestAccountUsername || password != derived || creates != 1 || unlocks != 0 {
+		t.Fatalf("managed account was not created and entered: exists=%v unlocked=%v username=%q creates=%d unlocks=%d", exists, unlocked, username, creates, unlocks)
+	}
+	if reads == 0 {
+		t.Fatal("gateway did not inspect the guest account")
+	}
+
+	// Serving a ready workspace must not repeat the Argon2 account work.
+	for range 3 {
+		wantStatus(t, fixture.request("GET", vmOrigin(record.ID), "/", "", cookie), 200, "")
+	}
+	response := fixture.request("POST", vmOrigin(record.ID), "/api/client/virtual-machines/"+record.ID+"/open", "{}", cookie)
+	wantStatus(t, response, 200, "")
+	if _, _, _, _, after, _, _ := guest.snapshot(); after != reads {
+		t.Fatal("proxy or ready open touched the guest account")
+	}
+
+	// A gateway restart on the same VM boot must silently unlock the existing
+	// account instead of creating another one or asking the user.
+	guest.setLocked()
+	fixture.server.Close()
+	fixture.openServer()
+	alice, _ = fixture.login("login", "alice")
+	cookie = fixture.connect(alice, record.ID)
+	exists, unlocked, username, password, _, creates, unlocks = guest.snapshot()
+	if !exists || !unlocked || username != defaultGuestAccountUsername || password != derived || creates != 1 || unlocks != 1 {
+		t.Fatalf("restart did not unlock the managed account: exists=%v unlocked=%v creates=%d unlocks=%d", exists, unlocked, creates, unlocks)
+	}
+
+	// An account created before this feature (or with another name) is
+	// preserved: no re-keying, no account creation, and no forced prompt loss.
+	guest.setExistingAccount("someone-else", "the previous account password")
+	fixture.server.Close()
+	fixture.openServer()
+	alice, _ = fixture.login("login", "alice")
+	cookie = fixture.connect(alice, record.ID)
+	exists, unlocked, username, password, _, creates, unlocks = guest.snapshot()
+	if !exists || unlocked || username != "someone-else" || password != "the previous account password" || creates != 1 || unlocks != 1 {
+		t.Fatalf("existing account was modified: exists=%v unlocked=%v username=%q creates=%d unlocks=%d", exists, unlocked, username, creates, unlocks)
+	}
+
+	// The upstream workbench reports a wrong password as 400. A managed-name
+	// account with a changed password must also be left untouched and fall
+	// back to its normal password screen.
+	guest.setExistingAccount(defaultGuestAccountUsername, "changed by the owner")
+	fixture.server.Close()
+	fixture.openServer()
+	alice, _ = fixture.login("login", "alice")
+	cookie = fixture.connect(alice, record.ID)
+	exists, unlocked, username, password, _, creates, unlocks = guest.snapshot()
+	if !exists || unlocked || username != defaultGuestAccountUsername || password != "changed by the owner" || creates != 1 || unlocks != 2 {
+		t.Fatalf("changed-password account was modified: exists=%v unlocked=%v username=%q creates=%d unlocks=%d", exists, unlocked, username, creates, unlocks)
+	}
+	wantStatus(t, fixture.request("GET", vmOrigin(record.ID), "/api/client/virtual-machines", "", cookie), 200, "")
 }

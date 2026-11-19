@@ -33,20 +33,30 @@ func (s *Server) listVMs(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 		return
 	}
+	list := s.ownedVMsLocked(session.user.ID)
+	s.mu.Unlock()
+	sortVMs(list)
+	jsonReply(w, http.StatusOK, map[string]any{"vms": list, "limit": s.cfg.AccountVMLimit})
+}
+
+// Caller holds s.mu.
+func (s *Server) ownedVMsLocked(owner string) []vm {
 	list := make([]vm, 0)
 	for _, record := range s.store.VMs {
-		if record.Owner == session.user.ID {
+		if record.Owner == owner {
 			list = append(list, s.visibleVMLocked(record))
 		}
 	}
-	s.mu.Unlock()
+	return list
+}
+
+func sortVMs(list []vm) {
 	slices.SortFunc(list, func(left, right vm) int {
 		if order := left.CreatedAt.Compare(right.CreatedAt); order != 0 {
 			return order
 		}
 		return cmp.Compare(left.ID, right.ID)
 	})
-	jsonReply(w, http.StatusOK, map[string]any{"vms": list, "limit": s.cfg.AccountVMLimit})
 }
 
 func (s *Server) visibleVMLocked(record vmRecord) vm {
@@ -71,21 +81,39 @@ func (s *Server) createVM(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &input) {
 		return
 	}
-	name := strings.TrimSpace(input.Name)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	session := s.expectedSessionLocked(w, r)
 	if session == nil {
 		return
 	}
-	if !validVMName(name) {
+	record, code := s.createVMRecordLocked(session, input.Name, input.SystemID)
+	switch code {
+	case "":
+		jsonReply(w, http.StatusCreated, map[string]vm{"vm": record.vm})
+	case "vm_limit":
+		problem(w, http.StatusConflict, "vm_limit", "The workspace quota has been reached.")
+	case "runtime_unavailable":
+		unavailable(w)
+	default:
 		invalidInput(w)
-		return
 	}
-	system, configured := s.systems[input.SystemID]
+}
+
+// createVMRecordLocked persists a new VM for the signed-in account. An empty
+// system ID selects the first administrator-configured system, which is also
+// the default for clients that only submit a name.
+func (s *Server) createVMRecordLocked(session *loginSession, name, systemID string) (vmRecord, string) {
+	name = strings.TrimSpace(name)
+	if !validVMName(name) {
+		return vmRecord{}, "invalid_input"
+	}
+	if systemID == "" {
+		systemID = s.defaultSystem.ID
+	}
+	system, configured := s.systems[systemID]
 	if !configured {
-		invalidInput(w)
-		return
+		return vmRecord{}, "invalid_input"
 	}
 	count := 0
 	for _, record := range s.store.VMs {
@@ -94,8 +122,7 @@ func (s *Server) createVM(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if count >= s.cfg.AccountVMLimit || len(s.store.VMs) >= s.cfg.TotalVMLimit {
-		problem(w, http.StatusConflict, "vm_limit", "The workspace quota has been reached.")
-		return
+		return vmRecord{}, "vm_limit"
 	}
 	id := secret(16)
 	for s.store.VMs[id].ID != "" {
@@ -106,10 +133,9 @@ func (s *Server) createVM(w http.ResponseWriter, r *http.Request) {
 		Owner: session.user.ID, Image: system.Image,
 	}
 	if s.saveVM(record) != nil {
-		unavailable(w)
-		return
+		return vmRecord{}, "runtime_unavailable"
 	}
-	jsonReply(w, http.StatusCreated, map[string]vm{"vm": record.vm})
+	return record, ""
 }
 
 func (s *Server) saveVM(record vmRecord) error {
@@ -143,33 +169,57 @@ func (s *Server) openVM(w http.ResponseWriter, r *http.Request, id string) {
 		rateLimited(w)
 		return
 	}
-	current := s.workspaces[id]
-	visible := s.visibleVMLocked(record)
-	if visible.State == ready && now.Sub(current.checkedAt) < readinessTTL {
-		if session.ticketCount >= maxLoginTickets || len(s.tickets) >= maxTickets {
-			s.prune(now)
-			if session.ticketCount >= maxLoginTickets || len(s.tickets) >= maxTickets {
-				rateLimited(w)
-				return
-			}
+	if s.workspaceReadyLocked(record, now) {
+		url, ok := s.issueTicketLocked(session, record.ID, now)
+		if !ok {
+			rateLimited(w)
+			return
 		}
-		token := secret(32)
-		s.tickets[token] = entryTicket{grant: vmGrant{login: session, vmID: id}, expires: now.Add(ticketTTL)}
-		session.ticketCount++
-		jsonReply(w, http.StatusOK, map[string]any{"vm": visible, "workspace_url": s.site.vmOrigin(id) + "/_tenant/enter#" + token})
+		jsonReply(w, http.StatusOK, map[string]any{"vm": s.visibleVMLocked(record), "workspace_url": url})
 		return
 	}
-	if !s.starting[id] && (current == nil || !now.Before(current.nextProbe)) {
-		s.starting[id] = true
-		delete(s.startFailed, id)
-		var faults uint64
-		if current != nil {
-			faults = current.faults
-		}
-		spec := LaunchSpec{VMID: id, SystemID: record.SystemID, Image: record.Image}
-		s.workers.Go(func() { s.prepare(spec, current, faults) })
-	}
+	s.startVMLocked(record, now)
 	jsonReply(w, http.StatusAccepted, map[string]vm{"vm": s.visibleVMLocked(record)})
+}
+
+// Caller holds s.mu.
+func (s *Server) workspaceReadyLocked(record vmRecord, now time.Time) bool {
+	workspace := s.workspaces[record.ID]
+	return workspace != nil && !workspace.checkedAt.IsZero() && now.Sub(workspace.checkedAt) < readinessTTL && s.visibleVMLocked(record).State == ready
+}
+
+// issueTicketLocked returns a one-time workspace entry URL for the target
+// record. The caller must hold s.mu and have validated the session and owner.
+// The bool is false when the per-session or global ticket budget is exhausted.
+func (s *Server) issueTicketLocked(session *loginSession, id string, now time.Time) (string, bool) {
+	if session.ticketCount >= maxLoginTickets || len(s.tickets) >= maxTickets {
+		s.prune(now)
+		if session.ticketCount >= maxLoginTickets || len(s.tickets) >= maxTickets {
+			return "", false
+		}
+	}
+	token := secret(32)
+	s.tickets[token] = entryTicket{grant: vmGrant{login: session, vmID: id}, expires: now.Add(ticketTTL)}
+	session.ticketCount++
+	return s.site.vmOrigin(id) + "/_tenant/enter#" + token, true
+}
+
+// startVMLocked joins or creates the idempotent preparation task for a VM.
+// Caller holds s.mu.
+func (s *Server) startVMLocked(record vmRecord, now time.Time) {
+	id := record.ID
+	current := s.workspaces[id]
+	if s.starting[id] || (current != nil && now.Before(current.nextProbe)) {
+		return
+	}
+	s.starting[id] = true
+	delete(s.startFailed, id)
+	var faults uint64
+	if current != nil {
+		faults = current.faults
+	}
+	spec := LaunchSpec{VMID: id, SystemID: record.SystemID, Image: record.Image}
+	s.workers.Go(func() { s.prepare(spec, current, faults) })
 }
 
 func (s *Server) invalidateWorkspace(id string, workspace *Workspace) {
@@ -265,6 +315,24 @@ func (s *Server) prepare(spec LaunchSpec, previous *Workspace, faults uint64) {
 			if workspace != nil {
 				workspace.close()
 				workspace = nil
+			}
+		}
+		if workspace != nil && s.cfg.GuestAccount != nil {
+			// The portal already authenticated the owner. An explicitly
+			// configured guest account lets that owner enter the VM without a
+			// second prompt. A VM that already has a different account is left
+			// untouched and keeps its existing account screen and vault.
+			accountCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			entered, accountErr := workspace.ensureGuestAccount(accountCtx, s.cfg.GuestAccount, id)
+			cancel()
+			if accountErr != nil {
+				if s.context.Err() == nil {
+					log.Printf("cage-tenant: workspace %s guest account setup failed: %v", id, accountErr)
+				}
+				workspace.close()
+				workspace = nil
+			} else if !entered && s.context.Err() == nil {
+				log.Printf("cage-tenant: workspace %s keeps its existing guest account", id)
 			}
 		}
 	}

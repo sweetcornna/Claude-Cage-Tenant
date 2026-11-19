@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -56,7 +57,16 @@ func hasControl(s string) bool {
 	return strings.ContainsFunc(s, func(r rune) bool { return r < 32 || r == 127 })
 }
 
+const sshHosts = "remote-hosts.json"
+const tenantHosts = "tenant-hosts.json"
+
 func normalizeProfile(p HostProfile) (HostProfile, error) {
+	if p.Kind == TenantKind {
+		return normalizeTenantProfile(p)
+	}
+	if p.Kind != "" || p.Portal != "" || p.VMID != "" {
+		return p, failure("invalid_profile", "远程主机连接方式无效")
+	}
 	p.Name = strings.TrimSpace(p.Name)
 	p.Host = strings.TrimSpace(p.Host)
 	p.User = strings.TrimSpace(p.User)
@@ -119,8 +129,8 @@ func normalizeProfile(p HostProfile) (HostProfile, error) {
 	return p, nil
 }
 
-func (s *Store) read() ([]HostProfile, error) {
-	filename := filepath.Join(s.profile, "remote-hosts.json")
+func (s *Store) read(kindFile string) ([]HostProfile, error) {
+	filename := filepath.Join(s.profile, kindFile)
 	if err := host.CheckPrivateFile(filename); err != nil {
 		if os.IsNotExist(err) {
 			return []HostProfile{}, nil
@@ -149,7 +159,7 @@ func (s *Store) read() ([]HostProfile, error) {
 	seen := map[string]bool{}
 	for i, p := range data.Hosts {
 		normalized, err := normalizeProfile(p)
-		if err != nil || p.ID == "" || seen[p.ID] {
+		if err != nil || (p.Kind == TenantKind) != (kindFile == tenantHosts) || p.ID == "" || seen[p.ID] {
 			return nil, failure("profile_invalid", "远程主机配置内容无效")
 		}
 		data.Hosts[i] = normalized
@@ -161,11 +171,28 @@ func (s *Store) read() ([]HostProfile, error) {
 	return data.Hosts, nil
 }
 
-func (s *Store) write(profiles []HostProfile) error {
+func normalizeTenantProfile(p HostProfile) (HostProfile, error) {
+	portal, err := parseTenantPortal(p.Portal)
+	if err != nil {
+		return p, err
+	}
+	p.Name, p.User = strings.TrimSpace(p.Name), canonicalTenantUser(p.User)
+	if p.Name == "" || len(p.Name) > 256 || hasControl(p.Name) || p.User == "" || !tenantVMID.MatchString(p.VMID) || (p.ID != "" && !uuidPattern.MatchString(p.ID)) {
+		return p, failure("invalid_profile", "请填写有效的门户账户、虚拟机和主机名称")
+	}
+	out := HostProfile{ID: p.ID, Kind: TenantKind, Portal: portal.String(), VMID: p.VMID, Name: p.Name, User: p.User,
+		Host: portal.Hostname(), Port: 443, Platform: "linux", Auth: AuthConfig{Kind: "portal_password"}}
+	if portal.Port() != "" {
+		out.Port, _ = strconv.Atoi(portal.Port())
+	}
+	return out, nil
+}
+
+func (s *Store) write(kindFile string, profiles []HostProfile) error {
 	if err := host.EnsurePrivateDir(s.profile); err != nil {
 		return failure("profile_permissions", "无法创建私有远程主机配置目录")
 	}
-	file, err := os.CreateTemp(s.profile, ".remote-hosts-*")
+	file, err := os.CreateTemp(s.profile, "."+kindFile+"-*")
 	if err != nil {
 		return failure("profile_write", "无法保存远程主机配置")
 	}
@@ -179,7 +206,7 @@ func (s *Store) write(profiles []HostProfile) error {
 	}
 	err = errors.Join(err, file.Close())
 	if err == nil {
-		err = os.Rename(tmp, filepath.Join(s.profile, "remote-hosts.json"))
+		err = os.Rename(tmp, filepath.Join(s.profile, kindFile))
 	}
 	if err != nil {
 		return failure("profile_write", "远程主机配置未能保存，现有文件保持不变")
@@ -187,16 +214,35 @@ func (s *Store) write(profiles []HostProfile) error {
 	return nil
 }
 
-func (s *Store) List() ([]HostProfile, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.read() }
+func (s *Store) ListSSH() ([]HostProfile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.read(sshHosts)
+}
+
+// List returns valid profiles even when the other file cannot be read.
+func (s *Store) List() ([]HostProfile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ssh, sshErr := s.read(sshHosts)
+	tenant, tenantErr := s.read(tenantHosts)
+	if sshErr != nil {
+		sshErr = errors.New("SSH 主机：" + sshErr.Error())
+	}
+	if tenantErr != nil {
+		tenantErr = errors.New("多租户服务器：" + tenantErr.Error())
+	}
+	return append(ssh, tenant...), errors.Join(sshErr, tenantErr)
+}
 func (s *Store) Get(id string) (HostProfile, error) {
 	profiles, err := s.List()
-	if err != nil {
-		return HostProfile{}, err
-	}
 	for _, p := range profiles {
 		if p.ID == id {
 			return p, nil
 		}
+	}
+	if err != nil {
+		return HostProfile{}, err
 	}
 	return HostProfile{}, failure("host_not_found", "远程主机配置已不存在")
 }
@@ -207,9 +253,20 @@ func (s *Store) Upsert(profile HostProfile) (HostProfile, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	profiles, err := s.read()
+	kindFile := sshHosts
+	if profile.Kind == TenantKind {
+		kindFile = tenantHosts
+	}
+	profiles, err := s.read(kindFile)
 	if err != nil {
 		return profile, err
+	}
+	if profile.Kind == TenantKind {
+		for _, p := range profiles {
+			if p.ID != profile.ID && p.Portal == profile.Portal && p.VMID == profile.VMID {
+				return profile, failure("tenant_vm_saved", "这台虚拟机已在主机列表中")
+			}
+		}
 	}
 	if profile.ID == "" {
 		if len(profiles) >= 100 {
@@ -230,19 +287,26 @@ func (s *Store) Upsert(profile HostProfile) (HostProfile, error) {
 			return profile, failure("host_not_found", "远程主机配置已不存在")
 		}
 	}
-	return profile, s.write(profiles)
+	return profile, s.write(kindFile, profiles)
 }
 func (s *Store) Delete(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	profiles, err := s.read()
-	if err != nil {
-		return err
-	}
-	for i, p := range profiles {
-		if p.ID == id {
-			return s.write(append(profiles[:i], profiles[i+1:]...))
+	var readErr error
+	for _, kindFile := range []string{sshHosts, tenantHosts} {
+		profiles, err := s.read(kindFile)
+		if err != nil {
+			readErr = errors.Join(readErr, err)
+			continue
 		}
+		for i, p := range profiles {
+			if p.ID == id {
+				return s.write(kindFile, append(profiles[:i], profiles[i+1:]...))
+			}
+		}
+	}
+	if readErr != nil {
+		return readErr
 	}
 	return failure("host_not_found", "远程主机配置已不存在")
 }

@@ -16,7 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { api, normalizeURL, native, nativeAvailable } from "./api";
-import { clientKeyboard, clientStorageKey, getClientContext, isRemoteClient, runtimeURL, runtimeSocketURL } from "./client-context.mjs";
+import { clientKeyboard, clientStorageKey, getClientContext, isCloudWorkbench, isRemoteClient, runtimeURL, runtimeSocketURL } from "./client-context.mjs";
 import { shareClipboard } from "./shared-clipboard.mjs";
 import { RemoteView, TerminalView, Modal } from "./views";
 import { usePasswordVault } from "./password-vault";
@@ -1825,7 +1825,7 @@ function App() {
                     <p className="welcome-hint">
                       {status.guest_system === "windows-remote" ? "PowerShell 和浏览器无需 Claude 登录。只有使用 Claude 时才需要登录账户。" : <>打开项目后，在终端输入 <code>claude</code>，按提示登录你的账户。</>}
                       <br />
-                      {status.guest_system === "windows-remote" ? "文件保存在云端隔离工作目录中，不会挂载你的本地文件夹。" : isRemoteClient() ? "打开的项目位于云端，编辑和删除会直接影响云端文件。" : "打开的项目与本机共享，编辑和删除文件会同步。"}
+                      {status.guest_system === "windows-remote" ? "文件保存在云端隔离工作目录中，不会挂载你的本地文件夹。" : isCloudWorkbench() ? "打开的项目位于云端，编辑和删除会直接影响云端文件。" : "打开的项目与本机共享，编辑和删除文件会同步。"}
                     </p>
                   )}
                   </>}
@@ -1920,7 +1920,7 @@ function App() {
                   ? status.job.message
                   : running
                     ? status.ready
-                      ? isRemoteClient() ? "文件保存在云端" : "文件与本机同步"
+                      ? isCloudWorkbench() ? "文件保存在云端" : "文件与本机同步"
                       : "环境运行中 · 浏览器待恢复"
                     : "")} />
             </span>

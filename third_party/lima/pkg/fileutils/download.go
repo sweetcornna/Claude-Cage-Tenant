@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path"
+	"path/filepath"
 
 	"github.com/sirupsen/logrus"
 
@@ -20,6 +22,25 @@ var ErrSkipped = errors.New("skipped to download")
 
 // DownloadFile downloads a file to the cache, optionally copying it to the destination. Returns path in cache.
 func DownloadFile(ctx context.Context, dest string, f limatype.File, decompress bool, description string, expectedArch limatype.Arch, supportedImageFormats []string) (string, error) {
+	return downloadFile(ctx, dest, f, decompress, description, expectedArch, supportedImageFormats, "")
+}
+
+// DownloadLinuxImage uses the optional Cage cache for pinned, public Linux
+// boot images. The regular downloader still verifies the payload and gives
+// each VM its own file (copy-on-write when supported by the filesystem).
+func DownloadLinuxImage(ctx context.Context, dest string, f limatype.File, expectedArch limatype.Arch, supportedImageFormats []string) (string, error) {
+	cache := os.Getenv("CAGE_LIMA_LINUX_IMAGE_CACHE")
+	if !filepath.IsAbs(cache) || f.Digest == "" || f.Digest.Validate() != nil || downloader.IsLocal(f.Location) {
+		cache = ""
+	} else {
+		// Use the pinned digest in addition to the downloader's URL key. A new
+		// version at a stable URL cannot replace another VM's chosen image.
+		cache = filepath.Join(cache, f.Digest.Algorithm().String(), f.Digest.Encoded())
+	}
+	return downloadFile(ctx, dest, f, true, "the image", expectedArch, supportedImageFormats, cache)
+}
+
+func downloadFile(ctx context.Context, dest string, f limatype.File, decompress bool, description string, expectedArch limatype.Arch, supportedImageFormats []string, cache string) (string, error) {
 	if f.Arch != expectedArch {
 		return "", fmt.Errorf("%w: %#q: unsupported arch: %#q", ErrSkipped, f.Location, f.Arch)
 	}
@@ -30,6 +51,9 @@ func DownloadFile(ctx context.Context, dest string, f limatype.File, decompress 
 		downloader.WithDecompress(decompress),
 		downloader.WithDescription(fmt.Sprintf("%s (%s)", description, path.Base(f.Location))),
 		downloader.WithExpectedDigest(f.Digest),
+	}
+	if cache != "" {
+		opts = append(opts, downloader.WithCacheDir(cache))
 	}
 	if len(supportedImageFormats) > 0 {
 		opts = append(opts, downloader.WithImageFormats(supportedImageFormats))

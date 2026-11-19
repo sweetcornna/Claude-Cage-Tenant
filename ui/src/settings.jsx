@@ -4,7 +4,7 @@ import { Smartphone } from "lucide-react";
 import { PasswordVaultSettings } from "./password-vault";
 import { KeyRound } from "lucide-react";
 import { InlineSelect } from "./inline-select";
-import { clientKeyboard, isRemoteClient, saveClientKeyboard } from "./client-context.mjs";
+import { clientKeyboard, isCloudWorkbench, isRemoteClient, saveClientKeyboard } from "./client-context.mjs";
 import { shortcut, usesControl } from "./platform.mjs";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -605,9 +605,9 @@ export function SettingsPanel({
               <>
                 <div className="section-title">
                   <h3>环境与恢复</h3>
-                  <p>{isRemoteClient() ? "项目位于云端，Cage 中的改动会直接保存到云端文件。" : "本机与 Cage 中的改动会双向同步。"}</p>
+                  <p>{isCloudWorkbench() ? "项目位于云端，Cage 中的改动会直接保存到云端文件。" : "本机与 Cage 中的改动会双向同步。"}</p>
                 </div>
-                {status.local_vm_storage && !isRemoteClient() && <EnvironmentStorage status={status} onConfirm={onConfirm} />}
+                {status.local_vm_storage && !isCloudWorkbench() && <EnvironmentStorage status={status} onConfirm={onConfirm} />}
                 <div className="setting-summary-row">
                   <span>当前项目</span>
                   <strong title={current.workspace}>
@@ -615,7 +615,7 @@ export function SettingsPanel({
                   </strong>
                 </div>
                 <p className="field-help">
-                  {isRemoteClient() ? "点击侧栏“项目”标题旁的加号，可浏览并选择云端文件夹。" : "点击侧栏“项目”标题旁的加号，可选择其他本地文件夹。"}
+                  {isCloudWorkbench() ? "点击侧栏“项目”标题旁的加号，可浏览并选择云端文件夹。" : "点击侧栏“项目”标题旁的加号，可选择其他本地文件夹。"}
                 </p>
                 <div className="project-explanation">
                   <FolderOpen size={22} />

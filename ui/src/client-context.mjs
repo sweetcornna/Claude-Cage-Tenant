@@ -5,6 +5,7 @@ export function setClientContext(value) {
 }
 
 export const getClientContext = () => current;
+export const isCloudWorkbench = () => current.mode === "remote" || current.tenant_workspace === true;
 export const isRemoteClient = () => current.mode === "remote";
 
 export function assertConnection(connectionID) {

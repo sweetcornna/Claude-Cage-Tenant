@@ -127,8 +127,14 @@ func Prepare(ctx context.Context, inst *limatype.Instance, guestAgent string) (*
 				errs[i] = fmt.Errorf("%w: archVariant mismatch (expected %q, got %q)", fileutils.ErrSkipped, targetArchVariant, f.ArchVariant)
 				continue
 			}
-			if _, err := fileutils.DownloadFile(ctx, imagePath, f.File, true, "the image", *inst.Config.Arch, supportedImageFormats); err != nil {
-				errs[i] = err
+			var imageErr error
+			if *inst.Config.OS == limatype.LINUX {
+				_, imageErr = fileutils.DownloadLinuxImage(ctx, imagePath, f.File, *inst.Config.Arch, supportedImageFormats)
+			} else {
+				_, imageErr = fileutils.DownloadFile(ctx, imagePath, f.File, true, "the image", *inst.Config.Arch, supportedImageFormats)
+			}
+			if imageErr != nil {
+				errs[i] = imageErr
 				continue
 			}
 			if f.Kernel != nil {

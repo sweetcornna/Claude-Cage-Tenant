@@ -156,11 +156,9 @@ describe("门户 ↔ mock 联调", () => {
     const unknownUser = await post("/api/tenant/login", { username: "nobody", password: "wrong password!!" });
     assert.equal(wrongPassword.status, 401);
     assert.deepEqual(parse(wrongPassword), parse(unknownUser), "错误响应不泄露账号是否存在");
-    res = await post("/api/tenant/vms", { name: "无系统" });
-    assert.equal(parse(res).error.code, "invalid_input", "创建必须带 system_id");
   });
 
-  test("两个账户：多 VM、系统选择、切换、票据、隔离与登出撤销", async () => {
+  test("两个账户：多 VM、默认系统、切换、票据、隔离与登出撤销", async () => {
     const aliceBrowser = browser(mock);
     const alice = portalFor(mock, aliceBrowser);
     await alice.portal.boot();
@@ -170,14 +168,11 @@ describe("门户 ↔ mock 联调", () => {
     await waitFor(() => alice.state.listStatus === "ready", "alice 列表");
     assert.equal(alice.state.vms.length, 0);
 
-    // 新建第一台：打开弹窗读取系统，选择 Ubuntu。
+    // 新建第一台使用服务端默认系统。
     alice.portal.openCreate();
-    await waitFor(() => alice.state.create.systems.status === "ready", "系统目录");
-    assert.deepEqual(alice.state.create.systems.items.map((s) => s.id), ["debian-12", "ubuntu-24-04"]);
-    alice.portal.chooseSystem("ubuntu-24-04");
     await alice.portal.createVm("开发环境");
     const vmA = alice.state.vms[0];
-    assert.equal(vmA.system_label, "Ubuntu 24.04 LTS");
+    assert.equal(vmA.system_label, "Debian 12");
     assert.equal(alice.state.selectedId, vmA.id);
     await waitFor(() => alice.state.target?.status === "connecting", "第一台就绪并取得入口");
     const firstUrl = alice.state.target.frame.src;
@@ -196,9 +191,6 @@ describe("门户 ↔ mock 联调", () => {
 
     // 新建第二台（每次打开弹窗都重新开始）。
     alice.portal.openCreate();
-    assert.equal(alice.state.create.systemId, null);
-    await waitFor(() => alice.state.create.systems.status === "ready", "系统目录（第二次）");
-    alice.portal.chooseSystem("debian-12");
     await alice.portal.createVm("测试环境");
     const vmB = alice.state.vms[1];
     assert.equal(alice.state.target.vmId, vmB.id);
@@ -236,8 +228,6 @@ describe("门户 ↔ mock 联调", () => {
     const bobVmPage = await bobBrowser.request(`${mock.vmOrigin(vmA.id)}/`);
     assert.equal(bobVmPage.status, 401, "没有 VM Cookie 无法访问工作台");
     bob.portal.openCreate();
-    await waitFor(() => bob.state.create.systems.status === "ready", "bob 系统目录");
-    bob.portal.chooseSystem("debian-12");
     await bob.portal.createVm("bob 的环境");
     assert.equal(bob.state.vms.length, 1);
     assert.equal(alice.state.vms.length, 2, "账户之间互不影响");
@@ -283,8 +273,6 @@ describe("门户 ↔ mock 联调", () => {
     await waitFor(() => [...mock.state.vms.values()].every((vm) => vm.state !== "starting"), "其他 VM 启动完成");
     mock.failNextBoot("*", "所选系统镜像缺失，请稍后重试。");
     dave.portal.openCreate();
-    await waitFor(() => dave.state.create.systems.status === "ready", "系统目录");
-    dave.portal.chooseSystem("debian-12");
     await dave.portal.createVm("会失败的环境");
     await waitFor(() => dave.state.target?.status === "error", "启动失败");
     assert.equal(dave.state.target.error.message, "所选系统镜像缺失，请稍后重试。");
@@ -309,8 +297,6 @@ describe("门户 ↔ mock 联调", () => {
     await tab1.portal.register({ username: "frank", password: PASSWORD, confirm: PASSWORD });
     await waitFor(() => tab1.state.listStatus === "ready", "frank 列表");
     tab1.portal.openCreate();
-    await waitFor(() => tab1.state.create.systems.status === "ready", "frank 系统目录");
-    tab1.portal.chooseSystem("debian-12");
 
     // 另一个标签页退出并以新账户登录。
     await tab2.portal.boot();
@@ -371,8 +357,6 @@ describe("门户 ↔ mock 联调", () => {
     mock.setSystems([]);
     try {
       erin.portal.openCreate();
-      await waitFor(() => erin.state.create.systems.status === "ready", "空目录");
-      assert.equal(erin.state.create.systems.items.length, 0);
       await erin.portal.createVm("开发环境");
       assert.match(erin.state.create.error.message, /暂无可安装的系统/);
     } finally {

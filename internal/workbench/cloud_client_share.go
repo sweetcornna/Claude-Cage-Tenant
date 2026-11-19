@@ -208,7 +208,7 @@ func (s *Server) clientProjectRoot(path string) (string, error) {
 	} else {
 		private = []string{"/proc", "/sys", "/dev", "/etc", "/boot", "/run", "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/System", "/Library", "/Applications"}
 	}
-	hosts, err := s.remote.store.List()
+	hosts, err := s.remote.store.ListSSH()
 	if err != nil {
 		return "", errors.New("无法核对本机 SSH 凭据位置")
 	}
