@@ -10,7 +10,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const Repository = "Lee-xeo/Claude-Cage"
+const Repository = "sweetcornna/Claude-Cage-Tenant"
 const ReleasesURL = "https://api.github.com/repos/" + Repository + "/releases?per_page=100"
 
 // Releases must stay below the limit of every published App that still updates

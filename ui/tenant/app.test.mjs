@@ -15,16 +15,11 @@ const USER2 = { id: "u-2002", username: "bob" };
 const HEADER = "X-Cage-Expected-User";
 const PORTAL = { protocol: "https:", hostname: "cage.example.org", port: "", origin: "https://cage.example.org" };
 const DEV = { protocol: "http:", hostname: "cage.localhost", port: "8787", origin: "http://cage.localhost:8787" };
-const SYSTEMS = [
-  { id: "debian-12", label: "Debian 12" },
-  { id: "ubuntu-24-04", label: "Ubuntu 24.04" },
-];
 const ALLOWED_ENDPOINTS = new Set([
   "GET /api/tenant/session",
   "POST /api/tenant/login",
   "POST /api/tenant/register",
   "POST /api/tenant/logout",
-  "GET /api/tenant/systems",
   "GET /api/tenant/vms",
   "POST /api/tenant/vms",
   ...[ID_A, ID_B, ID_C].map((id) => `POST /api/tenant/vms/${id}/open`),
@@ -304,12 +299,12 @@ describe("API 客户端", () => {
     assert.deepEqual(await out, { status: 204, data: null });
   });
 
-  test("创建请求携带 system_id", async () => {
+  test("创建请求只携带名称", async () => {
     const f = fakeFetch();
     const api = app.createApi({ fetch: f.fetch });
-    const created = api.createVm("开发环境", "debian-12");
+    const created = api.createVm("开发环境");
     const call = f.next("POST", "/api/tenant/vms");
-    assert.deepEqual(call.body, { name: "开发环境", system_id: "debian-12" });
+    assert.deepEqual(call.body, { name: "开发环境" });
     call.respond(201, { vm: vm(ID_A) });
     await created;
   });
@@ -799,32 +794,21 @@ describe("刷新恢复与本地存储", () => {
   });
 });
 
-describe("新建虚拟机与系统选择", () => {
-  test("打开弹窗读取系统目录，选择系统后创建并自动选中打开", async () => {
+describe("新建虚拟机", () => {
+  test("只用名称创建并自动选中打开", async () => {
     const ctx = setup();
     await signIn(ctx, { vms: [vm(ID_A)] });
     ctx.portal.openCreate();
     assert.equal(ctx.state.create.open, true);
-    assert.equal(ctx.state.create.systems.status, "loading");
-    ctx.f.next("GET", "/api/tenant/systems").respond(200, { systems: SYSTEMS });
-    await flush();
-    assert.equal(ctx.state.create.systems.status, "ready");
-    assert.equal(ctx.state.create.systemId, null, "多个系统时不替用户选择");
-
-    await ctx.portal.createVm("开发环境");
-    assert.equal(ctx.state.create.error.field, "system");
     await ctx.portal.createVm("  ");
     assert.equal(ctx.state.create.error.field, "name");
-    ctx.portal.chooseSystem("not-listed");
-    assert.equal(ctx.state.create.systemId, null);
-    ctx.portal.chooseSystem("ubuntu-24-04");
     assert.equal(ctx.f.count("POST", "/api/tenant/vms"), 0);
 
     const creating = ctx.portal.createVm("  测试环境 ");
     await ctx.portal.createVm("again");
     assert.equal(ctx.f.count("POST", "/api/tenant/vms"), 1, "忙碌时不重复创建");
     const call = ctx.f.next("POST", "/api/tenant/vms");
-    assert.deepEqual(call.body, { name: "测试环境", system_id: "ubuntu-24-04" });
+    assert.deepEqual(call.body, { name: "测试环境" });
     call.respond(201, { vm: vm(ID_B, "stopped", { name: "测试环境", system_id: "ubuntu-24-04", system_label: "Ubuntu 24.04" }) });
     await creating;
     assert.equal(ctx.state.create.open, false);
@@ -834,62 +818,23 @@ describe("新建虚拟机与系统选择", () => {
     assert.equal(ctx.f.count("POST", `/api/tenant/vms/${ID_B}/open`), 1, "新建后默认选中并尝试打开");
   });
 
-  test("每次打开都重新开始：重新读取目录、清空选择，旧目录响应被忽略", async () => {
+  test("重新打开弹窗清空上次的输入错误", async () => {
     const ctx = setup();
     await signIn(ctx);
     ctx.portal.openCreate();
-    const stale = ctx.f.next("GET", "/api/tenant/systems");
-    ctx.portal.closeCreate();
-    assert.equal(stale.aborted, true);
-    ctx.portal.openCreate();
-    stale.respond(200, { systems: [{ id: "stale-os", label: "Stale" }] });
-    ctx.f.next("GET", "/api/tenant/systems").respond(200, { systems: SYSTEMS });
-    await flush();
-    assert.deepEqual(ctx.state.create.systems.items.map((s) => s.id), ["debian-12", "ubuntu-24-04"]);
-    ctx.portal.chooseSystem("debian-12");
+    const previous = ctx.state.create.seq;
+    await ctx.portal.createVm("");
+    assert.equal(ctx.state.create.error.field, "name");
     ctx.portal.closeCreate();
     ctx.portal.openCreate();
-    assert.equal(ctx.state.create.systemId, null);
+    assert.ok(ctx.state.create.seq > previous);
     assert.equal(ctx.state.create.error, null);
-    assert.equal(ctx.f.count("GET", "/api/tenant/systems"), 3);
-  });
-
-  test("只有一个系统时预选；无可用系统与读取失败都有明确状态", async () => {
-    const ctx = setup();
-    await signIn(ctx);
-    ctx.portal.openCreate();
-    ctx.f.next("GET", "/api/tenant/systems").respond(200, { systems: [SYSTEMS[0]] });
-    await flush();
-    assert.equal(ctx.state.create.systemId, "debian-12");
-    ctx.portal.closeCreate();
-
-    ctx.portal.openCreate();
-    ctx.f.next("GET", "/api/tenant/systems").respond(200, { systems: [] });
-    await flush();
-    assert.equal(ctx.state.create.systems.status, "ready");
-    assert.equal(ctx.state.create.systems.items.length, 0);
-    await ctx.portal.createVm("开发环境");
-    assert.match(ctx.state.create.error.message, /暂无可安装的系统/);
-    assert.equal(ctx.f.count("POST", "/api/tenant/vms"), 0);
-
-    ctx.portal.loadSystems();
-    ctx.f.next("GET", "/api/tenant/systems").respond(503, { error: { code: "runtime_unavailable", message: "目录暂不可用。" } });
-    await flush();
-    assert.equal(ctx.state.create.systems.status, "error");
-    assert.equal(ctx.state.create.systems.error.message, "目录暂不可用。");
-    ctx.portal.loadSystems();
-    ctx.f.next("GET", "/api/tenant/systems").respond(200, { systems: SYSTEMS });
-    await flush();
-    assert.equal(ctx.state.create.systems.items.length, 2);
   });
 
   test("配额：本地已满不发请求；服务端 vm_limit 显示文本并刷新列表", async () => {
     const ctx = setup();
     await signIn(ctx, { vms: [vm(ID_A)], limit: 1 });
     ctx.portal.openCreate();
-    ctx.f.next("GET", "/api/tenant/systems").respond(200, { systems: SYSTEMS });
-    await flush();
-    ctx.portal.chooseSystem("debian-12");
     await ctx.portal.createVm("第二台");
     assert.equal(ctx.state.create.error.code, "vm_limit");
     assert.equal(ctx.f.count("POST", "/api/tenant/vms"), 0);
@@ -898,9 +843,6 @@ describe("新建虚拟机与系统选择", () => {
     const ctx2 = setup();
     await signIn(ctx2, { vms: [vm(ID_A)], limit: 5 });
     ctx2.portal.openCreate();
-    ctx2.f.next("GET", "/api/tenant/systems").respond(200, { systems: SYSTEMS });
-    await flush();
-    ctx2.portal.chooseSystem("debian-12");
     const creating = ctx2.portal.createVm("第二台");
     ctx2.f.next("POST", "/api/tenant/vms").respond(409, { error: { code: "vm_limit", message: "服务器虚拟机总数已达上限。" } });
     await creating;
@@ -909,22 +851,6 @@ describe("新建虚拟机与系统选择", () => {
     assert.equal(ctx2.f.count("GET", "/api/tenant/vms"), 2, "刷新一次列表");
   });
 
-  test("系统刚被下架时提示并重新读取目录，绝不改用其他系统", async () => {
-    const ctx = setup();
-    await signIn(ctx);
-    ctx.portal.openCreate();
-    ctx.f.next("GET", "/api/tenant/systems").respond(200, { systems: SYSTEMS });
-    await flush();
-    ctx.portal.chooseSystem("ubuntu-24-04");
-    const creating = ctx.portal.createVm("开发环境");
-    ctx.f.next("POST", "/api/tenant/vms").respond(400, { error: { code: "invalid_input", message: "所选系统不可用，请重新选择。" } });
-    await creating;
-    assert.equal(ctx.state.create.error.message, "所选系统不可用，请重新选择。");
-    ctx.f.next("GET", "/api/tenant/systems").respond(200, { systems: [SYSTEMS[0]] });
-    await flush();
-    assert.equal(ctx.state.create.systemId, null, "原选择不存在时不自动换成其他系统");
-    assert.equal(ctx.f.count("POST", "/api/tenant/vms"), 1);
-  });
 });
 
 describe("会话绑定与跨标签同步", () => {
@@ -957,11 +883,6 @@ describe("会话绑定与跨标签同步", () => {
     ctx.portal.select(ID_A);
     assert.equal(ctx.f.next("POST", `/api/tenant/vms/${ID_A}/open`).init.headers[HEADER], USER.id);
     ctx.portal.openCreate();
-    const systems = ctx.f.next("GET", "/api/tenant/systems");
-    assert.equal(systems.init.headers[HEADER], USER.id);
-    systems.respond(200, { systems: SYSTEMS });
-    await flush();
-    ctx.portal.chooseSystem("debian-12");
     const creating = ctx.portal.createVm("测试");
     const create = ctx.f.next("POST", "/api/tenant/vms");
     assert.equal(create.init.headers[HEADER], USER.id);
@@ -978,9 +899,6 @@ describe("会话绑定与跨标签同步", () => {
     await signIn(ctx, { vms: [vm(ID_A, "ready")] });
     await openReady(ctx);
     ctx.portal.openCreate();
-    ctx.f.next("GET", "/api/tenant/systems").respond(200, { systems: SYSTEMS });
-    await flush();
-    ctx.portal.chooseSystem("debian-12");
     const creating = ctx.portal.createVm("新环境");
     ctx.f.next("POST", "/api/tenant/vms").respond(409, changed);
     await creating;
@@ -1135,9 +1053,6 @@ describe("竞态与恢复", () => {
     const ctx = setup();
     await signIn(ctx, { vms: [vm(ID_A)] });
     ctx.portal.openCreate();
-    ctx.f.next("GET", "/api/tenant/systems").respond(200, { systems: SYSTEMS });
-    await flush();
-    ctx.portal.chooseSystem("debian-12");
     ctx.portal.refreshList();
     const staleList = ctx.f.next("GET", "/api/tenant/vms");
     const creating = ctx.portal.createVm("新环境");

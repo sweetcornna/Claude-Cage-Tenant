@@ -82,7 +82,10 @@ export function ClientRoot({ children }) {
     let timer;
     async function poll() {
       try {
-        await refresh();
+        const value = await refresh();
+        // A portal frame is tied to one VM origin. Switching replaces the
+        // frame, so there is no desktop connection generation to poll here.
+        if (value.tenant_workspace) return;
       } catch (e) {
         if (mounted.current) setError(e.message);
       }
@@ -110,9 +113,13 @@ export function ClientRoot({ children }) {
         </div>
       )}
       {context ? (
-        <Environment context={context} refresh={refresh}>
-          {children}
-        </Environment>
+        context.tenant_workspace ? (
+          <div className="client-stage"><div className="client-workbench">{children}</div></div>
+        ) : (
+          <Environment context={context} refresh={refresh}>
+            {children}
+          </Environment>
+        )
       ) : (
         !error && (
           <div className="client-loading">
@@ -135,6 +142,7 @@ function Environment({ context, refresh, children }) {
   const ready = (local && !localLost) || active;
   const [expanded, setExpanded] = useState(false);
   const [hosts, setHosts] = useState([]);
+  const [hostWarning, setHostWarning] = useState("");
   const [selected, setSelected] = useState(context.host_id || recent());
   const [form, setForm] = useState(null);
   const [remove, setRemove] = useState(null);
@@ -162,6 +170,8 @@ function Environment({ context, refresh, children }) {
   const connection =
     candidate?.connection || (!gateway ? context.connection : null);
   const host = hosts.find((item) => item.id === selected);
+  const tenantHost = host?.auth.kind === "portal_password";
+  const activeTenant = hosts.some((item) => item.id === context.host_id && item.kind === "tenant");
   const hostConnected = Boolean(active && host?.id === context.host_id);
   const connectionHostID = connection?.host_id || candidate?.host_id;
   const pinnedFailure =
@@ -172,7 +182,14 @@ function Environment({ context, refresh, children }) {
   const phase = connection?.phase || "";
   const connectingLabel = phase.startsWith("cloud_upload_")
     ? `正在上传部署包 ${phase.slice("cloud_upload_".length)}%`
-    : { cloud_install: "正在安装云端环境…", cloud_detect: "正在检测服务器…", cloud_start: "正在启动服务…" }[phase] || "正在验证…";
+    : {
+        cloud_install: "正在安装云端环境…",
+        cloud_detect: "正在检测服务器…",
+        cloud_start: "正在启动服务…",
+        tenant_login: "正在登录多租户门户…",
+        tenant_start: "正在等待虚拟机启动…",
+        tenant_enter: "正在进入虚拟机工作台…",
+      }[phase] || "正在验证…";
   const hostName = remote
     ? context.name || "远程主机"
     : local
@@ -180,8 +197,9 @@ function Environment({ context, refresh, children }) {
       : "选择工作环境";
   const route = () => ({ connection_id: context.connection_id || "" });
   const load = useCallback(async () => {
-    const { hosts = [] } = await api("/client/hosts");
+    const { hosts = [], warning = "" } = await api("/client/hosts");
     setHosts(hosts);
+    setHostWarning(warning);
     setSelected((id) =>
       hosts.some((item) => item.id === id) ? id : hosts[0]?.id || "",
     );
@@ -354,6 +372,7 @@ function Environment({ context, refresh, children }) {
       mode,
       ...(item ? { host_id: item.id, passphrase: secret, deploy } : {}),
     });
+    if (item?.kind === "tenant") secret = "";
     const request = ++serial.current;
 
     let progress = pending;
@@ -366,7 +385,7 @@ function Environment({ context, refresh, children }) {
         progress.connection?.state === "failed" ||
         progress.connection?.state === "disconnected"
       ) {
-        if (item && secret && (progress.connection?.host_key || progress.connection?.error_code === "deployment_required"))
+        if (item && item.auth.kind !== "portal_password" && secret && (progress.connection?.host_key || progress.connection?.error_code === "deployment_required"))
           secretForTrust.current = { id: item.id, secret };
         await refresh();
         return;
@@ -491,7 +510,7 @@ function Environment({ context, refresh, children }) {
         <strong>{ready ? hostName : "Cage"}</strong>
         {ready && (
           <span className="client-toolbar-hint">
-            {remote ? "SSH · 云端运行" : "当前工作环境"}
+            {remote ? (activeTenant ? "多租户 · 云端运行" : "SSH · 云端运行") : "当前工作环境"}
           </span>
         )}
         {ready && !showHosts && (
@@ -572,6 +591,7 @@ function Environment({ context, refresh, children }) {
                   <Plus size={16} />
                 </button>
               </div>
+              {hostWarning && <p className="error-message" role="alert">{hostWarning}</p>}
               {hosts.map((item) => (
                 <button
                   className={`ssh-host-row ${selected === item.id ? "selected" : ""}`}
@@ -603,9 +623,9 @@ function Environment({ context, refresh, children }) {
               )}
               {host && (
                 <section className="ssh-host-actions" aria-label="所选主机操作">
-                  {host.auth.kind === "key_file" && !hostConnected && (
+                  {!hostConnected && (tenantHost || host.auth.kind === "key_file") && (
                     <label>
-                      密钥口令（如果已设置）
+                      {tenantHost ? "门户密码（本次使用，不保存）" : "密钥口令（如果已设置）"}
                       <input
                         type="password"
                         autoComplete="off"
@@ -627,7 +647,8 @@ function Environment({ context, refresh, children }) {
                       <button
                         className="primary"
                         disabled={
-                          Boolean(busy) || verifying || Boolean(decision)
+                          Boolean(busy) || verifying || Boolean(decision) ||
+                          (tenantHost && !password)
                         }
                         onClick={() =>
                           act("verify", () =>
@@ -637,7 +658,7 @@ function Environment({ context, refresh, children }) {
                       >
                         {busy === "verify" || verifying
                           ? connectingLabel
-                          : needsDeploy ? "部署并连接" : "连接此主机"}
+                          : tenantHost ? "连接此虚拟机" : needsDeploy ? "部署并连接" : "连接此主机"}
                       </button>
                     )
                   )}

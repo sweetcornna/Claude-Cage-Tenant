@@ -208,6 +208,7 @@ func serve(configPath string, clientOnly bool, fullConfigPath string) (returned 
 			return err
 		}
 		s.remote = newDesktopGateway(profile, NewDesktopLocalController(fullConfigPath, exe))
+		s.remote.desktop.localVMs = newLocalVMStore(filepath.Dir(fullConfigPath), exe)
 	} else {
 		s.remote = newRemoteGateway(profile)
 		s.remote.clientOnly = clientOnly

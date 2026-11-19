@@ -61,7 +61,11 @@ func (m *Manager) Connect(hostID string, secrets ConnectSecrets) (ConnectionStat
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	id := newID()
-	m.state = ConnectionState{State: "connecting", ConnectionID: id, HostID: p.ID, Phase: "ssh_connect", Message: "正在连接远程主机"}
+	phase := "ssh_connect"
+	if p.Kind == TenantKind {
+		phase = "tenant_login"
+	}
+	m.state = ConnectionState{State: "connecting", ConnectionID: id, HostID: p.ID, Phase: phase, Message: "正在连接远程主机"}
 	private := ConnectSecrets{Deploy: secrets.Deploy, Passphrase: append([]byte(nil), secrets.Passphrase...)}
 	m.workers.Add(1)
 	go func() {
@@ -73,7 +77,11 @@ func (m *Manager) Connect(hostID string, secrets ConnectSecrets) (ConnectionStat
 
 func (m *Manager) run(ctx context.Context, p HostProfile, id string, secrets ConnectSecrets) {
 	defer clear(secrets.Passphrase)
-	session, err := connect(ctx, p, secrets, func(phase string) {
+	connector := connect
+	if p.Kind == TenantKind {
+		connector = connectTenant
+	}
+	session, err := connector(ctx, p, secrets, func(phase string) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if m.state.ConnectionID == id && m.state.State == "connecting" {
@@ -112,12 +120,15 @@ func (m *Manager) run(ctx context.Context, p HostProfile, id string, secrets Con
 	m.mu.Unlock()
 	<-session.Context.Done()
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.state.ConnectionID == id && m.state.State == "connected" {
 		m.session = nil
 		m.state.State = "failed"
 		m.state.ErrorCode = "connection_lost"
 		m.state.Message = "远程连接已中断，请重新连接并核对云端任务"
+	}
+	m.mu.Unlock()
+	if p.Kind == TenantKind {
+		_ = session.Close()
 	}
 }
 

@@ -53,6 +53,7 @@ func (g *remoteGateway) setRemote(remote bool) {
 
 type ClientContext struct {
 	DesktopGateway  bool                       `json:"desktop_gateway,omitempty"`
+	VirtualMachines bool                       `json:"virtual_machines,omitempty"`
 	Candidate       *desktopCandidate          `json:"candidate,omitempty"`
 	ClientOnly      bool                       `json:"client_only"`
 	Mode            string                     `json:"mode"`
@@ -79,16 +80,11 @@ func (g *remoteGateway) context() ClientContext {
 	result.Mode, result.ConnectionID = "remote", result.State.ConnectionID
 	result.HostID, result.InstanceID = result.State.HostID, result.State.InstanceID
 	result.ServerPlatform = "linux"
-	if hosts, err := g.store.List(); err == nil {
-		for _, host := range hosts {
-			if host.ID == result.HostID {
-				result.Name = host.Name
-				result.ServerPlatform = host.Platform
-				if host.HostKey != nil {
-					result.HostFingerprint = host.HostKey.Fingerprint
-				}
-				break
-			}
+	if host, err := g.store.Get(result.HostID); err == nil {
+		result.Name = host.Name
+		result.ServerPlatform = host.Platform
+		if host.HostKey != nil {
+			result.HostFingerprint = host.HostKey.Fingerprint
 		}
 	}
 	if result.State.Manifest != nil {
@@ -104,6 +100,14 @@ func (s *Server) clientRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/api/client/")
+	if strings.HasPrefix(path, "tenant/") {
+		if g.desktop == nil {
+			http.NotFound(w, r)
+		} else {
+			tenantClientRequest(w, r, path)
+		}
+		return
+	}
 	if path == "browser-extensions" && (r.Method == http.MethodGet || r.Method == http.MethodPost) {
 		s.localBrowserExtensions(w, r)
 		return
@@ -125,14 +129,22 @@ func (s *Server) clientRequest(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, g.context().State)
 	case r.Method == "GET" && path == "hosts":
 		hosts, err := g.store.List()
+		response := map[string]any{"hosts": hosts}
 		if err != nil {
-			requestError(w, err)
-			return
+			if len(hosts) == 0 {
+				requestError(w, err)
+				return
+			}
+			response["warning"] = err.Error()
 		}
-		jsonReply(w, map[string]any{"hosts": hosts})
+		jsonReply(w, response)
 	case (r.Method == "POST" && path == "hosts") || (r.Method == "PUT" && strings.HasPrefix(path, "hosts/")):
 		var host remotehost.HostProfile
 		if !readJSON(w, r, &host) {
+			return
+		}
+		if host.Kind == remotehost.TenantKind && g.desktop == nil {
+			http.NotFound(w, r)
 			return
 		}
 		if r.Method == "PUT" {

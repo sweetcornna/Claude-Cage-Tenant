@@ -507,6 +507,7 @@ func run() int {
 	profile := filepath.Dir(path)
 	state := filepath.Join(profile, "state")
 	os.Unsetenv("CAGE_LIMA_CACHE_DIR")
+	os.Unsetenv("CAGE_LIMA_LINUX_IMAGE_CACHE")
 	os.Unsetenv("CAGE_LOGICAL_LIMA_HOME")
 	if !containerenv.Configured(profile) {
 		if err = guestos.RecoverWindowsStorage(context.Background(), profile); err != nil {
@@ -520,6 +521,11 @@ func run() int {
 		// Keep image caches on the same volume the initialization page shows,
 		// including the default location. The saved path survives app updates.
 		os.Setenv("CAGE_LIMA_CACHE_DIR", filepath.Join(location.Directory, "cache", "lima"))
+		if cache := cage.LinuxImageCache(profile, location); cache != "" {
+			if err := host.EnsurePrivateDir(cache); err == nil {
+				os.Setenv("CAGE_LIMA_LINUX_IMAGE_CACHE", cache)
+			}
+		}
 		if location.Custom {
 			// Resolve the profile prefix once, as Lima did before migration.
 			// Keep state itself logical so its original disk and socket paths survive.

@@ -9,6 +9,7 @@ import (
 )
 
 const APIProtocol = 1
+const TenantKind = "tenant"
 
 type AuthConfig struct {
 	Kind         string `json:"kind"`
@@ -21,6 +22,9 @@ type HostKey struct {
 }
 
 type HostProfile struct {
+	Kind       string     `json:"kind,omitempty"`
+	Portal     string     `json:"portal,omitempty"`
+	VMID       string     `json:"vm_id,omitempty"`
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`
 	Host       string     `json:"host"`

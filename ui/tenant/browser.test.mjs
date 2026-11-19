@@ -195,10 +195,8 @@ async function openPage(cdp, shots, prefix = "") {
   const selectedVm = () => evaluate(`document.querySelector('.tab[aria-selected="true"]')?.dataset.focusKey.slice(4) || null`);
   const frameInfo = () =>
     evaluate(`(() => { const f = document.querySelector("iframe"); return f ? { count: document.querySelectorAll("iframe").length, sandbox: f.getAttribute("sandbox"), referrer: f.getAttribute("referrerpolicy"), allow: f.getAttribute("allow"), src: f.getAttribute("src"), title: f.title } : null; })()`);
-  const createVm = async (systemLabel, name) => {
-    await waitFor(`document.querySelector("dialog")?.open && document.querySelectorAll(".system-option").length > 0`, "系统列表");
-    await click(".system-option", systemLabel);
-    await waitFor(`document.querySelector(".system-radio:checked")?.closest("label").textContent.includes(${JSON.stringify(systemLabel)})`, `${systemLabel} 已选中`);
+  const createVm = async (name) => {
+    await waitFor(`document.querySelector("dialog")?.open`, "新建弹窗");
     await focus('dialog input[name="vm-name"]');
     await type(name);
     await press("Enter");
@@ -212,7 +210,7 @@ async function openPage(cdp, shots, prefix = "") {
 const chrome = findChrome();
 
 test(
-  "浏览器端到端：注册、系统选择、多 VM 切换、键盘、刷新恢复、手机尺寸、错误恢复、登出与隔离",
+  "浏览器端到端：注册、只填名称、多 VM 切换、键盘、刷新恢复、手机尺寸、错误恢复、登出与隔离",
   { skip: chrome ? false : "未找到 Chrome/Chromium（可设置 CAGE_TEST_BROWSER_PATH）", timeout: 180000 },
   async () => {
     const mock = await startMockServer({ bootDelayMs: 1200 });
@@ -248,27 +246,19 @@ test(
       assert.equal((await active()).key, "empty-create", "首次登录且无 VM 时焦点落在新建按钮");
       await shot("01-empty");
 
-      /* ---- 新建第一台：验证未选系统的错误，再用方向键选择 ---- */
+      /* ---- 新建第一台：名称验证与键盘提交 ---- */
       await click(".overlay button", "新建虚拟机");
-      await waitFor(`document.querySelector("dialog").open && document.querySelectorAll(".system-option").length === 2`, "系统列表");
-      assert.equal(await evaluate(`document.querySelector(".system-radio:checked")`), null);
-      await waitFor(`document.activeElement?.type === "radio"`, "系统读取后焦点交给系统选择");
-      await focus('dialog input[name="vm-name"]');
-      await type("开发环境");
+      await waitFor(`document.querySelector("dialog").open && document.activeElement?.name === "vm-name"`, "焦点在名称输入框");
+      assert.equal(await evaluate(`document.querySelectorAll("dialog input").length`), 1);
       await press("Enter");
-      await waitFor(`document.querySelector(".system-list").getAttribute("aria-invalid") === "true"`, "未选系统的错误");
-      assert.equal((await active()).type, "radio", "错误时焦点回到系统选择");
-      await press("ArrowDown");
-      await waitFor(`document.querySelector(".system-radio:checked")?.closest("label").textContent.includes("Ubuntu 24.04 LTS")`, "方向键选中 Ubuntu");
+      await waitFor(`document.activeElement.getAttribute("aria-invalid") === "true"`, "名称必填提示");
       await shot("02-create-dialog");
-      await focus('dialog input[name="vm-name"]');
-      await press("Enter");
-      await waitFor(`!document.querySelector("dialog").open`, "弹窗关闭");
+      await createVm("开发环境");
       const vmA = await selectedVm();
       assert.match(vmA, /^[0-9a-f]{32}$/);
       await waitFor(`document.querySelector(".overlay h2")?.textContent.includes("正在开机")`, "开机等待");
       assert.equal(await evaluate(`document.querySelector(".ctx-name").textContent`), "开发环境");
-      assert.equal(await evaluate(`document.querySelector(".ctx-system").textContent`), "Ubuntu 24.04 LTS");
+      assert.equal(await evaluate(`document.querySelector(".ctx-system").textContent`), "Debian 12");
       assert.match(await evaluate(`document.querySelector(".overlay .elapsed").textContent`), /^已等待 \d+:\d{2}$/);
       await shot("03-starting");
 
@@ -288,12 +278,8 @@ test(
 
       /* ---- 新建第二台：弹窗重新开始；旧 iframe 立即卸载并释放流 ---- */
       await click(".add-btn");
-      await waitFor(`document.querySelector("dialog").open && document.querySelectorAll(".system-option").length === 2`, "第二次系统列表");
-      assert.equal(await evaluate(`[...document.querySelectorAll(".system-radio")].some((r) => r.checked)`), false, "重新打开不保留上次选择");
+      await waitFor(`document.querySelector("dialog").open && document.activeElement?.name === "vm-name"`, "第二次弹窗");
       assert.equal(await evaluate(`document.querySelector('dialog input[name="vm-name"]').value`), "");
-      await waitFor(`document.activeElement?.type === "radio"`, "焦点在系统选择");
-      await press("Space");
-      await waitFor(`document.querySelector(".system-radio:checked")?.closest("label").textContent.includes("Debian 12")`, "空格选中 Debian");
       await focus('dialog input[name="vm-name"]');
       await type("测试环境");
       await click('dialog button[type="submit"]');
@@ -376,7 +362,7 @@ test(
       assert.ok(layout.tabHeight >= 36, "触控尺寸的切换按钮");
       await shot("06-mobile-dark");
       await click(".add-btn");
-      await waitFor(`document.querySelector("dialog").open && document.querySelectorAll(".system-option").length === 2`, "手机上的新建弹窗");
+      await waitFor(`document.querySelector("dialog").open`, "手机上的新建弹窗");
       assert.ok(await evaluate(`document.querySelector("dialog").getBoundingClientRect().width <= innerWidth - 16`));
       await shot("07-mobile-create");
       await press("Escape");
@@ -390,7 +376,7 @@ test(
       })()`);
       await delay(300);
       assert.equal(await evaluate(`document.querySelector("dialog").open`), true, "过时的 close 事件不会关闭重新打开的弹窗");
-      await waitFor(`document.querySelectorAll(".system-option").length === 2`, "重新打开后读取系统");
+      await waitFor(`document.activeElement?.name === "vm-name"`, "重新打开后聚焦名称");
       await press("Escape");
       await waitFor(`!document.querySelector("dialog").open`, "再次 Esc 关闭");
 
@@ -402,7 +388,7 @@ test(
       await waitUntil(() => [...mock.state.vms.values()].every((vm) => vm.state !== "starting"), "无进行中的启动");
       mock.failNextBoot("*", "所选系统镜像缺失，请稍后重试。");
       await click(".add-btn");
-      await createVm("Debian 12", "故障演练");
+      await createVm("故障演练");
       await waitFor(`document.querySelector(".overlay .error-text")?.textContent === "所选系统镜像缺失，请稍后重试。"`, "启动失败提示", 20000);
       assert.match(await evaluate(`document.querySelector(".overlay h2").textContent`), /启动失败/);
       assert.equal(await evaluate(`document.querySelector(".ctx-status").textContent`), "无法打开");

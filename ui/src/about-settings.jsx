@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ExternalLink, LoaderCircle, RefreshCw } from "lucide-react";
 import { api, native, nativeAvailable } from "./api";
+import { getClientContext } from "./client-context.mjs";
 import "./about-settings.css";
 
-const repository = "https://github.com/Lee-xeo/Claude-Cage";
+const repository = "https://github.com/sweetcornna/Claude-Cage-Tenant";
 const sourceMessages = {
   current: "已与主分支同步",
   available: "主分支有新提交",
@@ -46,6 +47,7 @@ function CheckResult({ label, item, source, onError }) {
 }
 
 export function AboutSettings() {
+  const workspaceOnly = getClientContext().tenant_workspace === true;
   const [build, setBuild] = useState(null);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -68,7 +70,7 @@ export function AboutSettings() {
     return () => { controller.abort(); request.current?.abort(); };
   }, []);
   const check = async () => {
-    if (request.current || retryAt > Date.now()) return;
+    if (workspaceOnly || request.current || retryAt > Date.now()) return;
     const controller = new AbortController();
     request.current = controller;
     setBusy(true); setError(""); setResult(null);
@@ -88,19 +90,21 @@ export function AboutSettings() {
       <div><dt>构建提交</dt><dd>{build?.commit ? <code title={build.commit}>{build.commit.slice(0, 12)}</code> : loading ? "正在读取…" : "未记录"}</dd></div>
     </dl>
     {build?.modified && <p className="footnote">此构建包含未提交的修改，提交核对仅反映已记录的提交。</p>}
-    <div className="about-check-actions">
-      <button className="secondary-button" onClick={check} disabled={busy || coolingDown}>
-        {busy ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />}
-        {busy ? "正在检查…" : coolingDown ? "等待重试" : "检测更新"}
-      </button>
-      {result?.checkedAt && <span className="footnote">检查时间：{new Date(result.checkedAt).toLocaleString()}</span>}
-    </div>
-    <p className="footnote">优先通过主机网络与系统代理检查主分支提交和最新发行版，包含预发行版；主机连接失败时尝试 Cage 所选代理。检查后可前往发布页下载。</p>
-    {busy && <p role="status">正在核对源码提交与发行版…</p>}
+    {workspaceOnly ? <p className="footnote">工作台版本由服务器管理员维护。</p> : <>
+      <div className="about-check-actions">
+        <button className="secondary-button" onClick={check} disabled={busy || coolingDown}>
+          {busy ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />}
+          {busy ? "正在检查…" : coolingDown ? "等待重试" : "检测更新"}
+        </button>
+        {result?.checkedAt && <span className="footnote">检查时间：{new Date(result.checkedAt).toLocaleString()}</span>}
+      </div>
+      <p className="footnote">优先通过主机网络与系统代理检查主分支提交和最新发行版，包含预发行版；主机连接失败时尝试 Cage 所选代理。检查后可前往发布页下载。</p>
+      {busy && <p role="status">正在核对源码提交与发行版…</p>}
+      <div className="about-results" aria-live="polite" aria-busy={busy}>
+        <CheckResult label="源码更新" item={result?.source} source onError={setError} />
+        <CheckResult label="发行版更新（含预发行）" item={result?.release} onError={setError} />
+      </div>
+    </>}
     {error && <p className="error-message" role="alert">{error}</p>}
-    <div className="about-results" aria-live="polite" aria-busy={busy}>
-      <CheckResult label="源码更新" item={result?.source} source onError={setError} />
-      <CheckResult label="发行版更新（含预发行）" item={result?.release} onError={setError} />
-    </div>
   </section>;
 }

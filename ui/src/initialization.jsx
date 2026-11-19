@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Check, ChevronLeft, LoaderCircle, ShieldCheck } from "lucide-react";
 import { api, native, nativeAvailable } from "./api";
-import { isRemoteClient } from "./client-context.mjs";
+import { getClientContext, isCloudWorkbench } from "./client-context.mjs";
+import { VirtualMachines } from "./virtual-machines";
 import { MacOSAccountGate, useAccount } from "./account";
 import { GuestSystemPicker, HostCloneSummary, validGuestChoice } from "./guest-system-picker";
 import { InitializationStorage } from "./initialization-storage";
@@ -33,7 +34,7 @@ export function InitializationGate({ children }) {
   const [state, setState] = useState(null);
   const [error, setError] = useState("");
   const [attempt, retry] = useState(0);
-  const remote = isRemoteClient();
+  const remote = isCloudWorkbench();
   useEffect(() => {
     if (remote) return;
     let live = true;
@@ -49,7 +50,9 @@ export function InitializationGate({ children }) {
   if (account?.initial_mac_setup) return <MacOSAccountGate><MacOSFirstSetup /></MacOSAccountGate>;
   if (error) return <InitializationFrame><section className="initialization-content"><h1>继续准备 Cage</h1><p role="alert"><SafetyMessage message={error} /></p><button className="primary" onClick={() => retry(value => value + 1)}>重新连接</button><DiagnosticSettings /></section></InitializationFrame>;
   if (!state) return <InitializationFrame><section className="initialization-content"><h1>正在读取环境状态</h1><p role="status"><LoaderCircle size={18} className="spin" />正在检查已有配置和安装进度…</p></section></InitializationFrame>;
-  return state.required ? <MacOSAccountGate><Initialization initial={state} onComplete={() => setState({ required: false })} /></MacOSAccountGate> : children;
+  if (!state.required) return children;
+  const setup = <Initialization initial={state} onComplete={() => setState({ required: false })} />;
+  return account?.local_vm ? setup : <MacOSAccountGate>{setup}</MacOSAccountGate>;
 }
 
 function Initialization({ initial, onComplete }) {
@@ -69,6 +72,8 @@ function Initialization({ initial, onComplete }) {
   const [connectionError, setConnectionError] = useState("");
   const [details, setDetails] = useState(false);
   const [help, setHelp] = useState(false);
+  const [showVirtualMachines, setShowVirtualMachines] = useState(false);
+  const [showMacCredentials, setShowMacCredentials] = useState(false);
   const [dialog, setDialog] = useState(null);
   const [approvalWorkspace, setApprovalWorkspace] = useState("");
   const [proxyDirty, setProxyDirty] = useState(false);
@@ -158,10 +163,15 @@ function Initialization({ initial, onComplete }) {
     return { guest_system: choice.guest_system, media: choice.media, sha256: choice.sha256, clone_key: choice.clone_key, editor_terms: choice.editor_terms, ...preferences };
   }
   async function install() {
+    const options = startOptions();
+    if (options.guest_system === "macos" && account?.macos_account_host && !account.macos_credentials_ready) {
+      setShowMacCredentials(true);
+      return;
+    }
     if (needsProxySetup(null, status, proxy)) { setError("请先选择并应用代理节点。"); setStep("proxy"); return; }
     await run(async () => {
       await api("/environment/initialization", { action: "install" });
-      const accepted = await api("/start", startOptions());
+      const accepted = await api("/start", options);
       if (!alive.current) return;
       setStep("install");
       setStatus(current => ({ ...current, job: { ...accepted, running: true, kind: accepted.kind || "start", message: accepted.message || "正在准备客机环境…" } }));
@@ -249,6 +259,9 @@ function Initialization({ initial, onComplete }) {
   const progress = !status?.ready && job.setup_progress ? { ...job, setup_progress: job.setup_progress } : null;
   const title = step === "system" ? "为 Cage 准备独立环境" : step === "proxy" ? "连接你的网络代理" : ready ? "Cage 已准备就绪" : !busy && networkPending ? "环境已启动，等待联网检查" : failed ? "继续完成环境安装" : busy ? "正在准备你的环境" : "安装并检查客机环境";
   const index = steps.findIndex(([key]) => key === step);
+  if (showMacCredentials && !account?.macos_credentials_ready) {
+    return <MacOSAccountGate onBack={() => { setShowMacCredentials(false); setStep("system"); }} />;
+  }
   return <InitializationFrame>
     <section className="initialization-content">
       <ol className="initialization-steps" aria-label="初始化步骤">{steps.map(([key, label], position) => <li key={key} aria-current={step === key ? "step" : undefined}><span>{position < index ? <Check size={14} /> : position + 1}</span>{label}</li>)}</ol>
@@ -312,8 +325,9 @@ function Initialization({ initial, onComplete }) {
           {step === "install" && ready && <button className="primary" disabled={submitting || Boolean(connectionError)} onClick={enter}>进入工作台</button>}
         </footer>
       </>}
-      <div className="initialization-support"><button className="text-button" aria-expanded={help} onClick={() => setHelp(!help)}>日志与诊断</button>{navigation && !busy && <button className="text-button" onClick={() => navigation.open()}>只连接 SSH 主机</button>}</div>
+      <div className="initialization-support"><button className="text-button" aria-expanded={help} onClick={() => setHelp(!help)}>日志与诊断</button>{getClientContext().virtual_machines && <button className="text-button" aria-haspopup="dialog" onClick={() => setShowVirtualMachines(true)}>虚拟机</button>}{navigation && !busy && <button className="text-button" onClick={() => navigation.open()}>只连接 SSH 主机</button>}</div>
       {help && <DiagnosticSettings />}
+      {showVirtualMachines && <VirtualMachines onClose={() => setShowVirtualMachines(false)} />}
     </section>
     {approvalWorkspace && <InitializationProjectApproval workspace={approvalWorkspace} jobRunning={Boolean(job.running)} onClose={() => { setApprovalWorkspace(""); pollNow.current?.(); }} onApproved={() => { setApprovalWorkspace(""); void checkNetwork(); }} />}
     {details && <Modal title="初始化操作详情" onClose={() => setDetails(false)}><InitializationDetails status={status} /></Modal>}

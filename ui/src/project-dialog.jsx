@@ -7,7 +7,7 @@ import { Modal } from "./views";
 import { MacOSProjectApproval } from "./macos-project-approval";
 import { ProjectRecovery } from "./project-recovery";
 import { projectGroups, projectName, rememberClientProjectName } from "./workspace-state.mjs";
-import { getClientContext, isRemoteClient } from "./client-context.mjs";
+import { getClientContext, isCloudWorkbench, isRemoteClient } from "./client-context.mjs";
 
 export function ProjectDialog({
   status,
@@ -34,9 +34,9 @@ export function ProjectDialog({
   const [removed, setRemoved] = useState([]);
   const [directories, setDirectories] = useState(null);
   const [browsing, setBrowsing] = useState(false);
-  const remote = isRemoteClient();
+  const remote = isCloudWorkbench();
   const context = getClientContext();
-  const canShare = remote && nativeAvailable() && context.connection?.manifest?.capabilities?.client_project_share === true;
+  const canShare = isRemoteClient() && nativeAvailable() && context.connection?.manifest?.capabilities?.client_project_share === true;
   const [shares, setShares] = useState([]);
   const [writeAccess, setWriteAccess] = useState(false);
   const [sharing, setSharing] = useState(false);

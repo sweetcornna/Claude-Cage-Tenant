@@ -2,63 +2,27 @@
 
 <h1>Claude Cage 多租户版</h1>
 
-一台 Linux 服务器供多人使用。每个账号可以有多台独立的 Cage 虚拟机，在浏览器或桌面客户端里随时切换。
+在工作台左栏创建和切换自己的 Cage 虚拟机。桌面版管理本机环境，部署到 Linux 服务器后可在普通浏览器中使用同一套工作台界面。
 
-[![Release](https://img.shields.io/github/v/release/sweetcornna/Claude-Cage-Tenant?include_prereleases&color=D97757)](https://github.com/sweetcornna/Claude-Cage-Tenant/releases) [![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-<img src="docs/tenant/images/portal-overview.png" alt="门户总览：顶部标签切换虚拟机" width="860" />
+<img src="docs/tenant/images/workbench-vms.png" alt="Cage 工作台虚拟机面板，可查看当前虚拟机、切换和按名称创建" width="860" />
 
 </div>
 
 ## 功能
 
-- **账号隔离**：每个账号只能看到和打开自己的虚拟机。
-- **一人多台**：新建时选择系统（例如 Debian 12、Ubuntu 24.04），用顶部标签切换。切换、刷新或退出都不会让虚拟机停机。
-- **独立环境**：每台虚拟机有自己的可写根盘和工作台账号，首次打开时单独配置。同一系统的虚拟机可以共享 ZFS 只读快照，节省磁盘。
-- **浏览器或客户端**：门户可以直接用浏览器打开，也可以用 macOS、Windows、Linux 客户端打开。客户端还能一键安装单机版 Cage。
+- 每个账号只能看到和打开自己的虚拟机。点击左栏 **虚拟机** 查看当前环境和切换目标。
+- 新建只填名称，首次打开时才配备运行环境。切换、刷新或退出网页保留正在运行的任务。
+- 同一服务器上的不同账号也可复用同一系统镜像。使用 Incus 和匹配容量的 ZFS 根盘时，同一镜像指纹的虚拟机共用一份只读基础盘，各自保存账号、文件和运行时写入。
 
-<table>
-  <tr>
-    <th>新建虚拟机</th>
-    <th>桌面客户端</th>
-  </tr>
-  <tr>
-    <td><img src="docs/tenant/images/portal-create.png" alt="新建虚拟机：选择系统并命名" width="400" /></td>
-    <td>
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/tenant/images/desktop-start-dark.png" />
-        <img src="docs/tenant/images/desktop-start-light.png" alt="客户端启动页：本地安装或连接远程" width="400" />
-      </picture>
-    </td>
-  </tr>
-</table>
+## 开始使用
 
-## 安装客户端
+1. **浏览器**打开管理员提供的 HTTPS 门户地址，登录后创建或打开第一台虚拟机。新建虚拟机使用管理员配置的默认镜像，空白镜像内的工作台账户由网关自动准备。
+2. **桌面版**从 [Releases](https://github.com/sweetcornna/Claude-Cage-Tenant/releases/latest) 下载 Apple Silicon（macOS 14+）安装包。打开 DMG，将 Cage 拖入「应用程序」，再打开 Cage 并解锁本机账户。签名、公证和更新方式以发布说明为准。
+3. 进入工作台后，点击左栏 **虚拟机**，输入名称创建，或点击已有条目切换。桌面本机和服务器分别维护自己的虚拟机清单。
 
-从[发布页](https://github.com/sweetcornna/Claude-Cage-Tenant/releases/tag/v0.1.8-preview.2)下载安装包，并用同一页的 `SHA256SUMS` 校验。
-
-| 系统 | 下载 | 安装 |
-| --- | --- | --- |
-| macOS 14+ | [DMG](https://github.com/sweetcornna/Claude-Cage-Tenant/releases/download/v0.1.8-preview.2/Cage-Tenant-0.1.8-macos-universal.dmg) | 打开 DMG，把 **Cage Tenant** 拖进“应用程序” |
-| Windows 10 / 11 x64 | [ZIP](https://github.com/sweetcornna/Claude-Cage-Tenant/releases/download/v0.1.8-preview.2/Cage-Tenant-0.1.8-windows-x64-unsigned.zip) | 解压整个文件夹，运行 `CageTenant.exe` |
-| Debian / Ubuntu | [DEB](https://github.com/sweetcornna/Claude-Cage-Tenant/releases/download/v0.1.8-preview.2/cage-tenant-desktop_0.1.8_all.deb) | 在下载目录运行下面的命令 |
-
-```sh
-sudo apt install ./cage-tenant-desktop_0.1.8_all.deb
-```
-
-首次使用：
-
-1. 打开客户端，选择 **连接远程**，填写管理员提供的门户地址，例如 `https://cage.example.org`。
-2. 登录门户，点击 **新建虚拟机**，选择系统并命名。
-3. 点击 **打开工作台**。以后用顶部标签切换虚拟机。
-
-选择 **本地安装** 会打开本机已安装的单机版 Cage。尚未安装时，客户端会下载上游 Cage 0.1.8 安装包，校验后交给系统安装。这一功能需要 Apple Silicon Mac、x64 Windows 或 x86_64 的 Debian/Ubuntu。
-
-> [!NOTE]
-> 预览版的 macOS 包已签名但尚未公证，Windows 包未签名。macOS 提示无法打开时，到“系统设置 → 隐私与安全性”点击“仍要打开”。Windows SmartScreen 拦截时，点击“更多信息 → 仍要运行”。
-
-不想装客户端，也可以直接用浏览器打开门户地址。
+[Preview 2（`v0.1.8-preview.2`）](https://github.com/sweetcornna/Claude-Cage-Tenant/releases/tag/v0.1.8-preview.2) 的独立桌面安装包已退役，仅作历史留档。集成版的应用更新源改为 [`sweetcornna/Claude-Cage-Tenant`](https://github.com/sweetcornna/Claude-Cage-Tenant/releases)，原有原生更新器的签名信任规则不变。
 
 ## 部署服务端
 
@@ -69,8 +33,8 @@ sudo apt install ./cage-tenant-desktop_0.1.8_all.deb
 3. **启动网关**：下载与主机架构对应的服务端归档并校验，然后运行：
 
    ```sh
-   tar -xzf Cage-Tenant-Server-0.1.8-linux-amd64.tar.gz
-   cd Cage-Tenant-Server-0.1.8-linux-amd64
+   tar -xzf Cage-Tenant-Server-0.1.9-linux-amd64.tar.gz
+   cd Cage-Tenant-Server-0.1.9-linux-amd64
    ./cage-tenant -origin https://cage.example.org \
      -state-dir /var/lib/cage-tenant -incus-image cage-blank
    ```
@@ -81,19 +45,20 @@ sudo apt install ./cage-tenant-desktop_0.1.8_all.deb
 
 ## 当前状态
 
-这是预览版。真实 Incus 环境上已经验证了 Debian 12 和 Ubuntu 24.04、两个账号共三台虚拟机，覆盖账号隔离、切换、刷新恢复和磁盘持久化。切换到已运行的虚拟机通常只需 65–405 毫秒。完整图形工作环境和 Claude CLI 流程还没有验证，Windows 客户端也还没有在 Windows 上实际运行过。
+目标是让浏览器与桌面版的工作台界面和主要操作一致。仅原生端提供的能力需要浏览器替代方式，或明确标为平台专属；完整图形工作流的一致性仍待验证。
+
+网关和门户仍处于预览阶段。此前在真实 Incus 环境中用 Debian 12 和 Ubuntu 24.04 验证了两个账号共三台虚拟机的隔离、切换、刷新恢复和磁盘持久化。完整的 Claude CLI 流程也仍待验证。
 
 ## 文档
 
-- 服务端：[部署指南](deploy/tenant/README.md) · [接口契约](docs/api-contract.md)
-- 客户端：[macOS](desktop/tenant/README.md) · [Windows](desktop/tenant-windows/README.md) · [Linux](desktop/tenant-linux/README.md)
+[部署指南](deploy/tenant/README.md) · [接口契约](docs/api-contract.md)
 
 本项目基于 [Lee-xeo/Claude-Cage](https://github.com/Lee-xeo/Claude-Cage)（MIT）开发，同样按 MIT 许可发布，与 Anthropic 没有隶属关系。
 
 ---
 
 <details>
-<summary><b>上游 Claude Cage 说明</b>（单机桌面版，也就是“本地安装”打开的应用）</summary>
+<summary><b>上游 Claude Cage 说明</b>（不含本仓库的多租户连接功能）</summary>
 
 <div align="center">
 

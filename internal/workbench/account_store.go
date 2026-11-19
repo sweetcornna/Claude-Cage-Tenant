@@ -28,6 +28,7 @@ type accountRecord struct {
 	MacLogin              *macAccountEnvelope      `json:"mac_login,omitempty"`
 	TrustedDevice         string                   `json:"trusted_device,omitempty"`
 	TrustedUnlock         *accountDevice           `json:"trusted_unlock,omitempty"`
+	Owner                 string                   `json:"owner,omitempty"`
 	Version               int                      `json:"version"`
 	Username              string                   `json:"username"`
 	Avatar                string                   `json:"avatar,omitempty"`
@@ -60,6 +61,7 @@ type accountView struct {
 	MacOSGuestUser        string            `json:"macos_guest_user,omitempty"`
 	InitialMacSetup       bool              `json:"initial_mac_setup,omitempty"`
 	GuestSystem           string            `json:"guest_system,omitempty"`
+	LocalVM               bool              `json:"local_vm,omitempty"`
 	TrustedLocal          bool              `json:"trusted_local,omitempty"`
 	TrustedLogin          bool              `json:"trusted_login,omitempty"`
 	Exists                bool              `json:"exists"`
@@ -85,7 +87,7 @@ func loadLocalAccount(profile string) (*localAccount, error) {
 		return nil, errors.New("本地账户文件权限不安全，请恢复私有文件权限")
 	}
 	var record accountRecord
-	if len(b) > 256<<10 || json.Unmarshal(b, &record) != nil || record.Version != 1 || !validTrustedID(record.TrustedDevice) || len(record.Salt) != 16 || len(record.Nonce) != 12 || len(record.SealedKey) != 48 || validAccountName(record.Username) != nil {
+	if len(b) > 256<<10 || json.Unmarshal(b, &record) != nil || record.Version != 1 || !validTrustedID(record.TrustedDevice) || !validTrustedID(record.Owner) || len(record.Salt) != 16 || len(record.Nonce) != 12 || len(record.SealedKey) != 48 || validAccountName(record.Username) != nil {
 		return nil, errors.New("本地账户文件损坏，请从备份恢复；已有数据未修改")
 	}
 	if device := record.TrustedUnlock; device != nil && (len(device.ID) != 64 || !validTrustedID(device.ID) || len(device.Nonce) != 12 || len(device.SealedKey) != 48 || record.TrustedDevice != "") {
@@ -176,6 +178,7 @@ func (a *localAccount) viewFor(desktop bool) accountView {
 				}
 			}
 		}
+		v.LocalVM = a.record.Owner != ""
 		v.TrustedLocal = a.record.TrustedDevice != ""
 		v.TrustedLogin = a.record.TrustedUnlock != nil
 		v.Username = a.record.Username

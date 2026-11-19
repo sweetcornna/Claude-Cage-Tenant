@@ -35,6 +35,30 @@ func TestReleaseSelectionPreservesChannelsAndNumericPrereleases(t *testing.T) {
 		t.Fatalf("downgrade: %#v %v", c, err)
 	}
 }
+func TestTenantReleaseSource(t *testing.T) {
+	const wantAPI = "https://api.github.com/repos/sweetcornna/Claude-Cage-Tenant/releases?per_page=100"
+	if releasesURL != wantAPI {
+		t.Fatalf("updater queries %s, want %s", releasesURL, wantAPI)
+	}
+
+	r := fixtureRelease("0.2.0", false)
+	const assetPath = "/releases/download/v0.2.0/Cage-0.2.0-macos-arm64.dmg"
+	for _, tt := range []struct {
+		repo string
+		want bool
+	}{
+		{"sweetcornna/Claude-Cage-Tenant", true},
+		{"Lee-xeo/Claude-Cage", false},
+		{"sweetcornna/Claude-Cage", false},
+	} {
+		r.Assets[0].URL = "https://github.com/" + tt.repo + assetPath
+		candidate, err := catalog.Select([]release{r}, "0.1.0", "darwin", "arm64")
+		if err != nil || (candidate != nil) != tt.want {
+			t.Errorf("select from %s = %#v, %v; want candidate: %t", tt.repo, candidate, err, tt.want)
+		}
+	}
+}
+
 func TestRejectReleaseAssetOutsideRepositoryOrOversize(t *testing.T) {
 	for _, mutate := range []func(*release){
 		func(r *release) { r.Assets[0].URL = "https://evil.example/Cage.dmg" },

@@ -1,7 +1,0 @@
-<Project>
-  <!-- Keep bin/ and obj/ out of the source tree. The scripts pass
-       -artifactsPath to put them in the selected output folder instead. -->
-  <PropertyGroup>
-    <ArtifactsPath Condition="'$(ArtifactsPath)' == ''">$(MSBuildThisFileDirectory)../../_output/tenant-windows/.build</ArtifactsPath>
-  </PropertyGroup>
-</Project>

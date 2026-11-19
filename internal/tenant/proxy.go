@@ -44,6 +44,9 @@ func validPath(target *url.URL) bool {
 }
 
 func internalPath(value string) bool {
+	if strings.HasPrefix(value, "/api/client/") && value != "/api/client/context" && value != "/api/client/about" {
+		return true
+	}
 	for _, prefix := range []string{"/_tenant", "/api/tenant", "/api/launch", "/api/session", "/api/handoff", "/api/desktop-local", "/api/desktop-owner", "/api/remote/manifest", "/api/agent/native/window", "/api/account/device-enroll", "/api/account/device-unlock", "/api/account/device-revoke"} {
 		if value == prefix || strings.HasPrefix(value, prefix+"/") {
 			return true
@@ -70,7 +73,14 @@ func (s *Server) workbench(w http.ResponseWriter, r *http.Request, id string) {
 		refuseOrigin(w)
 		return
 	}
-	if (upgrade && (r.Method != http.MethodGet || len(r.Header.Values("Upgrade")) != 1 || !strings.EqualFold(r.Header.Get("Upgrade"), "websocket"))) || r.Method == http.MethodTrace || internalPath(r.URL.Path) {
+	// The workbench sidebar uses these owner-scoped endpoints from inside the
+	// VM itself. They are answered by the gateway and never forwarded to the
+	// guest, so a browser cannot reach a guest bootstrap route.
+	if !upgrade && s.serveVirtualMachines(w, r, id) {
+		return
+	}
+	metadata := r.URL.Path == "/api/client/about" || r.URL.Path == "/api/client/context"
+	if (metadata && (r.Method != http.MethodGet || upgrade)) || (upgrade && (r.Method != http.MethodGet || len(r.Header.Values("Upgrade")) != 1 || !strings.EqualFold(r.Header.Get("Upgrade"), "websocket"))) || r.Method == http.MethodTrace || internalPath(r.URL.Path) {
 		notFound(w)
 		return
 	}
@@ -121,6 +131,15 @@ func (s *Server) workbench(w http.ResponseWriter, r *http.Request, id string) {
 			writer.stopHijack()
 		}
 	}()
+	// The browser uses the VM's own workbench assets, but this is still a
+	// remote workbench, not a desktop entry point on the server.
+	if r.Method == http.MethodGet && r.URL.Path == "/api/client/context" && !upgrade {
+		jsonReply(w, http.StatusOK, map[string]any{
+			"mode": "local", "connection_id": "local", "server_platform": "linux", "tenant_workspace": true,
+			"virtual_machines": true, "portal_origin": s.site.origin,
+		})
+		return
+	}
 	workspace.proxy(origin, func() { s.invalidateWorkspace(id, workspace) }, func() {
 		s.confirmWorkspaceFault(id, workspace)
 	}).ServeHTTP(writer, r.WithContext(ctx))

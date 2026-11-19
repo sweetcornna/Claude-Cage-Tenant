@@ -1,7 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { api, native } from "./api.js";
-import { clientKeyboard, clientStorageKey, runtimeURL, setClientContext } from "./client-context.mjs";
+import { clientKeyboard, clientStorageKey, isCloudWorkbench, isRemoteClient, runtimeURL, setClientContext } from "./client-context.mjs";
+
+test("tenant browser uses cloud tools with the guest's local API generation", (t) => {
+  environment(t);
+  setClientContext({ mode: "local", connection_id: "local", tenant_workspace: true });
+  assert.equal(isCloudWorkbench(), true);
+  assert.equal(isRemoteClient(), false);
+  assert.equal(runtimeURL("/projects/directories"), "/api/projects/directories?connection=local");
+  setClientContext({ mode: "local", connection_id: "local" });
+  assert.equal(isCloudWorkbench(), false);
+});
 
 function environment(t) {
   const saved = { fetch: globalThis.fetch, window: globalThis.window, location: globalThis.location };

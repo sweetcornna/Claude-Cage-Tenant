@@ -15,6 +15,11 @@ const emptyHost = () => ({
 });
 
 export function HostForm({ initial, platform, onSaved, onClose }) {
+  const props = { initial, platform, onSaved, onClose };
+  return initial?.kind === "tenant" ? <LegacyTenantHostForm {...props} /> : <SSHHostForm {...props} />;
+}
+
+function SSHHostForm({ initial, platform, onSaved, onClose }) {
   const [form, setForm] = useState(() =>
     initial ? structuredClone(initial) : emptyHost(),
   );
@@ -188,6 +193,55 @@ export function HostForm({ initial, platform, onSaved, onClose }) {
             <button type="button" onClick={onClose}>
               取消
             </button>
+          </div>
+        </fieldset>
+      </form>
+    </Modal>
+  );
+}
+
+function LegacyTenantHostForm({ initial, onSaved, onClose }) {
+  const [name, setName] = useState(initial.name);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save(event) {
+    event.preventDefault();
+    if (busy || !name.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      const saved = await api(`/client/hosts/${initial.id}`, {
+        kind: "tenant",
+        portal: initial.portal,
+        user: initial.user,
+        vm_id: initial.vm_id,
+        name,
+      }, "PUT");
+      await onSaved(saved);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title="编辑远程主机" onClose={busy ? undefined : onClose}>
+      <form className="remote-host-form" onSubmit={save}>
+        {error && <p className="error-message" role="alert">{error}</p>}
+        <fieldset disabled={busy}>
+          <label>门户地址<input value={initial.portal} readOnly /></label>
+          <label>门户用户名<input value={initial.user} readOnly /></label>
+          <label>
+            主机名称
+            <input value={name} onChange={(event) => setName(event.target.value)} maxLength={200} required />
+          </label>
+          <div className="remote-button-row">
+            <button className="primary" type="submit" disabled={!name.trim()}>
+              {busy ? "正在保存…" : "保存主机"}
+            </button>
+            <button type="button" onClick={onClose}>取消</button>
           </div>
         </fieldset>
       </form>

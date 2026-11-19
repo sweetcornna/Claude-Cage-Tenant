@@ -84,6 +84,7 @@ export function BrowserExtensions({ onOpenPage, onInternal, onConfirm }) {
   const [preview, setPreview] = useState(null), [importing, setImporting] = useState(false);
   const file = useRef(), alive = useRef(true), pending = useRef(null);
   const connection = useRef(getClientContext().connection_id);
+  const canImport = !getClientContext().tenant_workspace;
   const load = async () => {
     setError('');
     try { const result = await api('/browser/extensions', { mode: 'list' }); if (alive.current) setItems(result.items); }
@@ -127,7 +128,7 @@ export function BrowserExtensions({ onOpenPage, onInternal, onConfirm }) {
   return <div className="browser-extensions">
     <div className="browser-setting-actions">
       <button className="primary" disabled={Boolean(busy || preview)} onClick={() => file.current?.click()}><Upload size={15} />添加 ZIP 扩展</button>
-      <button disabled={Boolean(busy || preview)} onClick={() => setImporting(true)}><FolderInput size={15} />从本机导入</button>
+      {canImport && <button disabled={Boolean(busy || preview)} onClick={() => setImporting(true)}><FolderInput size={15} />从本机导入</button>}
       <button aria-label="刷新扩展" disabled={Boolean(busy)} onClick={load}><RefreshCw size={15} /></button>
     </div>
     <input ref={file} type="file" accept=".zip,application/zip" hidden onChange={select} aria-label="选择扩展 ZIP" />
@@ -139,9 +140,9 @@ export function BrowserExtensions({ onOpenPage, onInternal, onConfirm }) {
       <Permissions item={preview} expanded />
       <div className="browser-setting-actions"><button className="primary" disabled={Boolean(busy)} onClick={() => act('install')}>安装扩展</button><button disabled={Boolean(busy)} onClick={cancel}>取消</button></div>
     </section>}
-    {importing && <LocalExtensionImport existing={items || []} onUpdated={setItems} onClose={() => setImporting(false)} />}
+    {canImport && importing && <LocalExtensionImport existing={items || []} onUpdated={setItems} onClose={() => setImporting(false)} />}
     <div className="browser-setting-heading"><h3>已安装的扩展{items ? `（${items.length}）` : ''}</h3></div>
-    {items === null && !error ? <p role="status">正在读取扩展…</p> : items?.length === 0 ? <div className="extension-empty"><Puzzle size={28} /><strong>让浏览器更合用</strong><p>添加扩展，或从本机浏览器导入已有扩展。</p></div> : items?.map(item => <article className="extension-item" key={item.id}>
+    {items === null && !error ? <p role="status">正在读取扩展…</p> : items?.length === 0 ? <div className="extension-empty"><Puzzle size={28} /><strong>让浏览器更合用</strong><p>{canImport ? '添加扩展，或从本机浏览器导入已有扩展。' : '上传 ZIP 安装扩展。'}</p></div> : items?.map(item => <article className="extension-item" key={item.id}>
       <div className="browser-setting-heading"><div><strong>{item.name}</strong><span className="extension-version">{item.version}</span></div>
         <label className="extension-enable"><input type="checkbox" aria-label={`启用 ${item.name}`} checked={Boolean(item.enabled)} disabled={Boolean(busy) || item.mayDisable === false} onChange={() => act(item.enabled ? 'disable' : 'enable', item.id)} />{item.enabled ? '已启用' : '已停用'}</label></div>
       {item.description && <p>{item.description}</p>}{item.error && <p role="alert" className="browser-settings-error">{item.error}</p>}

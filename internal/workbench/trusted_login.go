@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"time"
 
 	"github.com/sylvinus/agent-vm/internal/host"
@@ -61,7 +60,14 @@ func (d *desktopGateway) trustedLogin(w http.ResponseWriter, r *http.Request) {
 	d.change.Lock()
 	defer d.change.Unlock()
 	session, remote, err := d.acquire(in.ConnectionID)
-	local, ok := d.local.(*desktopLocal)
+	d.mu.RLock()
+	active := d.active
+	d.mu.RUnlock()
+	localController := d.local
+	if active != nil && active.mode == "local" && active.local != nil {
+		localController = active.local
+	}
+	local, ok := localController.(*desktopLocal)
 	if err != nil || remote || !ok {
 		http.Error(w, "请返回当前本机工作台", 409)
 		return
@@ -109,15 +115,9 @@ func (s *Server) localTrustedLogin(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, trustedLoginReply{Error: "请先注册 Cage 用户名和密码，再开始安装"})
 		return
 	}
-	base, err := os.UserConfigDir()
-	if runtime.GOOS == "windows" {
-		base = os.Getenv("LOCALAPPDATA")
-	}
-	if !filepath.IsAbs(base) {
-		err = errors.New("无法确定本机系统用户配置目录")
-	}
+	base, err := trustedLocalDir()
 	if err == nil {
-		err = s.account.trustedLogin(in.Action, in.Password, filepath.Join(base, "Cage", "trusted-local"))
+		err = s.account.trustedLogin(in.Action, in.Password, base)
 	}
 	reply := trustedLoginReply{}
 	if err != nil {

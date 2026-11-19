@@ -299,11 +299,12 @@ func connect(lifetime context.Context, p HostProfile, secrets ConnectSecrets, ph
 }
 
 type sessionTransport struct {
-	base       *http.Transport
-	jar        http.CookieJar
-	origin     string
-	ctx        context.Context
-	invalidate func() error
+	base         *http.Transport
+	jar          http.CookieJar
+	origin       string
+	ctx          context.Context
+	invalidate   func() error
+	tenantCookie *http.Cookie
 }
 
 func (t *sessionTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -326,8 +327,13 @@ func (t *sessionTransport) RoundTrip(request *http.Request) (*http.Response, err
 	req.Header.Del("X-Idempotency-Key")
 	req.GetBody = nil
 	req.Header.Set("Origin", t.origin)
-	for _, cookie := range t.jar.Cookies(req.URL) {
-		req.AddCookie(cookie)
+	if t.tenantCookie != nil {
+		req.AddCookie(t.tenantCookie)
+		req.Header.Del("Sec-Fetch-Site")
+	} else {
+		for _, cookie := range t.jar.Cookies(req.URL) {
+			req.AddCookie(cookie)
+		}
 	}
 	response, err := t.base.RoundTrip(req)
 	if err != nil {
@@ -342,7 +348,9 @@ func (t *sessionTransport) RoundTrip(request *http.Request) (*http.Response, err
 		}
 		return nil, failure("remote_session_expired", "云端会话已失效，请重新连接并核对云端任务")
 	}
-	t.jar.SetCookies(req.URL, response.Cookies())
+	if t.tenantCookie == nil {
+		t.jar.SetCookies(req.URL, response.Cookies())
+	}
 	response.Header.Del("Set-Cookie")
 	if response.StatusCode >= 300 && response.StatusCode < 400 && response.Header.Get("Location") != "" {
 		response.Body.Close()

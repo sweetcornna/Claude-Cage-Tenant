@@ -11,13 +11,19 @@ import (
 func (s *Store) ImportOnce(directories ...string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := os.Lstat(filepath.Join(s.profile, "remote-hosts.json")); !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(s.profile, sshHosts)); !os.IsNotExist(err) {
 		return err
 	}
 	var merged []HostProfile
 	seen := make(map[string]HostProfile)
 	for _, directory := range directories {
-		profiles, err := NewStore(directory).List()
+		source := NewStore(directory)
+		if source.mu == s.mu {
+			continue
+		}
+		source.mu.Lock()
+		profiles, err := source.read(sshHosts)
+		source.mu.Unlock()
 		if err != nil {
 			return err
 		}
@@ -42,5 +48,5 @@ func (s *Store) ImportOnce(directories ...string) error {
 			merged = append(merged, p)
 		}
 	}
-	return s.write(merged)
+	return s.write(sshHosts, merged)
 }
