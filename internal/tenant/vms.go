@@ -169,6 +169,7 @@ func (s *Server) openVM(w http.ResponseWriter, r *http.Request, id string) {
 		rateLimited(w)
 		return
 	}
+	s.noteActivityLocked(record.ID, now)
 	if s.workspaceReadyLocked(record, now) {
 		url, ok := s.issueTicketLocked(session, record.ID, now)
 		if !ok {
@@ -282,6 +283,9 @@ func (s *Server) prepare(spec LaunchSpec, previous *Workspace, faults uint64) {
 	}
 	ctx, cancel := context.WithTimeout(s.context, 5*time.Minute)
 	defer cancel()
+	// A workspace frozen while idle resumes before it is checked. If the
+	// resume fails, the check fails and Prepare starts the instance.
+	_ = s.wake(ctx, id)
 	workspace := previous
 	if previous != nil {
 		probe, done := context.WithTimeout(ctx, 5*time.Second)
@@ -353,4 +357,5 @@ func (s *Server) prepare(spec LaunchSpec, previous *Workspace, faults uint64) {
 		workspace.checkedAt = s.now()
 	}
 	s.workspaces[id] = workspace
+	s.awakeLocked(id, s.now())
 }

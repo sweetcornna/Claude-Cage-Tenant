@@ -15,6 +15,7 @@
 - 每个账号只能看到和打开自己的虚拟机。点击左栏 **虚拟机** 查看当前环境和切换目标。
 - 新建只填名称，首次打开时才配备运行环境。切换、刷新或退出网页保留正在运行的任务。
 - 每台虚拟机的设置各自独立：代理订阅、节点、链路、代理端口和出口 IP 规则，以及 DNS、时区、语言、客机身份和共享项目都按虚拟机保存，改一台不影响其他。详见[接口契约](docs/api-contract.md#每台虚拟机的独立设置)。
+- 空闲的虚拟机自动降温：先冻结（内存换出到 swap，下一个请求约 0.1 秒内恢复），长时间不用再停机（磁盘保留，打开时冷启动）。策略参考 [Dormice](https://github.com/BitMiracle-AI/Dormice)，参数见[部署指南](deploy/tenant/README.md#7-空闲冷却)。
 - 同一服务器上的不同账号也可复用同一系统镜像。使用 Incus 和匹配容量的 ZFS 根盘时，同一镜像指纹的虚拟机共用一份只读基础盘，各自保存账号、文件和运行时写入。
 
 ## 开始使用
@@ -27,15 +28,15 @@
 
 ## 部署服务端
 
-服务端需要一台支持 KVM 的 Linux 主机，并已安装和初始化 Incus。下面是大致步骤，具体命令和安全要求见[部署指南](deploy/tenant/README.md)。
+服务端需要一台已安装和初始化 Incus 的 Linux 主机。支持 KVM 时，每个工作区是一台 Incus 虚拟机；没有硬件虚拟化时，加 `-incus-instance-type container` 改用 Incus 无特权系统容器，隔离弱于虚拟机，见[部署指南第 8 节](deploy/tenant/README.md#8-无硬件虚拟化的宿主incus-系统容器)。下面是大致步骤，具体命令和安全要求见[部署指南](deploy/tenant/README.md)。
 
 1. **创建专用项目**：在 Incus 中创建 `cage-tenant` 项目和存储池，并设置 CPU、内存和磁盘配额。
 2. **准备系统镜像**：为每个系统制作不含用户数据的空白 VM 镜像，导入项目，例如命名为 `cage-blank`。
 3. **启动网关**：下载与主机架构对应的服务端归档并校验，然后运行：
 
    ```sh
-   tar -xzf Cage-Tenant-Server-0.1.10-linux-amd64.tar.gz
-   cd Cage-Tenant-Server-0.1.10-linux-amd64
+   tar -xzf Cage-Tenant-Server-0.1.11-linux-amd64.tar.gz
+   cd Cage-Tenant-Server-0.1.11-linux-amd64
    ./cage-tenant -origin https://cage.example.org \
      -state-dir /var/lib/cage-tenant -incus-image cage-blank
    ```
@@ -48,7 +49,7 @@
 
 目标是让浏览器与桌面版的工作台界面和主要操作一致。仅原生端提供的能力需要浏览器替代方式，或明确标为平台专属；完整图形工作流的一致性仍待验证。
 
-网关和门户仍处于预览阶段。此前在真实 Incus 环境中用 Debian 12 和 Ubuntu 24.04 验证了两个账号共三台虚拟机的隔离、切换、刷新恢复和磁盘持久化。完整的 Claude CLI 流程也仍待验证。
+网关和门户仍处于预览阶段。此前在真实 Incus 环境中用 Debian 12 和 Ubuntu 24.04 验证了两个账号共三台虚拟机的隔离、切换、刷新恢复和磁盘持久化。容器模式和空闲冷却在没有 `/dev/kvm` 的 arm64 测试机上用 4 个租户验证过，验证范围见部署指南第 8 节。完整的 Claude CLI 流程也仍待验证。
 
 ## 文档
 

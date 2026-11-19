@@ -31,6 +31,13 @@ type Workspace struct {
 	faults          uint64
 	verify          func(context.Context) error
 	checkingSession atomic.Bool
+	// lastIO is the Unix time in nanoseconds of the last proxied request or
+	// stream byte. It feeds idle cooling and is updated without the server lock.
+	lastIO atomic.Int64
+	// awake ends with every freeze, closing the requests and streams that were
+	// proxied before it. Guarded by the server lock.
+	awake context.Context
+	doze  context.CancelFunc
 }
 
 func newWorkspace(port int, dial func(context.Context) (net.Conn, error)) *Workspace {
@@ -53,7 +60,25 @@ func newWorkspace(port int, dial func(context.Context) (net.Conn, error)) *Works
 	control.MaxConnsPerHost = 2
 	control.MaxIdleConns = 1
 	control.MaxIdleConnsPerHost = 1
-	return &Workspace{origin: origin, transport: transport, control: control, ctx: ctx, cancel: cancel, slots: make(chan struct{}, 64)}
+	awake, doze := context.WithCancel(ctx)
+	workspace := &Workspace{origin: origin, transport: transport, control: control, ctx: ctx, cancel: cancel, slots: make(chan struct{}, 64), awake: awake, doze: doze}
+	workspace.touch()
+	return workspace
+}
+
+func (w *Workspace) touch() { w.lastIO.Store(time.Now().UnixNano()) }
+
+func (w *Workspace) lastActive() time.Time { return time.Unix(0, w.lastIO.Load()) }
+
+// sleep ends every proxied request and stream of a workspace that is about to
+// freeze and drops its idle guest connections. A browser reconnects and its
+// next request wakes the workspace. Caller holds the server lock.
+func (w *Workspace) sleep() {
+	doze := w.doze
+	w.awake, w.doze = context.WithCancel(w.ctx)
+	doze()
+	w.transport.CloseIdleConnections()
+	w.control.CloseIdleConnections()
 }
 
 func (w *Workspace) close() {

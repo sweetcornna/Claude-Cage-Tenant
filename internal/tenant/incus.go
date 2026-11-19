@@ -20,12 +20,21 @@ import (
 const instanceLabel = "user.cage-tenant.id"
 const instanceSystem = "user.cage-tenant.system"
 
+// Incus instance types the gateway can run. System containers need no
+// hardware virtualization, so they also run on hosts without KVM.
+const (
+	InstanceVM        = "virtual-machine"
+	InstanceContainer = "container"
+)
+
 type IncusConfig struct {
 	Executable  string
 	Project     string
 	Profile     string
 	Network     string
 	ControlPath string
+	// InstanceType is InstanceVM (the default) or InstanceContainer.
+	InstanceType string
 }
 
 type IncusRuntime struct{ cfg IncusConfig }
@@ -37,10 +46,24 @@ func NewIncus(cfg IncusConfig) (*IncusRuntime, error) {
 	if !dnsLabel.MatchString(cfg.Profile) || (cfg.Network != "" && !dnsLabel.MatchString(cfg.Network)) {
 		return nil, errors.New("configure a named Incus profile and, if needed, one managed network")
 	}
+	switch cfg.InstanceType {
+	case "":
+		cfg.InstanceType = InstanceVM
+	case InstanceVM, InstanceContainer:
+	default:
+		return nil, errors.New("Incus instance type must be virtual-machine or container")
+	}
 	if !filepath.IsAbs(cfg.Executable) || !path.IsAbs(cfg.ControlPath) || path.Clean(cfg.ControlPath) != cfg.ControlPath || path.Base(cfg.ControlPath) != "control.json" || strings.ContainsAny(cfg.ControlPath, "\x00\r\n") {
 		return nil, errors.New("configure an absolute Incus executable and an absolute guest control.json path")
 	}
 	return &IncusRuntime{cfg: cfg}, nil
+}
+
+func (r *IncusRuntime) instanceType() string {
+	if r.cfg.InstanceType == "" {
+		return InstanceVM
+	}
+	return r.cfg.InstanceType
 }
 
 func (r *IncusRuntime) command(ctx context.Context, args ...string) *exec.Cmd {
@@ -106,7 +129,7 @@ func (r *IncusRuntime) lookup(ctx context.Context, spec LaunchSpec) (*instance, 
 			continue
 		}
 		system := record.Config[instanceSystem]
-		if record.Type != "virtual-machine" || record.Config[instanceLabel] != spec.VMID || (system != spec.SystemID && !(system == "" && spec.SystemID == defaultSystemID)) {
+		if record.Type != r.instanceType() || record.Config[instanceLabel] != spec.VMID || (system != spec.SystemID && !(system == "" && spec.SystemID == defaultSystemID)) {
 			return nil, errors.New("Incus instance ownership does not match the workspace")
 		}
 		if spec.Image != "" && record.Config["volatile.base_image"] != spec.Image {
@@ -122,7 +145,7 @@ func (r *IncusRuntime) Prepare(ctx context.Context, spec LaunchSpec) (*Workspace
 		return nil, errors.New("invalid workspace identity")
 	}
 	if runtime.GOOS != "linux" {
-		return nil, errors.New("Incus VM runtime requires a Linux host")
+		return nil, errors.New("Incus runtime requires a Linux host")
 	}
 	name := "local:cage-" + spec.VMID
 	profile, err := r.loadProfile(ctx)
@@ -137,8 +160,13 @@ func (r *IncusRuntime) Prepare(ctx context.Context, spec LaunchSpec) (*Workspace
 		if !secretPattern.MatchString(spec.Image) {
 			return nil, errors.New("configured Incus VM image has no pinned fingerprint")
 		}
-		if err := r.command(ctx, "init", "local:"+spec.Image, name, "--vm", "--profile", r.cfg.Profile, "--config", instanceLabel+"="+spec.VMID, "--config", instanceSystem+"="+spec.SystemID).Run(); err != nil {
-			return nil, errors.New("Incus VM creation failed")
+		args := []string{"init", "local:" + spec.Image, name}
+		if r.instanceType() == InstanceVM {
+			args = append(args, "--vm")
+		}
+		args = append(args, "--profile", r.cfg.Profile, "--config", instanceLabel+"="+spec.VMID, "--config", instanceSystem+"="+spec.SystemID)
+		if err := r.command(ctx, args...).Run(); err != nil {
+			return nil, errors.New("Incus instance creation failed")
 		}
 		record, err = r.lookup(ctx, spec)
 		if err != nil || record == nil {
@@ -149,9 +177,11 @@ func (r *IncusRuntime) Prepare(ctx context.Context, spec LaunchSpec) (*Workspace
 		return nil, err
 	}
 	switch record.Status {
-	case "Stopped":
+	case "Stopped", "Frozen":
+		// Start also resumes an instance frozen by idle cooling, including one
+		// frozen before a gateway restart.
 		if err := r.command(ctx, "start", name).Run(); err != nil {
-			return nil, errors.New("Incus VM start failed")
+			return nil, errors.New("Incus instance start failed")
 		}
 	case "Running":
 	default:
@@ -196,7 +226,7 @@ func (r *IncusRuntime) Prepare(ctx context.Context, spec LaunchSpec) (*Workspace
 }
 
 func (r *IncusRuntime) ResolveImage(ctx context.Context, configured string) (string, error) {
-	missing := errors.New("configured Incus VM image is unavailable")
+	missing := errors.New("configured Incus image is unavailable")
 	if !imagePattern.MatchString(configured) {
 		return "", missing
 	}
@@ -219,7 +249,7 @@ func (r *IncusRuntime) ResolveImage(ctx context.Context, configured string) (str
 	}
 	var fingerprint string
 	for _, image := range images {
-		if image.Type != "virtual-machine" || !secretPattern.MatchString(image.Fingerprint) {
+		if image.Type != r.instanceType() || !secretPattern.MatchString(image.Fingerprint) {
 			continue
 		}
 		for _, alias := range image.Aliases {

@@ -42,6 +42,14 @@ type Config struct {
 	TotalVMLimit              int
 	ParallelStarts            int
 	TrustLoopbackClientIP     bool
+	// FreezeAfter is how long a workspace may stay idle before it is frozen.
+	// Zero turns idle cooling off. StopAfter, counted on the same idle clock,
+	// shuts a frozen workspace down and keeps its disk; zero keeps it frozen.
+	// BusyCPU is the share of one CPU above which a running instance counts
+	// as active even without browser traffic.
+	FreezeAfter time.Duration
+	StopAfter   time.Duration
+	BusyCPU     float64
 }
 
 type Server struct {
@@ -66,6 +74,7 @@ type Server struct {
 	hashSlots     chan struct{}
 	now           func() time.Time
 	sessionTTL    time.Duration
+	cooling       cooling
 }
 
 func NewServer(cfg Config) (*Server, error) {
@@ -78,6 +87,9 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	if cfg.Runtime == nil || cfg.UI == nil {
 		return nil, errors.New("a runtime and portal UI are required")
+	}
+	if cfg.FreezeAfter < 0 || (cfg.FreezeAfter > 0 && cfg.FreezeAfter < time.Minute) || cfg.StopAfter < 0 || (cfg.StopAfter > 0 && cfg.StopAfter < cfg.FreezeAfter) || cfg.BusyCPU < 0 || cfg.BusyCPU > 64 {
+		return nil, errors.New("freeze-after must be 0 or at least one minute, stop-after must be 0 or no shorter than freeze-after, and the busy CPU share must be between 0 and 64")
 	}
 	systems, err := systemIndex(cfg.Systems)
 	if err != nil {
@@ -114,6 +126,7 @@ func NewServer(cfg Config) (*Server, error) {
 		server.defaultSystem = cfg.Systems[0]
 	}
 	server.workers.Go(server.maintain)
+	server.startCooling()
 	return server, nil
 }
 
