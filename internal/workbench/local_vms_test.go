@@ -263,6 +263,9 @@ func TestLocalVMRoutesRequireExactLocalGenerationAndUnlockedOwner(t *testing.T) 
 	if !d.context().VirtualMachines {
 		t.Fatal("local desktop did not advertise VM support")
 	}
+	if got := d.context().VirtualMachine; got != defaultLocalVMID {
+		t.Fatalf("local context VM = %q", got)
+	}
 	w := localVMRequest(t, s, "GET", "/api/client/virtual-machines", generation, "")
 	if w.Code != 200 {
 		t.Fatalf("list: %d %s", w.Code, w.Body.String())

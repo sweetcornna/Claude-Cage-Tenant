@@ -33,10 +33,12 @@ export function runtimeSocketURL(path, context = current) {
   return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${runtimeURL(path, context)}`;
 }
 
+// Local VMs of one desktop share the gateway's browser origin, so each VM
+// keeps its own workbench layout. The default VM keeps the original keys.
 export function clientStorageKey(key, context = current) {
-  return context.mode === "remote"
-    ? `${key}:remote:${context.instance_id || context.host_id || "disconnected"}`
-    : key;
+  if (context.mode === "remote") return `${key}:remote:${context.instance_id || context.host_id || "disconnected"}`;
+  const vm = context.virtual_machine_id;
+  return vm && vm !== "default" ? `${key}:vm:${vm}` : key;
 }
 
 export function clientKeyboard(serverKeyboard, context = current) {

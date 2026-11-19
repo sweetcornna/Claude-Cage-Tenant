@@ -174,6 +174,17 @@ test("stream URLs carry the generation while layout follows the persistent insta
   assert.notEqual(clientStorageKey("cage-tab-layout"), key);
 });
 
+test("local virtual machines keep separate workbench layouts and the default VM keeps its keys", () => {
+  const local = { mode: "local", connection_id: "one", virtual_machines: true };
+  assert.equal(clientStorageKey("cage-tab-layout", local), "cage-tab-layout");
+  assert.equal(clientStorageKey("cage-tab-layout", { ...local, virtual_machine_id: "default" }), "cage-tab-layout");
+  const first = clientStorageKey("cage-tab-layout", { ...local, virtual_machine_id: "0123456789abcdef" });
+  const second = clientStorageKey("cage-tab-layout", { ...local, virtual_machine_id: "fedcba9876543210" });
+  assert.notEqual(first, "cage-tab-layout");
+  assert.notEqual(first, second);
+  assert.equal(clientStorageKey("cage-tab-layout", { ...local, connection_id: "two", virtual_machine_id: "0123456789abcdef" }), first);
+});
+
 test("remote keyboard defaults follow the client and a saved choice does not alter server settings", (t) => {
   environment(t);
   const previous = globalThis.localStorage;

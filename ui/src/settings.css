@@ -50,6 +50,14 @@
   letter-spacing: 0.01em;
   color: var(--strong);
 }
+.settings-page .settings-sidebar .settings-scope {
+  margin: -8px 12px 14px;
+  overflow: hidden;
+  font-size: var(--s-xs);
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .settings-page .settings-sidebar nav {
   gap: 2px;
 }

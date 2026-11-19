@@ -54,6 +54,7 @@ func (g *remoteGateway) setRemote(remote bool) {
 type ClientContext struct {
 	DesktopGateway  bool                       `json:"desktop_gateway,omitempty"`
 	VirtualMachines bool                       `json:"virtual_machines,omitempty"`
+	VirtualMachine  string                     `json:"virtual_machine_id,omitempty"`
 	Candidate       *desktopCandidate          `json:"candidate,omitempty"`
 	ClientOnly      bool                       `json:"client_only"`
 	Mode            string                     `json:"mode"`

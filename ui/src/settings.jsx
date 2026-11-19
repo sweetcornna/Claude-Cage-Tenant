@@ -4,7 +4,7 @@ import { Smartphone } from "lucide-react";
 import { PasswordVaultSettings } from "./password-vault";
 import { KeyRound } from "lucide-react";
 import { InlineSelect } from "./inline-select";
-import { clientKeyboard, isCloudWorkbench, isRemoteClient, saveClientKeyboard } from "./client-context.mjs";
+import { clientKeyboard, getClientContext, isCloudWorkbench, isRemoteClient, saveClientKeyboard } from "./client-context.mjs";
 import { shortcut, usesControl } from "./platform.mjs";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -58,6 +58,9 @@ export function SettingsPanel({
   initialSection = "keyboard",
 }) {
   const [localKeyboard, setLocalKeyboard] = useState(() => clientKeyboard(current.keyboard));
+  // Each VM runs its own workbench, so these settings belong to the VM shown here.
+  const vmContext = getClientContext();
+  const vmName = vmContext.virtual_machines && !isRemoteClient() ? vmContext.name || "" : "";
   const [accountDirty, setAccountDirty] = useState(false);
   const [proxyDirty, setProxyDirty] = useState(false);
   const [resourceDirty, setResourceDirty] = useState(false);
@@ -225,6 +228,7 @@ export function SettingsPanel({
           返回工作台
         </button>
         <h2>设置</h2>
+        {vmName && <p className="settings-scope" title={vmName}>虚拟机 · {vmName}</p>}
         <nav aria-label="设置分组">
           {sections.map(([id, label, Icon]) => (
             <button
@@ -256,6 +260,7 @@ export function SettingsPanel({
               : <MobilePairSettings relay={draft.mobile_relay ?? ""} savedRelay={current.mobile_relay ?? ""} onChange={value => update("mobile_relay",value)} onConfirm={onConfirm} />)}
             {section === "network" && (
               <>
+                {vmName && <p className="field-help">以下网络与代理设置只属于虚拟机「{vmName}」：订阅来源、节点、代理链路、代理端口、加密 DNS 和 IP 变化规则都由这台虚拟机单独保存，修改不会影响其他虚拟机。</p>}
                 <ProxySettings
                   onDirty={setProxyDirty}
                   status={status}

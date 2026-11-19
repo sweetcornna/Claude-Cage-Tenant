@@ -2,6 +2,7 @@ package workbench
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -58,17 +59,53 @@ func privateProjectDirectories(profile string) ([]string, error) {
 	return directories, nil
 }
 
+// localVMSiblingProfiles lists the other profiles of the desktop VM family
+// that contains profile, and of the default ~/.claude-cage family.
+func localVMSiblingProfiles(profile string) ([]string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	candidates, err := cage.LocalVMProfiles(profile)
+	if err != nil {
+		return nil, errors.New("无法读取本机虚拟机列表，请检查配置目录的访问权限")
+	}
+	defaults, err := cage.LocalVMProfiles(filepath.Join(home, ".claude-cage"))
+	if err != nil {
+		return nil, errors.New("无法读取本机虚拟机列表，请检查配置目录的访问权限")
+	}
+	candidates = append(candidates, defaults...)
+	var siblings []string
+	for _, candidate := range candidates {
+		candidate = filepath.Clean(candidate)
+		known := paths.Equal(candidate, filepath.Clean(profile))
+		for _, sibling := range siblings {
+			known = known || paths.Equal(candidate, sibling)
+		}
+		if !known {
+			siblings = append(siblings, candidate)
+		}
+	}
+	return siblings, nil
+}
+
 func validateHostProjectData(root, profile string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
 	defaultProfile := filepath.Join(home, ".claude-cage")
-	// Independent profiles also protect disks and backups of the default workload.
-	if !paths.Equal(profile, defaultProfile) {
-		private, err := privateProjectDirectories(defaultProfile)
+	// Every other profile of the desktop VM family, the default workload
+	// included, keeps its configuration, disks and backups out of this
+	// profile's shares.
+	siblings, err := localVMSiblingProfiles(profile)
+	if err != nil {
+		return err
+	}
+	for _, other := range siblings {
+		private, err := privateProjectDirectories(other)
 		if err != nil {
-			return err
+			return fmt.Errorf("无法确认虚拟机「%s」的环境存储位置，暂不能共享项目：%w", localVMLabel(other), err)
 		}
 		for _, dir := range private {
 			if cage.StoragePathsOverlap(root, dir) {
