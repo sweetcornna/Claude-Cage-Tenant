@@ -231,6 +231,8 @@ ps -C incus -o comm= | wc -l
 
 ## 8. 无硬件虚拟化的宿主（Incus 系统容器）
 
+无虚拟化版安装包（`Cage-Tenant-NoVirt-<版本>-linux-<架构>.tar.gz`）中的 `install.sh` 会自动完成本节的全部步骤，见[无虚拟化版说明](novirt/README.md)。下面是手动配置的说明。
+
 没有 KVM（`/dev/kvm` 不存在，例如云主机未开嵌套虚拟化）时，用 `-incus-instance-type container` 启动网关。每个工作区成为专用项目中的 Incus 无特权系统容器 `cage-<id>`，网关的其余行为不变：仍通过 `user.cage-tenant.id` 标签认领实例，仍经 `incus exec` 和 `socat` 连接实例内回环监听的 Cage 控制端口。同一个项目只能使用一种实例类型，`-incus-image` 和 `-systems-file` 也只接受该类型的镜像。
 
 **隔离差异。** 容器与宿主共用内核，隔离弱于虚拟机。请使用专用宿主并及时更新内核。网关拒绝 `security.privileged`、全部 `raw.*`、`linux.kernel_modules` 等键，不允许 profile 增加根盘和受管 NIC 以外的设备，并要求实例的资源与隔离设置与 profile 完全一致。需要更强隔离又没有 KVM 时，可以考虑 Dormice 使用的 gVisor（用户态内核），本仓库尚未实现。
@@ -239,6 +241,7 @@ ps -C incus -o comm= | wc -l
 
 - 推荐 [Zabbly](https://github.com/zabbly/incus) 的 Incus 6.0 LTS（实测 6.0.7）。Ubuntu 24.04 自带的 6.0.0 能运行网关和 Cage 控制服务，但租户容器内的 rootless 引擎创建容器时会报 `open sysctl net.ipv4.ip_unprivileged_port_start file: reopen fd 8: permission denied`（runc 1.3.3 的 CVE-2025-52881 修复与旧版 LXC 不兼容，见 runc #4968）。同一宿主换成 6.0.7 并重启容器后可以正常创建。从发行版包换成 Zabbly 包时，现有实例会被停止，请安排在维护窗口。
 - 按第 7 节开启 swap。
+- 调高 inotify 上限，例如 `fs.inotify.max_user_instances=1048576` 和 `fs.inotify.max_user_watches=1048576`。无特权容器的 root 映射到宿主的同一个 uid，所有容器共用这个 uid 的 inotify 实例上限，systemd 每个容器要占几个，发行版默认的 128 只够少量容器启动，超出后容器内 systemd 报 `Failed to create control group inotify object: Too many open files` 并退出。
 - Ubuntu 23.10 起默认 `kernel.apparmor_restrict_unprivileged_userns=1`，会阻止容器内的 rootless 引擎创建用户命名空间（日志为 `rootlesskit ... fork/exec /proc/self/exe: permission denied`）。使用 Cage 云工作环境时，在 `/etc/sysctl.d/` 中设为 `0` 并持久化；升级 AppArmor 或 Incus 包后需复查。这会允许宿主上所有普通用户创建无特权用户命名空间，只应在专用宿主上这样设置。Debian 宿主没有这项限制。
 - Incus 默认为无特权容器提供 `/dev/fuse` 和 `/dev/net/tun`，并分配足够的 uid/gid 映射，Cage 云工作环境所需的 FUSE、TUN 和嵌套用户命名空间都不需要额外设备。
 
