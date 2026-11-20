@@ -15,6 +15,10 @@ static void setError(NSError **error, NSString *text) {
     if (error) *error = [NSError errorWithDomain:@"CageMobile" code:1 userInfo:@{NSLocalizedDescriptionKey:text}];
 }
 
+@interface CMConnection ()
++ (nullable instancetype)workspaceWithClient:(CagemobileClient *)client assets:(NSString *)assets error:(NSError **)error;
+@end
+
 @interface CMDeviceKey : NSObject <CagemobileDeviceSigner>
 - (instancetype)initWithError:(NSError **)error;
 @end
@@ -147,10 +151,67 @@ static void setError(NSError **error, NSString *text) {
     [client reportDevice:@"ios" model:model ?: UIDevice.currentDevice.model];
     return [self workspaceWithClient:client assets:assets error:error];
 }
+- (void)suspend {
+    CagemobileClient *client;
+    @synchronized (self) { client = _client; }
+    [client suspend];
+}
+- (BOOL)resume {
+    CagemobileClient *client;
+    @synchronized (self) { client = _client; }
+    if (!client) return NO;
+    return [client resume];
+}
 - (void)close {
     CagemobileClient *client;
     @synchronized (self) { client = _client; _client = nil; }
     [client close:nil];
 }
 - (void)dealloc { [self close]; }
+@end
+
+// Server messages are written for the phone in Go and contain no secrets.
+static NSString *serverMessage(NSError *failure, NSString *fallback) {
+    NSString *text = failure.localizedDescription;
+    return text.length && text.length <= 200 ? text : fallback;
+}
+
+@implementation CMServer {
+    CagemobileTenant *_tenant;
+}
++ (NSString *)canonicalPortal:(NSString *)raw error:(NSError **)error {
+    NSError *failure = nil;
+    NSString *portal = CagemobileTenantPortal(raw, &failure);
+    if (failure || !portal.length) { setError(error, serverMessage(failure, @"服务器地址无效。")); return nil; }
+    return portal;
+}
++ (instancetype)signInPortal:(NSString *)portal user:(NSString *)user password:(NSString *)password error:(NSError **)error {
+    NSError *failure = nil;
+    CagemobileTenant *tenant = CagemobileTenantLogin(portal, user, password, &failure);
+    if (!tenant || failure) { setError(error, serverMessage(failure, @"登录未完成，请检查网络和账户。")); return nil; }
+    CMServer *server = [[CMServer alloc] init];
+    server->_tenant = tenant;
+    return server;
+}
+- (NSString *)portal { return [_tenant portal]; }
+- (NSString *)user { return [_tenant user]; }
+- (NSString *)virtualMachines:(NSError **)error {
+    NSError *failure = nil;
+    NSString *list = [_tenant virtualMachines:&failure];
+    if (failure || !list.length) { setError(error, serverMessage(failure, @"无法读取虚拟机列表。")); return nil; }
+    return list;
+}
+- (NSString *)createVirtualMachine:(NSString *)name error:(NSError **)error {
+    NSError *failure = nil;
+    NSString *vm = [_tenant createVirtualMachine:name error:&failure];
+    if (failure || !vm.length) { setError(error, serverMessage(failure, @"无法新建虚拟机。")); return nil; }
+    return vm;
+}
+- (CMConnection *)openVirtualMachine:(NSString *)vmID assets:(NSString *)assets error:(NSError **)error {
+    NSError *failure = nil;
+    CagemobileClient *client = [_tenant openVirtualMachine:vmID error:&failure];
+    if (!client || failure) { setError(error, serverMessage(failure, @"无法打开虚拟机，请稍后重试。")); return nil; }
+    return [CMConnection workspaceWithClient:client assets:assets error:error];
+}
+- (void)close { [_tenant close]; }
 @end

@@ -27,13 +27,13 @@ export function CodeNavigation({catalog, project, sessions, current, creating, o
   </section>;
 }
 
-export function ProjectTree({catalog, projectPath, sessionID, expanded, toggle, creating, onNew, onSession, onAction}) {
+export function ProjectTree({catalog, projectPath, sessionID, expanded, toggle, creating, onNew, onSession, onAction, emptyHint = "请在电脑 Cage 打开项目。"}) {
   const projects = catalog?.projects || [];
   return <section className="project-tree" aria-label="Claude Code 项目和会话">
     <h2>Claude Code</h2>
     {catalog?.shared_sessions === false && <p className="nav-note">当前启动配置使用独立移动会话。共享电脑终端需要使用 claude 启动命令。</p>}
     {!catalog ? <p className="nav-note" role="status">正在读取项目…</p> :
-      !projects.length ? <p className="nav-note">请在电脑 Cage 打开项目。</p> : projects.map((project, index) => {
+      !projects.length ? <p className="nav-note">{emptyHint}</p> : projects.map((project, index) => {
         const path = project.path;
         const open = expanded.get(path) ?? (path === projectPath || index === 0);
         const name = projects.some(other => other !== project && other.name === project.name) ? path : project.name;
@@ -60,7 +60,7 @@ export function ProjectTree({catalog, projectPath, sessionID, expanded, toggle, 
   </section>;
 }
 
-export function WorkspaceDrawer({open, active, name, onClose, onTool, onExit, onSettings, nativePhone, children}) {
+export function WorkspaceDrawer({open, active, name, tools = workspaceTools, onClose, onTool, onExit, onSettings, nativePhone, children}) {
   const panel = useRef(null);
   useEffect(() => {
     const dialog = panel.current;
@@ -85,10 +85,10 @@ export function WorkspaceDrawer({open, active, name, onClose, onTool, onExit, on
     }}>
     <header className="drawer-heading"><Monitor size={18} /><h2>{name || "远程工作台"}</h2></header>
     <div className="drawer-content">
-      <nav className="workspace-tools" aria-label="远程工具">{workspaceTools.map(({id, name:toolName, icon:Icon}) =>
+      {tools.length > 0 && <nav className="workspace-tools" aria-label="远程工具">{tools.map(({id, name:toolName, icon:Icon}) =>
         <button key={id} type="button" className="tool-link" aria-current={id === active ? "page" : undefined} onClick={() => onTool(id)}>
           <Icon size={19} /><span>{toolName}</span>
-        </button>)}</nav>
+        </button>)}</nav>}
       {children}
     </div>
     <footer className="drawer-footer"><button className="drawer-exit" type="button" onClick={onSettings}><Settings size={18}/>设置</button>
