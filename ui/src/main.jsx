@@ -35,6 +35,8 @@ import { MacOSAppWindow } from "./macos-claude-window";
 import { ProjectRecovery } from "./project-recovery";
 import { ClaudeDesktop } from "./claude-desktop";
 import { ClaudeAccountsPanel, useClaudeAccounts } from "./claude-accounts";
+import { CodexAccountsPanel, useCodexAccounts } from "./codex-accounts";
+import { codexTerminalDetail, codexTerminalLabel, codexTerminalSupported } from "./codex-accounts-state.mjs";
 import { AccountProvider, AccountGate, useAccount } from "./account";
 import { BrowserHeader, BrowserTabRail, TerminalHeader, ExpandSidebar, ExpandPane } from "./pane-headers";
 import { useDownloadNotifications, useDesktopFiles } from "./browser-downloads";
@@ -72,6 +74,7 @@ function App() {
     return () => window.removeEventListener("cage-client-preferences", refresh);
   }, []);
   const claudeProfiles = useClaudeAccounts();
+  const codexProfiles = useCodexAccounts();
   const [managementPage, setManagementPage] = useState("");
   const [tailnetLogin, setTailnetLogin] = useState(null);
   const [desktopOpen, setDesktopOpen] = useState(false);
@@ -263,6 +266,10 @@ function App() {
   useEffect(() => {
     if (finishedLogins) claudeProfiles.load();
   }, [finishedLogins, claudeProfiles.load]);
+  const finishedCodexLogins = tabs.filter((tab) => tab.terminalKind === "codex-login" && tab.closed).map((tab) => tab.id).sort().join(",");
+  useEffect(() => {
+    if (finishedCodexLogins) codexProfiles.load();
+  }, [finishedCodexLogins, codexProfiles.load]);
   const audio = useAudioOutput(running && guestCapability(status, "audio") && !storageRecovery && !status?.environment_update_required && !connectionError);
   useEffect(() => {
     if (audio.error) setToast(audio.error);
@@ -480,15 +487,20 @@ function App() {
   };
   const createTerminal = async (path, kind, loginAccountId) => {
     setTerminalChoice(null);
+    const codex = kind === "codex" || kind === "codex-login";
     const result = await api("/terminals", {
       workspace: path, kind,
-      ...(loginAccountId && { claude_account_id: loginAccountId }),
+      ...(loginAccountId && (codex ? { codex_account_id: loginAccountId } : { claude_account_id: loginAccountId })),
     });
     showTerminal(result);
     sessionsChanged();
     if (kind === "claude" && result.claude_account_id &&
         !claudeProfiles.accounts?.some((profile) => profile.id === result.claude_account_id)) {
       claudeProfiles.load();
+    }
+    if (codex && result.codex_account_id &&
+        !codexProfiles.accounts?.some((profile) => profile.id === result.codex_account_id)) {
+      codexProfiles.load();
     }
   };
   const showTerminal = result => {
@@ -555,7 +567,7 @@ function App() {
     newTerminal(contentWorkspace, event?.currentTarget?.tagName === "BUTTON"
       ? event.currentTarget : terminalTrigger.current);
   const terminalMenuAt = (location) => terminalChoice?.anchor?.dataset.terminalLocation === location && (
-    <TerminalMenu choice={terminalChoice} busy={busy}
+    <TerminalMenu choice={terminalChoice} busy={busy} codex={codexTerminalSupported(system)}
       onClose={() => setTerminalChoice(null)}
       onSelect={(kind) => createTerminal(terminalChoice.path, kind).catch((e) => notify(e.message))} />
   );
@@ -1199,7 +1211,8 @@ function App() {
     (tab.terminalKind === "claude-login" ? "新账号登录" : tab.claude_account_id ? "Claude 账号" : "");
   const displayTabs = orderedTabs(tabs, metadata).map((tab) =>
     tab.claude_account_id || tab.terminalKind === "claude-login" ? { ...tab,
-      claudeLabel: terminalAccountName(tab), claudeAccountNumber: claudeNumbers.get(tab.claude_account_id) } : tab);
+      claudeLabel: terminalAccountName(tab), claudeAccountNumber: claudeNumbers.get(tab.claude_account_id) }
+      : codexTerminalLabel(tab, codexProfiles.accounts) ? { ...tab, claudeLabel: "Codex · " + codexTerminalLabel(tab, codexProfiles.accounts) } : tab);
   const browserTabs = displayTabs.filter((tab) => tab.kind !== "terminal");
   const switchTabs =
     terminal && !showHome
@@ -1300,7 +1313,7 @@ function App() {
     const path = tab?.workspace || workspace;
     const account = tab?.claude_account_id && terminalAccountName(tab);
     const detail = tab?.terminalKind === "claude-login" ? `登录 · ${account || "新账号"}`
-      : account ? `Claude · ${account}${tab.claude_account_source === "default" ? "（启动时账号）" : ""}` : "";
+      : account ? `Claude · ${account}${tab.claude_account_source === "default" ? "（启动时账号）" : ""}` : codexTerminalDetail(tab, codexProfiles.accounts);
     const location = split && tab ? `heading-${tab.id}` : "heading";
     return <TerminalHeader tab={tab} project={projectName(path, groups)} metadata={metadata}
       contentWorkspace={path} terminalDetail={detail} terminalDetailHint={tab?.claude_account_source === "default"
@@ -1450,6 +1463,8 @@ function App() {
           <WorkspaceSidebar
             onClaudeAccounts={() => setManagementPage("claude-accounts")}
             claudeAccountsOpen={managementPage === "claude-accounts"}
+            onCodexAccounts={() => setManagementPage("codex-accounts")}
+            codexAccountsOpen={managementPage === "codex-accounts"}
             tailscaleOpen={managementPage === "tailscale"}
             updateAction={<AppUpdateButton updates={appUpdates} />}
             workspace={selectedProject || status.workspace}
@@ -1541,7 +1556,7 @@ function App() {
             <main className="management-page" aria-labelledby={managementPage + "-title"}>
               <header className="chrome management-header">
                 {sidebarButton()}
-                <h1 id={managementPage + "-title"} tabIndex={-1}>{managementPage === "tailscale" ? "Tailscale" : "Claude 账号管理"}</h1>
+                <h1 id={managementPage + "-title"} tabIndex={-1}>{managementPage === "tailscale" ? "Tailscale" : managementPage === "codex-accounts" ? "Codex 账号管理" : "Claude 账号管理"}</h1>
               </header>
               <div className="management-content">
                 {managementPage === "tailscale" ? <TailscalePanel status={status}
@@ -1555,7 +1570,9 @@ function App() {
                     const nativeGuest = ["macos", "windows-11"].includes(status.guest_system);
                     if (nativeGuest && !await confirm({ title: "更新环境组件？", body: "更新会重新连接浏览器和显示组件，请先保存工作。设备身份、公钥和个人数据保留。", confirm: "更新组件" })) return;
                     await action(nativeGuest ? "/environment/update" : "/tailscale/install", {});
-                  }} /> : <ClaudeAccountsPanel store={claudeProfiles} tabs={tabs} onConfirm={confirm}
+                  }} /> : managementPage === "codex-accounts" ? <CodexAccountsPanel store={codexProfiles} tabs={tabs} onConfirm={confirm}
+                  running={status.vm_running} environmentBusy={busy || storageRecovery}
+                  login={(id) => createTerminal(workspace, "codex-login", id)} /> : <ClaudeAccountsPanel store={claudeProfiles} tabs={tabs} onConfirm={confirm}
                   running={status.vm_running} environmentBusy={busy || storageRecovery}
                   login={(id) => createTerminal(workspace, "claude-login", id)} />}
               </div>

@@ -384,7 +384,7 @@ export function WorkspaceTabs({
                 }}
               >
                 <TabIcon kind={tab.kind} favicon={tab.favicon} size={15}
-                  agent={tab.terminalKind === "claude" || tab.terminalKind === "claude-login" || Boolean(tab.cli_session_id) || Boolean(tab.claude_account_id)}
+                  agent={tab.terminalKind === "claude" || tab.terminalKind === "claude-login" || tab.terminalKind === "codex" || tab.terminalKind === "codex-login" || Boolean(tab.cli_session_id) || Boolean(tab.claude_account_id)}
                   accountNumber={tab.claudeAccountNumber} />
                 <span>{title}</span>
                 {tab.claudeLabel && <small className="claude-tab-profile">{tab.claudeLabel}</small>}
@@ -463,7 +463,7 @@ export function WorkspaceTabs({
                       }}
                     >
                       <TabIcon kind={tab.kind} favicon={tab.favicon}
-                        agent={tab.terminalKind === "claude" || tab.terminalKind === "claude-login" || Boolean(tab.cli_session_id) || Boolean(tab.claude_account_id)}
+                        agent={tab.terminalKind === "claude" || tab.terminalKind === "claude-login" || tab.terminalKind === "codex" || tab.terminalKind === "codex-login" || Boolean(tab.cli_session_id) || Boolean(tab.claude_account_id)}
                         accountNumber={tab.claudeAccountNumber} />
                       <span>{tabName(tab, saved)}</span>
                       {tab.id === active && (

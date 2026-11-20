@@ -1,6 +1,7 @@
 import { shortcut } from "./platform.mjs";
 import React, { useEffect, useRef, useState } from "react";
 import {
+  Bot,
   CircleAlert,
   ExternalLink,
   Folder,
@@ -76,6 +77,8 @@ export function WorkspaceSidebar({
   tailscaleOpen,
   onClaudeAccounts,
   claudeAccountsOpen,
+  onCodexAccounts,
+  codexAccountsOpen,
   onClaudeWeb,
   onClaudeDesktop,
   desktopOpen,
@@ -154,6 +157,10 @@ export function WorkspaceSidebar({
           aria-current={claudeAccountsOpen ? "page" : undefined}>
           <UsersRound size={17} />Claude 账号管理
         </button>
+        {onCodexAccounts && <button className={`sidebar-link ${codexAccountsOpen ? "selected" : ""}`} onClick={onCodexAccounts}
+          aria-current={codexAccountsOpen ? "page" : undefined}>
+          <Bot size={17} />Codex 账号管理
+        </button>}
       </nav>
       <div className="sidebar-scroll">
         <div className="sidebar-section-heading">

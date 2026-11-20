@@ -6,3 +6,11 @@ export function isClaudeLoginLink(uri) {
   const match = claudeLoginLink.exec(uri);
   return uri.length <= 8192 && match?.[0] === uri;
 }
+
+// Codex device login prints a fixed page; the one-time code is entered there.
+// Opening it in the user's own browser carries no token or callback.
+export const codexDeviceLink = /https:\/\/auth\.openai\.com\/codex\/device(?![\w/?#.-])/;
+
+export function isCodexDeviceLink(uri) {
+  return uri === "https://auth.openai.com/codex/device";
+}

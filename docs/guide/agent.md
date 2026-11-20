@@ -269,6 +269,7 @@ cage agent call settings.get --scope selected --connection 当前连接代次
 | 出口位置检测、测速、连接和日志 | settings.probe 输入完整设置草稿；proxy.delay 输入 node_id；proxy.connections/logs。dry_run 仅静态校验。 |
 | 尚未开始安装时重选系统 | guest.reselect 输入 guest.options.pending.id，仍由原安装状态约束。 |
 | Claude 账号、额度、分组、启停、调度与排序 | claude-accounts.get/change，动作与字段类型由 capabilities 给出；业务 action 与界面相同。 |
+| Codex 账号、额度、启停、调度与排序（Linux 环境） | codex-accounts.get/change，action 为 update/scheduling/refresh/usage_panel/remove；登录与界面相同，通过 kind 为 codex-login 的终端完成。 |
 | 密码保险箱 | vault.get 列元数据；vault.change 的 action 为 save/delete/unblock/reveal；reveal 仍需 account_password，再次验证后返回真实密码；vault.browser 提供页面填充和保存。 |
 | 手机配对 | mobile.get/pair/remove；自建中继输入 admin/relay，配对结果是私密邀请码。 |
 | Tailscale 与 SSH 公钥 | tailscale.get，以及 install/connect/login/disconnect/logout/add-key/remove-key；公钥字段为 key。 |
