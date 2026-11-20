@@ -2,7 +2,13 @@
 
 手机 Cage 是远程客户端。点首页中央的「连接电脑」，用二维码或配对码连接主机，即可查看项目、接续 Claude Code 会话和处理工具审批。配对后还可在手机上操作主机里的浏览器和 Claude Desktop。代理、时区和语言在远程主机的 Cage 中设置。右上角的设置提供主题和电脑连接选项。
 
-Android arm64 APK 可从[官网下载入口](https://claude-cage.com/#download)获取，支持 Android 8.0+。iOS 17+ 设备版由用户通过 Xcode 在本地构建并签名安装。
+Android arm64 APK 可从[官网下载入口](https://claude-cage.com/#download)获取，支持 Android 8.0+。iOS 17+ 版本通过 TestFlight 内部测试分发（App「Cage Tenant」，套装 ID `io.github.sweetcornna.claude-cage.tenant.mobile`），也可以用 Xcode 在本地构建并签名安装。
+
+## 连接服务器
+
+首页的「连接服务器」用于多租户 Cage 服务器。填写门户地址（只接受 HTTPS 域名）、账户和密码后登录，即可查看、新建和打开自己的虚拟机。停机的虚拟机会先启动，首次可能需要几分钟。打开后工作台列出 Claude Code 项目和会话，可在手机上对话和处理工具审批；远程浏览器与 Claude Desktop 仍需扫码连接电脑。
+
+勾选「记住密码」时，iOS 把密码存进仅本机可用的钥匙串，Android 用系统 Keystore 加密保存。退出登录会关闭这个账户已打开的工作台，虚拟机继续在服务器上运行；在已保存列表中左滑（iOS）或长按（Android）可忘记服务器。
 
 ## Android 应用更新
 

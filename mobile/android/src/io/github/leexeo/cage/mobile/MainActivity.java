@@ -30,6 +30,7 @@ import android.webkit.WebViewClient;
 import android.widget.*;
 import cagemobile.Cagemobile;
 import cagemobile.Client;
+import cagemobile.Tenant;
 import java.io.*;
 import java.time.Instant;
 import java.util.concurrent.ExecutorService;
@@ -45,6 +46,12 @@ import androidx.webkit.ScriptHandler;
 public final class MainActivity extends Activity {
     private static final int PICK_INVITATION = 41;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    // Server sign-in and VM starts can take minutes; keep them off the pairing worker.
+    private final ExecutorService serverWorker = Executors.newCachedThreadPool();
+    private ServerAccounts servers;
+    private final Map<String, Tenant> tenants = new LinkedHashMap<>();
+    private LinearLayout machineList;
+    private EditText serverPortalField, serverUserField, serverPasswordField;
     private SharedPreferences trust;
     private HostCredentials credentials;
     private AppUpdate updates;
@@ -65,12 +72,13 @@ public final class MainActivity extends Activity {
         WebView view;
         ScriptHandler script;
         String name;
+        String account; // Set for a virtual machine opened from a Cage server account.
         ConnectedDevice(String hostKey, Client client, Uri launch, String name) {
             this.id=java.util.UUID.randomUUID().toString(); this.hostKey=hostKey;
             this.client=client; this.launch=launch; this.name=name;
         }
     }
-    private enum Page { HOME, SETTINGS, HOST, RELAY, PAIR, CODE }
+    private enum Page { HOME, SETTINGS, HOST, RELAY, PAIR, CODE, SERVERS, MACHINES }
     private Page page = Page.HOME;
     private FrameLayout root;
     private LinearLayout form;
@@ -143,6 +151,7 @@ public final class MainActivity extends Activity {
         appearance = getSharedPreferences("appearance", MODE_PRIVATE);
         palette = MobileTheme.apply(this, themeMode());
         credentials = new HostCredentials(trust);
+        servers = new ServerAccounts(getSharedPreferences("server-accounts", MODE_PRIVATE));
         updates = new AppUpdate(this, state);
         showSetup();
         if (state != null) {
@@ -151,6 +160,7 @@ public final class MainActivity extends Activity {
             if (restored == Page.PAIR || restored == Page.CODE) showPair(restored == Page.CODE);
             if (restored == Page.SETTINGS) showSettings(false);
             if (restored == Page.HOST || restored == Page.RELAY) showAdvanced(restored);
+            if (restored == Page.SERVERS || restored == Page.MACHINES) showServers();
         }
         worker.execute(() -> {
             try {
@@ -330,6 +340,9 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams action = new LinearLayout.LayoutParams(-1, dp(60));
         action.topMargin = dp(8);
         form.addView(connectComputerButton(v -> showPair(false)), action);
+        Button server = button(form, "连接服务器", false, v -> showServers());
+        LinearLayout.LayoutParams serverSize = (LinearLayout.LayoutParams) server.getLayoutParams();
+        serverSize.height = dp(60); serverSize.topMargin = dp(12);
         statusView();
         body.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
             int height = bottom - top;
@@ -669,7 +682,7 @@ public final class MainActivity extends Activity {
             for (int i = 0; i < group.getChildCount(); i++) enableActions(group.getChildAt(i), enabled);
         } else if (view.isClickable() || view instanceof EditText) view.setEnabled(enabled);
     }
-    private String extractUI() throws IOException {
+    private synchronized String extractUI() throws IOException {
         File root = new File(getCacheDir(), "cage-mobile-ui");
         copyAssets(getAssets(), "mobile-ui", root);
         return root.getAbsolutePath();
@@ -696,7 +709,8 @@ public final class MainActivity extends Activity {
         try {
             for (ConnectedDevice connected : connections.values()) {
                 JSONObject item = new JSONObject();
-                item.put("id", connected.id); item.put("name", connected.name); devices.put(item);
+                item.put("id", connected.id); item.put("name", connected.name);
+                item.put("kind", connected.account == null ? "computer" : "tenant"); devices.put(item);
             }
             state.put("current", current.id); state.put("devices", devices);
         } catch (org.json.JSONException impossible) {throw new IllegalStateException(impossible);}
@@ -722,6 +736,7 @@ public final class MainActivity extends Activity {
             JSONObject command = new JSONObject(json);
             String action = command.optString("action");
             if ("name".equals(action)) {
+                if (source.account != null) return; // A server VM keeps its portal name.
                 String name = command.optString("name").trim();
                 if (!name.isEmpty() && name.length() <= 120 && !name.equals(source.name)) {
                     source.name = name; broadcastDevices();
@@ -730,6 +745,7 @@ public final class MainActivity extends Activity {
             }
             if (!viewingWorkspace || source != activeDevice) return;
             if ("home".equals(action)) showSetup();
+            if ("open-url".equals(action)) openExternal(command.optString("url"));
         } catch (org.json.JSONException ignored) {}
     }
     private void createBrowser(ConnectedDevice connected) {
@@ -848,13 +864,226 @@ public final class MainActivity extends Activity {
         if (viewingWorkspace && browser != null) browser.onResume();
     }
     @Override public void onBackPressed() {
+        if (busy && page == Page.MACHINES) { ++generation; setConnecting(false); status.setText("已取消。"); return; }
         if (busy) return;
         if (viewingWorkspace && browser != null && browser.canGoBack()) browser.goBack();
         else if (viewingWorkspace) showSetup();
         else if (page == Page.CODE) showPair(false);
         else if (page == Page.RELAY || page == Page.HOST) showSettings(false);
+        else if (page == Page.MACHINES) showServers();
         else if (page != Page.HOME) showSetup();
         else super.onBackPressed();
     }
-    @Override public void onDestroy() { updates.close(); endSession(); worker.shutdown(); super.onDestroy(); }
+    @Override public void onDestroy() {
+        updates.close(); endSession(); worker.shutdown();
+        for (Tenant tenant : tenants.values()) serverWorker.execute(tenant::close);
+        tenants.clear(); serverWorker.shutdown();
+        super.onDestroy();
+    }
+
+    // Cage servers: sign in to a multi-tenant portal account and open its VMs in the phone workbench.
+    private void showServers() {
+        settingsPage(Page.SERVERS, "连接服务器", this::showSetup);
+        label("登录多租户 Cage 服务器的门户账户，打开你的虚拟机。", 14);
+        java.util.List<ServerAccounts.Account> saved = servers.list();
+        if (!saved.isEmpty()) {
+            label("已保存的服务器（长按可忘记）", 14);
+            for (ServerAccounts.Account account : saved) {
+                Button entry = row(account.user + "   ·   " + account.host(), v -> signInSaved(account));
+                entry.setOnLongClickListener(v -> { confirmForgetServer(account); return true; });
+            }
+        }
+        label(saved.isEmpty() ? "服务器账户" : "登录其他账户", 14);
+        serverPortalField = field("服务器地址，例如 https://cage.example.org", "");
+        serverPortalField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        serverUserField = field("账户", "");
+        serverPasswordField = field("密码", "");
+        serverPasswordField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        CheckBox remember = new CheckBox(this);
+        remember.setText("在这台手机上记住密码");
+        remember.setChecked(true);
+        form.addView(remember);
+        button(form, "登录", true, v -> {
+            String portal = serverPortalField.getText().toString(), user = serverUserField.getText().toString();
+            String password = serverPasswordField.getText().toString();
+            if (portal.trim().isEmpty() || user.trim().isEmpty() || password.isEmpty()) { status.setText("请填写服务器地址、账户和密码。"); return; }
+            serverPasswordField.setText("");
+            android.view.inputmethod.InputMethodManager ime = (android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
+            ime.hideSoftInputFromWindow(serverPasswordField.getWindowToken(), 0);
+            signInServer(portal, user, password, remember.isChecked());
+        });
+        statusView();
+    }
+    private void failServer(int attempt, Exception e, String fallback) {
+        String message = e.getMessage();
+        runOnUiThread(() -> { if (attempt == generation && !isDestroyed()) {
+            setConnecting(false);
+            status.setText(message == null || message.isEmpty() || message.length() > 200 ? fallback : message);
+        } });
+    }
+    private void signInServer(String portal, String user, String password, boolean remember) {
+        if (busy) return;
+        int attempt = ++generation; setConnecting(true); status.setText("正在登录服务器…");
+        serverWorker.execute(() -> {
+            try {
+                Tenant tenant = Cagemobile.tenantLogin(portal, user, password);
+                ServerAccounts.Account account = new ServerAccounts.Account(tenant.portal(), tenant.user());
+                boolean stored;
+                try { servers.save(account, remember ? password : null); stored = true; } catch (Exception e) { stored = false; }
+                boolean saved = stored;
+                runOnUiThread(() -> {
+                    if (attempt != generation || isDestroyed()) { serverWorker.execute(tenant::close); return; }
+                    setConnecting(false);
+                    Tenant old = tenants.put(account.id(), tenant);
+                    if (old != null && old != tenant) serverWorker.execute(old::close);
+                    showMachines(account);
+                    if (!saved) status.setText("已登录，但无法在这台手机上保存服务器。");
+                });
+            } catch (Exception e) { failServer(attempt, e, "登录未完成，请检查网络和账户。"); }
+        });
+    }
+    private void signInSaved(ServerAccounts.Account account) {
+        if (busy) return;
+        if (tenants.containsKey(account.id())) { showMachines(account); return; }
+        String password = servers.password(account);
+        if (password == null) {
+            serverPortalField.setText(account.portal); serverUserField.setText(account.user);
+            serverPasswordField.requestFocus(); status.setText("请输入 " + account.user + " 的密码。");
+            return;
+        }
+        signInServer(account.portal, account.user, password, true);
+    }
+    private static String serverKey(ServerAccounts.Account account, String vm) { return "server\n" + account.id() + "\n" + vm; }
+    private static String stateLabel(String state) {
+        switch (state) {
+            case "ready": return "运行中";
+            case "starting": return "正在启动";
+            case "error": return "启动失败";
+            default: return "已停止";
+        }
+    }
+    private void showMachines(ServerAccounts.Account account) {
+        settingsPage(Page.MACHINES, "虚拟机", this::showServers);
+        label(account.user + " @ " + account.host(), 14);
+        machineList = column();
+        form.addView(machineList);
+        button(form, "新建虚拟机", false, v -> askMachineName(account));
+        button(form, "刷新", false, v -> refreshMachines(account));
+        button(form, "退出登录", false, v -> new AlertDialog.Builder(this).setTitle("退出登录？")
+            .setMessage("将关闭这个账户已打开的虚拟机工作台。虚拟机会继续在服务器上运行。")
+            .setNegativeButton("取消", null).setPositiveButton("退出登录", (dialog, which) -> { signOutServer(account); showServers(); }).show());
+        label("打开的虚拟机显示 Claude Code 项目、会话和工具审批。远程浏览器与 Claude Desktop 需要扫码连接电脑。", 13);
+        statusView();
+        refreshMachines(account);
+    }
+    private void refreshMachines(ServerAccounts.Account account) {
+        Tenant tenant = tenants.get(account.id());
+        if (tenant == null || busy) return;
+        int attempt = ++generation; setConnecting(true); status.setText("正在读取虚拟机…");
+        serverWorker.execute(() -> {
+            try {
+                JSONArray vms = new JSONArray(tenant.virtualMachines());
+                runOnUiThread(() -> {
+                    if (attempt != generation || page != Page.MACHINES || isDestroyed()) return;
+                    setConnecting(false);
+                    renderMachines(account, vms);
+                    status.setText(vms.length() == 0 ? "这个账户还没有虚拟机。" : "");
+                });
+            } catch (Exception e) { failServer(attempt, e, "无法读取虚拟机列表。"); }
+        });
+    }
+    private void renderMachines(ServerAccounts.Account account, JSONArray vms) {
+        machineList.removeAllViews();
+        for (int i = 0; i < vms.length(); i++) {
+            JSONObject vm = vms.optJSONObject(i);
+            if (vm == null) continue;
+            String id = vm.optString("id"), name = vm.optString("name"), state = vm.optString("state");
+            String system = vm.optString("system_label");
+            String detail = (system.isEmpty() ? "" : system + " · ") + (connections.containsKey(serverKey(account, id)) ? "已打开" : stateLabel(state));
+            Button entry = button(machineList, name + "\n" + detail, false, v -> openMachine(account, id, name, state));
+            entry.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+            entry.setPadding(dp(20), 0, dp(16), 0);
+            entry.setBackground(pressable(palette.panel, 14, true));
+            entry.getLayoutParams().height = dp(68);
+        }
+    }
+    private void askMachineName(ServerAccounts.Account account) {
+        EditText input = new EditText(this);
+        input.setSingleLine();
+        input.setHint("名称");
+        FrameLayout box = new FrameLayout(this);
+        box.setPadding(dp(22), dp(4), dp(22), 0);
+        box.addView(input);
+        new AlertDialog.Builder(this).setTitle("新建虚拟机").setMessage("服务器为新虚拟机准备空白环境，首次打开需要几分钟。")
+            .setView(box).setNegativeButton("取消", null)
+            .setPositiveButton("新建并打开", (dialog, which) -> createMachine(account, input.getText().toString().trim())).show();
+    }
+    private void createMachine(ServerAccounts.Account account, String name) {
+        Tenant tenant = tenants.get(account.id());
+        if (tenant == null || busy || name.isEmpty()) return;
+        int attempt = ++generation; setConnecting(true); status.setText("正在新建虚拟机…");
+        serverWorker.execute(() -> {
+            try {
+                JSONObject vm = new JSONObject(tenant.createVirtualMachine(name));
+                runOnUiThread(() -> {
+                    if (attempt != generation || isDestroyed()) return;
+                    setConnecting(false);
+                    openMachine(account, vm.optString("id"), vm.optString("name", name), vm.optString("state"));
+                });
+            } catch (Exception e) { failServer(attempt, e, "无法新建虚拟机。"); }
+        });
+    }
+    private void openMachine(ServerAccounts.Account account, String id, String name, String state) {
+        Tenant tenant = tenants.get(account.id());
+        if (tenant == null || busy) return;
+        ConnectedDevice existing = connections.get(serverKey(account, id));
+        if (existing != null) { enterDevice(existing); return; }
+        int attempt = ++generation; setConnecting(true);
+        status.setText("ready".equals(state) ? "正在打开虚拟机…" : "正在启动虚拟机，首次启动可能需要几分钟。按返回键可取消。");
+        serverWorker.execute(() -> {
+            Client opened = null;
+            try {
+                String directory = extractUI();
+                opened = tenant.openVirtualMachine(id);
+                Uri url = Uri.parse(opened.startUI(directory));
+                if (!"http".equals(url.getScheme()) || !"127.0.0.1".equals(url.getHost()) || url.getPort()<1 || url.getUserInfo()!=null) throw new IOException();
+                Client connected = opened;
+                runOnUiThread(() -> {
+                    if (attempt != generation || isDestroyed()) { close(connected); return; }
+                    setConnecting(false);
+                    ConnectedDevice next = new ConnectedDevice(serverKey(account, id), connected, url, name);
+                    next.account = account.id();
+                    connections.put(next.hostKey, next);
+                    createBrowser(next);
+                    enterDevice(next);
+                    broadcastDevices();
+                });
+            } catch (Exception e) { close(opened); failServer(attempt, e, "无法打开虚拟机，请稍后重试。"); }
+        });
+    }
+    // Signing out revokes the server's VM sessions, so their workbenches close too.
+    private void signOutServer(ServerAccounts.Account account) {
+        ++generation;
+        for (ConnectedDevice connected : new java.util.ArrayList<>(connections.values()))
+            if (account.id().equals(connected.account)) disconnectDevice(connected);
+        Tenant tenant = tenants.remove(account.id());
+        if (tenant != null) serverWorker.execute(tenant::close);
+    }
+    private void confirmForgetServer(ServerAccounts.Account account) {
+        new AlertDialog.Builder(this).setTitle("忘记这台服务器？")
+            .setMessage("将从这台手机移除 " + account.user + " @ " + account.host() + " 和保存的密码。")
+            .setNegativeButton("取消", null).setPositiveButton("忘记", (dialog, which) -> {
+                signOutServer(account);
+                try { servers.forget(account); } catch (Exception e) { status.setText("移除未完成，请重试。"); return; }
+                showServers();
+                status.setText("已忘记这台服务器。");
+            }).show();
+    }
+    private void openExternal(String raw) {
+        Uri url = Uri.parse(raw);
+        if (raw.length() > 16384 || url.getHost() == null || url.getUserInfo() != null ||
+            !("https".equals(url.getScheme()) || "http".equals(url.getScheme()))) return;
+        try { startActivity(new Intent(Intent.ACTION_VIEW, url).addCategory(Intent.CATEGORY_BROWSABLE)); }
+        catch (android.content.ActivityNotFoundException ignored) {}
+    }
 }

@@ -85,9 +85,17 @@ function App() {
     if (window.__cageDevices) setDevices(window.__cageDevices);
     return () => window.removeEventListener("cage-devices", update);
   }, []);
+  // A virtual machine on a Cage server keeps its portal name. Its remote browser
+  // and Claude Desktop need a paired computer, so links open on the phone.
+  const device = devices.devices.find(d => d.id === devices.current);
+  const serverVM = device?.kind === "tenant";
   useEffect(() => {
-    if (catalog?.host && devices.current) deviceCommand("name", { id: devices.current, name: catalog.host });
-  }, [catalog?.host, devices.current]);
+    if (catalog?.host && devices.current && !serverVM) deviceCommand("name", { id: devices.current, name: catalog.host });
+  }, [catalog?.host, devices.current, serverVM]);
+  const openWeb = useCallback((url, tool) => {
+    if (serverVM) { if (!deviceCommand("open-url", { url })) window.open(url, "_blank", "noopener"); }
+    else tool(url);
+  }, [serverVM]);
   const restricted = useCallback((error) => {
     pageGeneration.current++;
     accessGeneration.current++;
@@ -281,17 +289,19 @@ function App() {
           onBack={leaveDisplay} onReopen={() => selectTool(current.tool, false, openBrowserRequest.current?.url)} />
       : session
         ? <Chat key={session} id={session} drafts={drafts.current} ready={catalog.ready} visible={visible} refresh={refresh}
-          onOpenWeb={url => selectTool("browser", true, url)} onDenied={restricted} onMissing={missingSession} onSnapshot={updateSession} onBack={phoneWorkspace ? undefined : () => open(current.project)} />
+          onOpenWeb={url => openWeb(url, next => selectTool("browser", true, next))} onDenied={restricted} onMissing={missingSession} onSnapshot={updateSession} onBack={phoneWorkspace ? undefined : () => open(current.project)} />
       : phoneWorkspace
         ? <div className="workspace-placeholder"><Terminal size={28} /><p>{project ? "在侧栏选择或新建会话" : "请选择远程工具"}</p></div>
         : <section className="page-scroll">{error && <Notice onRetry={refreshAll}>{error}</Notice>}{codeNavigation}</section>}
-    {phoneWorkspace && <WorkspaceDrawer open={drawer} active={current.tool} name={catalog?.host || devices.devices.find(d => d.id === devices.current)?.name}
+    {phoneWorkspace && <WorkspaceDrawer open={drawer} active={current.tool} name={serverVM ? device.name : catalog?.host || device?.name}
+      tools={serverVM ? [] : workspaceTools}
       onClose={() => setDrawer(false)} onTool={selectTool} onSettings={() => settingsPage("settings")} nativePhone={nativePhone} onExit={exitWorkspace}>
       {error && <Notice onRetry={refreshAll}>{error}</Notice>}
       {gate ? <Notice onRetry={refreshAll}>{gate}</Notice> : <ProjectTree catalog={catalog} projectPath={current.project}
         sessionID={current.tool === "code" ? session : ""} creating={creating || actionBusy} onNew={start} onAction={chooseSessionAction}
         onSession={(path,id) => {open(path,id,true); setDrawer(false);}} expanded={expanded}
-        toggle={(path,next) => setExpanded(previous => new Map(previous).set(path,next))} />}
+        toggle={(path,next) => setExpanded(previous => new Map(previous).set(path,next))}
+        emptyHint={serverVM ? "请先在网页工作台打开项目。" : undefined} />}
     </WorkspaceDrawer>}
     {sessionAction && <SessionActionDialog key={sessionAction.kind + sessionAction.session.id} action={sessionAction} busy={actionBusy}
       error={sessionActionError} onCancel={() => setSessionAction(null)} onSubmit={body => mutateSession(sessionAction.kind, sessionAction.session, body)}/>}

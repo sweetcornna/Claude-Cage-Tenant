@@ -15,8 +15,11 @@ private var simulatorPreviewEnabled: Bool {
 struct ConnectedDevice: Identifiable {
     let id: String
     var name: String
+    let host: Host?
     let connection: CMConnection?
     let webView: WKWebView
+    /// Set for a virtual machine opened from a Cage server account.
+    var account: ServerAccount? = nil
 }
 
 final class DeviceWebBridge: NSObject, WKScriptMessageHandler {
@@ -35,6 +38,10 @@ final class DeviceWebBridge: NSObject, WKScriptMessageHandler {
         }
         guard model.showingWorkspace, model.selectedDeviceID == id else {return}
         if action == "home" {model.leaveWorkspace()}
+        if action == "open-url", let raw = body["url"] as? String, raw.utf8.count <= 16384, let url = URL(string: raw),
+           ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil, url.user == nil {
+            UIApplication.shared.open(url)
+        }
     }
 }
 
@@ -108,6 +115,8 @@ final class ConnectionModel: ObservableObject {
                     self.trusted = saved.host; self.pin = saved.host.pin; self.relay = saved.host.relay
                     self.imported = nil; self.invitation = nil; self.hasInvitation = false
                     self.hasSaved = true; self.needsTrust = false; self.verified = false
+                    let hostID = saved.host.relay + "|" + saved.host.pin
+                    if self.devices.contains(where: {$0.id == hostID}) {self.disconnectDevice(hostID)}
                     self.connect()
                 } catch { self.status = error.localizedDescription }
             }
@@ -195,7 +204,12 @@ final class ConnectionModel: ObservableObject {
                 }
                 self.connecting = false
                 switch result {
-                case .success(let session): self.status = ""; self.addDevice(session, host: host)
+                case .success(let session):
+                    self.status = ""
+                    if self.didBackground {
+                        self.linkQueue.async { session.suspend() }
+                    }
+                    self.addDevice(session, host: host)
                 case .failure(let error): self.status = error.localizedDescription
                 }
             }
@@ -217,13 +231,23 @@ final class ConnectionModel: ObservableObject {
         publishDevices()
     }
     func nameDevice(_ id: String, _ value: String) {
-        guard let index = devices.firstIndex(where: {$0.id == id}) else {return}
+        guard let index = devices.firstIndex(where: {$0.id == id}), devices[index].account == nil else {return}
         let name = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, devices[index].name != name else {return}
         devices[index].name = String(name.prefix(120)); publishDevices()
     }
     private func addDevice(_ connection: CMConnection, host: Host) {
-        let id = host.relay + "|" + host.pin
+        addDevice(connection, id: host.relay + "|" + host.pin, name: "已连接电脑", host: host, account: nil)
+    }
+    func addServerDevice(_ connection: CMConnection, id: String, name: String, account: ServerAccount) {
+        if devices.contains(where: {$0.id == id}) {disconnectDevice(id)}
+        if didBackground {linkQueue.async {connection.suspend()}}
+        addDevice(connection, id: id, name: name, host: nil, account: account)
+    }
+    func disconnectServer(_ account: ServerAccount) {
+        for device in devices where device.account == account {disconnectDevice(device.id)}
+    }
+    private func addDevice(_ connection: CMConnection, id: String, name: String, host: Host?, account: ServerAccount?) {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.allowsInlineMediaPlayback = true
@@ -237,7 +261,7 @@ final class ConnectionModel: ObservableObject {
         web.navigationDelegate = delegate
         // WKWebView holds its navigation delegate weakly.
         navigationDelegates[id] = delegate
-        devices.append(ConnectedDevice(id: id, name: "已连接电脑", connection: connection, webView: web))
+        devices.append(ConnectedDevice(id: id, name: name, host: host, connection: connection, webView: web, account: account))
         selectDevice(id)
         var launch = connection.launchURL
         if openArchivedAfterConnect {
@@ -250,7 +274,9 @@ final class ConnectionModel: ObservableObject {
     }
     private var navigationDelegates: [String: WKNavigationDelegate] = [:]
     private func deviceScript(_ current: String) -> String {
-        let value: [String: Any] = ["current": current, "devices": devices.map {["id": $0.id, "name": $0.name]}]
+        let value: [String: Any] = ["current": current, "devices": devices.map {
+            ["id": $0.id, "name": $0.name, "kind": $0.account == nil ? "computer" : "tenant"]
+        }]
         let data = try! JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
         return "window.__cageDevices=" + String(decoding: data, as: UTF8.self) + ";window.dispatchEvent(new CustomEvent('cage-devices',{detail:window.__cageDevices}));"
     }
@@ -282,12 +308,104 @@ final class ConnectionModel: ObservableObject {
     }
     func disconnect() {if let id = selectedDeviceID {disconnectDevice(id)}}
     func reconnect() {disconnect(); connect()}
+    func reconnectSaved() {
+        if let host = trusted {
+            let id = host.relay + "|" + host.pin
+            if devices.contains(where: {$0.id == id}) {disconnectDevice(id)}
+        }
+        connect()
+    }
+    private var didBackground = false
+    private var lifecycleGeneration = 0
+    private func connectSavedHost(_ host: Host) {
+        guard !connecting,
+              let directory = Bundle.main.url(forResource: "mobile-ui", withExtension: nil) else {
+            status = "设备连接已失效，请重新连接。"; return
+        }
+        connecting = true; generation += 1
+        let attempt = generation
+        status = "正在恢复与电脑的连接…"
+        linkQueue.async {
+            let result = Result {
+                guard let saved = try HostKeychain.read(host: host), saved.host == host else { throw InputError.unavailable }
+                return try CMConnection.connectSaved(relay: host.relay, lookup: saved.lookup, pin: host.pin, assets: directory.path)
+            }
+            DispatchQueue.main.async {
+                guard attempt == self.generation else {
+                    if case .success(let old) = result { DispatchQueue.global().async { old.close() } }
+                    return
+                }
+                self.connecting = false
+                switch result {
+                case .success(let session):
+                    self.status = ""
+                    if self.didBackground {
+                        self.linkQueue.async { session.suspend() }
+                    }
+                    self.addDevice(session, host: host)
+                case .failure(let error): self.status = error.localizedDescription
+                }
+            }
+        }
+    }
+    func handleBackground() {
+        didBackground = true
+        lifecycleGeneration += 1
+        let connections = devices.compactMap(\.connection)
+        guard !connections.isEmpty else {return}
+        var taskID = UIBackgroundTaskIdentifier.invalid
+        taskID = UIApplication.shared.beginBackgroundTask(withName: "CageMobile.suspend") {
+            if taskID != .invalid {
+                UIApplication.shared.endBackgroundTask(taskID)
+                taskID = .invalid
+            }
+        }
+        linkQueue.async {
+            for connection in connections {connection.suspend()}
+            DispatchQueue.main.async {
+                if taskID != .invalid {
+                    UIApplication.shared.endBackgroundTask(taskID)
+                    taskID = .invalid
+                }
+            }
+        }
+    }
+    func handleForeground() {
+        guard didBackground else {return}
+        didBackground = false
+        lifecycleGeneration += 1
+        let lifecycle = lifecycleGeneration
+        let snapshot = devices
+        guard !snapshot.isEmpty else {return}
+        linkQueue.async {
+            for device in snapshot {
+                guard let connection = device.connection else {continue}
+                let ok = connection.resume()
+                DispatchQueue.main.async {
+                    guard self.lifecycleGeneration == lifecycle, !self.didBackground else {return}
+                    guard let current = self.devices.first(where: {$0.id == device.id}),
+                          current.connection === connection else {return}
+                    if ok {
+                        current.webView.evaluateJavaScript("window.dispatchEvent(new Event('online'))")
+                    } else {
+                        let wasSelected = (self.selectedDeviceID == device.id && self.showingWorkspace)
+                        self.disconnectDevice(device.id)
+                        if wasSelected, let host = device.host, (try? HostKeychain.read(host: host)) != nil {
+                            self.connectSavedHost(host)
+                        } else {
+                            self.status = "部分设备的连接已失效，请重新连接。"
+                        }
+                    }
+                }
+            }
+        }
+    }
     func startPreview() {
         #if targetEnvironment(simulator)
         for (id, name) in [("preview-mac", "我的电脑 · 模拟器预览"), ("preview-linux", "Linux 工作站 · 模拟器预览")] {
             if !devices.contains(where: {$0.id == id}) {
                 let preview = SimulatorWorkspacePreview.makeWebView(model: self, id: id)
-                devices.append(ConnectedDevice(id: id, name: name, connection: nil, webView: preview.web))
+                devices.append(ConnectedDevice(id: id, name: name, host: nil, connection: nil, webView: preview.web))
                 navigationDelegates[id] = preview.delegate
             }
         }
@@ -346,7 +464,6 @@ private struct ActionLabel: View {
 }
 
 private struct QRScanner: UIViewControllerRepresentable {
-    let region: CGRect
     @Binding var hint: String
     let result: (String?) -> Void
     final class Delegate: NSObject, DataScannerViewControllerDelegate {
@@ -354,15 +471,27 @@ private struct QRScanner: UIViewControllerRepresentable {
         var hint: Binding<String>
         var finished = false
         init(_ result: @escaping (String?) -> Void, hint: Binding<String>) {self.result = result; self.hint = hint}
-        func dataScanner(_ scanner: DataScannerViewController, didAdd items: [RecognizedItem], allItems: [RecognizedItem]) {
+        private func handle(_ items: [RecognizedItem], in scanner: DataScannerViewController) {
+            guard !finished else {return}
+            var sawInvalidQR = false
             for case .barcode(let barcode) in items {
-                guard !finished, let code = barcode.payloadStringValue else {continue}
-                guard code.hasPrefix("CAGE1:"), code.utf8.count <= 4096 else {
-                    hint.wrappedValue = "请扫描电脑「设置 → 远程连接」中的 Cage 配对二维码"; continue
+                guard let code = barcode.payloadStringValue else {continue}
+                if code.hasPrefix("CAGE1:"), code.utf8.count <= 4096 {
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    finished = true; scanner.stopScanning(); result(code); return
                 }
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-                finished = true; scanner.stopScanning(); result(code); return
+                sawInvalidQR = true
             }
+            let invalidHint = "请扫描电脑「设置 → 远程连接」中的 Cage 配对二维码"
+            if sawInvalidQR, hint.wrappedValue != invalidHint {
+                hint.wrappedValue = invalidHint
+            }
+        }
+        func dataScanner(_ scanner: DataScannerViewController, didAdd items: [RecognizedItem], allItems: [RecognizedItem]) {
+            handle(allItems, in: scanner)
+        }
+        func dataScanner(_ scanner: DataScannerViewController, didUpdate items: [RecognizedItem], allItems: [RecognizedItem]) {
+            handle(allItems, in: scanner)
         }
         func dataScanner(_ scanner: DataScannerViewController, becameUnavailableWithError error: DataScannerViewController.ScanningUnavailable) {
             if !finished {finished = true; result(nil)}
@@ -370,16 +499,23 @@ private struct QRScanner: UIViewControllerRepresentable {
     }
     func makeCoordinator() -> Delegate { Delegate(result, hint: $hint) }
     func makeUIViewController(context: Context) -> DataScannerViewController {
-        let scanner = DataScannerViewController(recognizedDataTypes: [.barcode(symbologies: [.qr])], qualityLevel: .balanced, isGuidanceEnabled: false, isHighlightingEnabled: false)
+        let scanner = DataScannerViewController(recognizedDataTypes: [.barcode(symbologies: [.qr])],
+                                                qualityLevel: .accurate,
+                                                recognizesMultipleItems: true,
+                                                isPinchToZoomEnabled: true,
+                                                isGuidanceEnabled: false,
+                                                isHighlightingEnabled: false)
         scanner.delegate = context.coordinator
         DispatchQueue.main.async {
-            guard !context.coordinator.finished else {return}
-            scanner.regionOfInterest = region
+            guard !context.coordinator.finished, !scanner.isScanning else {return}
             do { try scanner.startScanning() } catch {context.coordinator.finished = true; result(nil)}
         }
         return scanner
     }
-    func updateUIViewController(_ scanner: DataScannerViewController, context: Context) {scanner.regionOfInterest = region}
+    func updateUIViewController(_ scanner: DataScannerViewController, context: Context) {
+        guard !context.coordinator.finished, !scanner.isScanning, scanner.view.window != nil else {return}
+        try? scanner.startScanning()
+    }
     static func dismantleUIViewController(_ scanner: DataScannerViewController, coordinator: Delegate) {coordinator.finished = true; scanner.stopScanning()}
 }
 
@@ -421,26 +557,30 @@ private struct QRScannerScreen: View {
                     .foregroundStyle(.white.opacity(0.8)).frame(width: side * 0.65, height: side * 0.65)
                     .position(x: box.midX, y: box.midY).accessibilityHidden(true)
                 #else
-                QRScanner(region: box, hint: $hint, result: result)
+                QRScanner(hint: $hint, result: result)
                 #endif
                 FinderMask(box: box).fill(Color(red: 0.08, green: 0.09, blue: 0.09).opacity(0.72), style: FillStyle(eoFill: true))
+                    .allowsHitTesting(false)
                 RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.45), lineWidth: 1)
                     .frame(width: side, height: side).position(x: box.midX, y: box.midY)
+                    .allowsHitTesting(false)
                 FinderCorners().stroke(accent, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                     .frame(width: side, height: side).position(x: box.midX, y: box.midY)
+                    .allowsHitTesting(false)
                 VStack(spacing: 0) {
                     LinearGradient(colors: [accent.opacity(0), accent.opacity(0.22)], startPoint: .top, endPoint: .bottom).frame(height: 26)
                     Capsule().fill(accent).frame(height: 2)
                 }.frame(width: side - 24)
                     .position(x: box.midX, y: reduceMotion ? box.midY : box.minY + 24 + (sweeping ? side - 48 : 0))
                     .animation(reduceMotion ? nil : .linear(duration: 2.4).repeatForever(autoreverses: true), value: sweeping)
+                    .allowsHitTesting(false)
                     .accessibilityHidden(true)
                 VStack(spacing: 12) {
                     Text("连接你的电脑").font(.title2.bold())
                     Text(hint).font(.subheadline).foregroundStyle(.white.opacity(0.88)).multilineTextAlignment(.center)
                     Text(simulatorPreviewEnabled ? "模拟器预览 · 即将进入示例工作台" : "仅识别 Cage 配对码")
                         .font(.caption).foregroundStyle(.white.opacity(0.6))
-                }.foregroundStyle(.white).padding(.horizontal, 24).padding(.bottom, 24).accessibilityElement(children: .combine)
+                }.foregroundStyle(.white).padding(.horizontal, 24).padding(.bottom, 24).allowsHitTesting(false).accessibilityElement(children: .combine)
             }.background(Color.black).onAppear {sweeping = true}
                 .task {
                     #if targetEnvironment(simulator)
@@ -484,7 +624,7 @@ private struct ConnectionSheet: View {
                     } label: {ActionLabel(title: "扫码连接", symbol: "qrcode.viewfinder")}
                     Button {manual = true} label: {ActionLabel(title: "使用配对码", symbol: "key", primary: false)}
                     if model.hasSaved || model.hasInvitation {
-                        Button("重新连接", action: model.connect).frame(minHeight: 44).disabled(!model.canConnect)
+                        Button("重新连接", action: model.reconnectSaved).frame(minHeight: 44).disabled(!model.canConnect)
                     }
                     if !model.devices.isEmpty {
                         Divider().padding(.vertical, 8)
@@ -628,10 +768,13 @@ private struct SettingsScreen: View {
 
 @main
 struct CageMobileApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model = ConnectionModel()
+    @StateObject private var servers = ServerModel()
     @AppStorage("appearance-theme") private var theme = CageTheme.system
     @State private var showingSettings = false
     @State private var pairing = false
+    @State private var serverSheet = false
 
     var body: some Scene {
         WindowGroup {
@@ -652,11 +795,20 @@ struct CageMobileApp: App {
                         pairing = false; showingSettings = false; model.startPreview()
                     }).buttonStyle(CageButtonStyle()).tint(CageStyle.ink).preferredColorScheme(theme.scheme)
                 }
+                .sheet(isPresented: $serverSheet) {
+                    ServerSheet(model: servers, connections: model)
+                        .tint(CageStyle.ink).preferredColorScheme(theme.scheme)
+                }
+                .onAppear {servers.connections = model}
                 .onChange(of: model.showingWorkspace) { _, connected in
-                    if connected {pairing = false; showingSettings = false}
+                    if connected {pairing = false; showingSettings = false; serverSheet = false}
                 }
                 .onChange(of: model.relay) {model.verified = false}
                 .onChange(of: model.pin) {model.verified = false}
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .background {model.handleBackground()}
+                    else if phase == .active {model.handleForeground()}
+                }
         }
     }
     private var home: some View {
@@ -671,8 +823,13 @@ struct CageMobileApp: App {
                                 .clipShape(RoundedRectangle(cornerRadius: 16)).accessibilityHidden(true)
                             Text("Cage").font(.system(size: 36, weight: .semibold, design: .rounded))
                         }
-                        Button {pairing = true} label: {
-                            ActionLabel(title: "连接电脑", symbol: "desktopcomputer", height: 60)
+                        VStack(spacing: 12) {
+                            Button {pairing = true} label: {
+                                ActionLabel(title: "连接电脑", symbol: "desktopcomputer", height: 60)
+                            }
+                            Button {serverSheet = true} label: {
+                                ActionLabel(title: "连接服务器", symbol: "server.rack", primary: false, height: 60)
+                            }
                         }
                     }.frame(maxWidth: 276).padding(.top, 32)
                     Spacer(minLength: 12)
