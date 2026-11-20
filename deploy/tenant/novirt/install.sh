@@ -114,14 +114,18 @@ version_ge() { [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" == "$2" ]
 if ! command -v incus >/dev/null; then
   $install_incus || die '没有找到 Incus；去掉 --skip-incus-install 让脚本安装'
   . /etc/os-release
-  case "$ID:${VERSION_CODENAME:-}" in
-    debian:bookworm|debian:trixie|ubuntu:jammy|ubuntu:noble) ;;
-    *) die "自动安装 Incus 只支持 Debian 12/13 和 Ubuntu 22.04/24.04，当前是 $PRETTY_NAME；请先自行安装 Incus 6.0 LTS，再加 --skip-incus-install" ;;
+  case "$ID" in
+    debian|ubuntu) ;;
+    *) die "自动安装 Incus 只支持 Debian 和 Ubuntu，当前是 $PRETTY_NAME；请先自行安装 Incus 6.0 LTS，再加 --skip-incus-install" ;;
   esac
+  [[ -n "${VERSION_CODENAME:-}" ]] || die "无法识别 $PRETTY_NAME 的版本代号；请先自行安装 Incus 6.0 LTS，再加 --skip-incus-install"
   note '安装 Incus 6.0 LTS（Zabbly 软件源）'
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -q
   apt-get install -y -q curl gnupg ca-certificates
+  # Any release Zabbly builds for works; ask its archive instead of keeping a list.
+  curl -fsS --retry 3 -o /dev/null "https://pkgs.zabbly.com/incus/lts-6.0/dists/$VERSION_CODENAME/Release" ||
+    die "Zabbly 没有为 $PRETTY_NAME（$VERSION_CODENAME）提供 Incus 6.0 LTS；请先自行安装，再加 --skip-incus-install"
   install -d -m 0755 /etc/apt/keyrings
   key=$(mktemp)
   curl -fsSL --retry 3 https://pkgs.zabbly.com/key.asc -o "$key"
@@ -173,10 +177,9 @@ if [[ $(awk '/^SwapTotal:/ {print $2}' /proc/meminfo) == 0 ]]; then
 fi
 
 # 3. Storage, network and the dedicated project.
-if [[ -z "$(I storage list --format csv | head -1)" ]]; then
-  note '初始化 Incus'
-  I admin init --minimal
-fi
+# No "incus admin init": the template and every workspace use the pool and
+# network created here, and its default bridge fails on hosts where Incus
+# cannot find a free IPv6 subnet.
 if ! I storage show "$pool" >/dev/null 2>&1; then
   note "创建存储池 $pool（$pool_driver）"
   if [[ -n "$pool_source" ]]; then I storage create "$pool" "$pool_driver" source="$pool_source"
@@ -186,23 +189,71 @@ if ! I network show "$network" >/dev/null 2>&1; then
   note "创建网络 $network"
   I network create "$network" ipv4.address=auto ipv4.nat=true ipv6.address=none
 fi
+# Workspace isolation lives in a host nftables table rather than an Incus
+# network ACL. An ACL also drops the flows a transparent proxy on the host
+# (Clash or Mihomo TUN with auto-redirect) redirects to the bridge address,
+# which cuts every workspace off the Internet. The guard drops forwarded
+# traffic to private, loopback, link-local and multicast ranges and all IPv6,
+# and any workspace connection to the host itself except DHCP, DNS and flows
+# the host redirected. It loads before Incus starts instances at boot.
 acl="$network-egress"
+if [[ "$(I network get "$network" security.acls 2>/dev/null)" == "$acl" ]]; then
+  I network unset "$network" security.acls
+  I network unset "$network" security.acls.default.egress.action 2>/dev/null || true
+  I network unset "$network" security.acls.default.ingress.action 2>/dev/null || true
+fi
+I network acl delete "$acl" >/dev/null 2>&1 || true
+guard=/etc/cage-tenant/guard.nft guard_unit=/etc/systemd/system/cage-tenant-guard.service
 if ! $allow_lan; then
-  # Incus always lets instances reach the bridge's own DHCP and DNS. Every
-  # other private, loopback and link-local destination is dropped.
-  I network acl show "$acl" >/dev/null 2>&1 || I network acl create "$acl"
-  I network acl edit "$acl" <<EOF
-name: $acl
-description: Cage workspaces reach the Internet only
-egress:
-- action: drop
-  destination: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,169.254.0.0/16,127.0.0.0/8
-  state: enabled
-ingress: []
+  command -v nft >/dev/null || { apt-get update -q && apt-get install -y -q nftables; }
+  nft_bin=$(command -v nft)
+  install -d -m 0755 /etc/cage-tenant
+  cat > "$guard" <<EOF
+#!$nft_bin -f
+# Written by Cage Tenant install.sh: isolate workspaces on $network.
+table inet cage_tenant_guard
+delete table inet cage_tenant_guard
+table inet cage_tenant_guard {
+	chain input {
+		type filter hook input priority filter - 1; policy accept;
+		iifname != "$network" accept
+		udp dport { 53, 67 } accept
+		tcp dport 53 accept
+		ct status dnat accept
+		icmp type { destination-unreachable, time-exceeded, parameter-problem } accept
+		drop
+	}
+	chain forward {
+		type filter hook forward priority filter - 1; policy accept;
+		iifname "$network" ip daddr { 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4 } drop
+		iifname "$network" meta nfproto ipv6 drop
+	}
+}
 EOF
-  I network set "$network" security.acls="$acl" security.acls.default.egress.action=allow security.acls.default.ingress.action=allow
+  cat > "$guard_unit" <<EOF
+[Unit]
+Description=Cage Tenant workspace network isolation (nftables)
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target incus.service incus-startup.service cage-tenant.service shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=$nft_bin -f $guard
+ExecStop=$nft_bin delete table inet cage_tenant_guard
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable cage-tenant-guard.service >/dev/null 2>&1
+  systemctl restart cage-tenant-guard.service
 else
-  I network unset "$network" security.acls 2>/dev/null || true
+  systemctl disable --now cage-tenant-guard.service >/dev/null 2>&1 || true
+  rm -f "$guard" "$guard_unit"
+  systemctl daemon-reload
 fi
 if ! I project show "$project" >/dev/null 2>&1; then
   note "创建项目 $project"

@@ -25,14 +25,14 @@ incus --force-local --project cage-tenant profile show default
 
 网关明确选择专用项目内的 `-incus-profile`（默认 `default`），不使用镜像关联的 profile。项目必须启用 `features.profiles=true`。网关在配备、接管及就绪复查时核对展开配置：只接受该 profile，要求显式正整数 vCPU、绝对内存大小，且有效值与 profile 一致；有效设备也必须一致。根盘只允许 `type=disk`、`path=/`、`pool` 和显式 `size`，不接受额外盘、宿主路径、socket、代理或其他共享设备，也不接受 `raw.*` 等自定义实例配置。已有实例若不匹配，查看网关宿主日志；保留原盘，先停机并由管理员核对配置再调整，不要临时放宽限制。不要在网关运行时改动 profile 或已运行 VM 的宿主侧配置：网关不是连续的配置审计器，也不能撤销已经生效的宿主配置。
 
-示例配置的租户 VM 没有网卡。每台 VM 的代理订阅、节点和出口在该 VM 自己的工作台「网络与代理」中设置，代理核心运行在 VM 内，因此 VM 需要网卡才能使用代理出口。需要联网时，仅在管理员已配置并验证受信网络后，允许在 profile 中增加一个仅含 `type=nic`、`network=<网络名>` 和可选 `name` 的受管 NIC，设置 `-incus-network` 为同一个名字，并相应调整专用项目的 NIC 限制（不要放开其他网络）。使用宿主侧规则隔离 VM 间流量，并阻止 VM 访问宿主的服务与管理网段、其他私网和云元数据地址。IPv4、IPv6 与二层转发均须在部署时验证，网关不验证这些网络规则。控制端口继续只监听 VM 回环，宿主防火墙仅向浏览器开放 TLS 入口。Incus 管理 socket 的权限相当于宿主管理员权限，运行网关的专用系统账户和部署配置属于宿主信任边界。
+示例配置的租户 VM 没有网卡。每台 VM 的代理订阅、节点和出口在该 VM 自己的工作台「网络与代理」中设置，代理核心运行在 VM 内，因此 VM 需要网卡才能使用代理出口。需要联网时，仅在管理员已配置并验证受信网络后，允许在 profile 中增加一个仅含 `type=nic`、`network=<网络名>` 和可选 `name` 的受管 NIC，设置 `-incus-network` 为同一个名字，并相应调整专用项目的 NIC 限制（不要放开其他网络）。使用宿主侧规则隔离 VM 间流量，并阻止 VM 访问宿主的服务与管理网段、其他私网和云元数据地址。IPv4、IPv6 与二层转发均须在部署时验证，网关不验证这些网络规则。宿主运行 Clash、Mihomo 等带 auto-redirect 的 TUN 透明代理时，VM 的 TCP 连接会被重定向到网桥地址上的代理端口；Incus 网络 ACL 若丢弃发往私网（含网桥地址）的流量，会连带切断全部外网。这种宿主改用 nftables 表实现隔离，参照无虚拟化版安装脚本写入的 `/etc/cage-tenant/guard.nft`：转发链丢弃私网、组播与 IPv6，输入链只放行来自网桥的 DHCP、DNS 和 `ct status dnat` 连接。控制端口继续只监听 VM 回环，宿主防火墙仅向浏览器开放 TLS 入口。Incus 管理 socket 的权限相当于宿主管理员权限，运行网关的专用系统账户和部署配置属于宿主信任边界。
 
 工作台页面和响应由该 VM 控制。网关按持久化记录选择目标，只连接对应 VM 内的回环端口。工作台内部会话由网关持有，浏览器只接收门户和对应 VM 源的 Cookie。部署时将工作台响应视作租户内容。
 
 ## 2. 制作空白 VM 镜像
 
 1. 在独立构建项目中从已验证的 Incus Linux **VM** 基础镜像启动一次性构建机。选择已安装并启用 Incus guest agent 的基础镜像。在 `cage-image-build` 项目导入验证过的 `debian-12-vm` 后执行 `incus --project cage-image-build launch local:debian-12-vm cage-template --vm`。为 Ubuntu 24.04 单独制作模板并使用独立镜像别名。
-2. 在构建机中安装 Cage Linux 服务端、所选工作环境的依赖、`socat` 和 `coreutils`。确认 `/usr/bin/socat` 与 `/usr/bin/head` 存在。以普通 `cage` 系统账户运行 `cage serve`，使用独立配置目录。`CLAUDE_CAGE_CONFIG=/home/cage/.claude-cage/config.json` 对应默认的 `-guest-control-path`。可用专用 systemd 用户服务和 `loginctl enable-linger cage` 确保无需登录即可开机启动。
+2. 在构建机中安装 Cage Linux 服务端、所选工作环境的依赖、`socat` 和 `coreutils`。确认 `/usr/bin/socat` 与 `/usr/bin/head` 存在。以普通 `cage` 系统账户运行 `cage serve`，使用独立配置目录。`CLAUDE_CAGE_CONFIG=/home/cage/.claude-cage/config.json` 对应默认的 `-guest-control-path`。可用专用 systemd 用户服务和 `loginctl enable-linger cage` 确保无需登录即可开机启动。宿主提供嵌套虚拟化时，VM 内的 Cage 用本机模式运行自己的客机：再安装 `qemu-system-x86`（arm64 为 `qemu-system-arm`）、`qemu-utils`、`ovmf`、`openssh-client`、`iproute2` 和 `git`，把 `cage` 用户加入 `kvm` 组，并把 Linux 安装包 `/usr/lib/claude-cage/` 中的 `cage` 与 `mihomo` 放在同一目录（代理核心只在 `cage` 旁边查找）。`images:debian/12/cloud` 等 cloud 镜像会由 cloud-init 创建 UID 1000 的默认用户，建模板前删除该用户，并写入 `users: []` 禁止新 VM 首次启动时再建。
 3. 如采用 Cage 云工作环境，按云端文档准备当前版本的完整工作环境模板、rootless 引擎与用户服务。将经过校验的模板预载进**构建 VM 内**的 rootless 引擎，并用 `cage init` 和 `cage container-configure --json` 写入空白运行配置。使用 `deploy/cloud/cage-container-engine.service` 与 `deploy/cloud/cage-server.service`，依赖、镜像与 socket 都留在每台租户 VM 内。仅复制空白模板层，让新 VM 自行生成工作台、浏览器和工作环境身份。[Cage 云端构建说明](../cloud/README.md)
 4. 在一次性构建机停止 Cage 服务和引擎。按发行版镜像制作步骤清理构建机身份、SSH 密钥和构建日志。检查 Cage 配置和引擎镜像层，确保镜像内没有工作台账户或保险箱、项目、历史、`control.json`、会话、模型或代理凭据，以及任何用户数据。保持开机服务与 guest agent 启用后停止构建 VM。
 
