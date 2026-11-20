@@ -25,6 +25,9 @@ func TestTerminalServiceChild(t *testing.T) {
 		return
 	}
 	fmt.Println("terminal-ready")
+	if os.Getenv("CAGE_TERMINAL_SERVICE_MODE") == "refused" {
+		os.Exit(78)
+	}
 	if os.Getenv("CAGE_TERMINAL_SERVICE_MODE") == "blocked-input" {
 		time.Sleep(24 * time.Hour)
 		os.Exit(0)

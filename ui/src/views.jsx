@@ -10,7 +10,7 @@ import { useAppearance } from "./appearance";
 import { terminalTheme, systemCodeFont } from "./appearance-state.mjs";
 import { Terminal } from "../.generated/xterm.mjs";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { claudeLoginLink, isClaudeLoginLink } from "./terminal-login-link.mjs";
+import { claudeLoginLink, codexDeviceLink, isClaudeLoginLink, isCodexDeviceLink } from "./terminal-login-link.mjs";
 import { FitAddon } from "@xterm/addon-fit";
 import RFB from "../.generated/novnc/core/rfb.js";
 import { api, writeClipboard, nativeAvailable } from "./api";
@@ -342,6 +342,7 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
     const terminal = new Terminal({
       linkHandler: { activate(event, uri) {
         if (isClaudeLoginLink(uri)) return void activateLogin(event, uri);
+        if (isCodexDeviceLink(uri)) return void window.open(uri, "_blank", "noopener,noreferrer");
         // Keep xterm's user confirmation for other explicit HTTP(S) links.
         if (window.confirm(`打开此终端链接？\n${uri}`)) window.open(uri, "_blank", "noopener,noreferrer");
       } },
@@ -357,6 +358,11 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
     const fitter = new FitAddon();
     terminal.loadAddon(fitter);
     terminal.loadAddon(new WebLinksAddon(activateLogin, { urlRegex: claudeLoginLink }));
+    // The Codex device page opens in the user's own browser; the one-time
+    // code stays in this terminal and no credential crosses into the page.
+    terminal.loadAddon(new WebLinksAddon((_event, uri) => {
+      if (!disposed && isCodexDeviceLink(uri)) window.open(uri, "_blank", "noopener,noreferrer");
+    }, { urlRegex: codexDeviceLink }));
     terminal.open(box.current);
     instance.current = terminal;
     fit.current = fitter;

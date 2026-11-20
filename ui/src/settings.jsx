@@ -523,6 +523,21 @@ export function SettingsPanel({
                   选择“Claude 终端”后，在所选项目中运行此命令，例如 claude --continue。
                   留空使用 claude；保存后仅影响新建的 Claude 终端，退出 Claude 后可继续使用 shell。
                 </p>
+                <label>
+                  Codex 终端启动命令
+                  <input
+                    value={draft.codex_terminal_command ?? "codex"}
+                    onChange={(e) => update("codex_terminal_command", e.target.value)}
+                    placeholder="codex"
+                    maxLength={4096}
+                    spellCheck="false"
+                    autoComplete="off"
+                  />
+                </label>
+                <p className="field-help">
+                  选择“Codex 终端”后，在所选项目中运行此命令，例如 codex resume --last。
+                  留空使用 codex；新终端使用自动分配的 Codex 账号，退出 Codex 后可继续使用 shell。仅 Linux 环境提供 Codex 终端。
+                </p>
                 {typeof current.balanced_display === "boolean" && <label className="toggle-row">
                   <span>
                     <strong>优先流畅</strong>

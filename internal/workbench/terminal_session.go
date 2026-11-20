@@ -30,8 +30,11 @@ type terminalSession struct {
 	loginLinkMu           sync.Mutex
 	loginLinkCleanup      sync.Once
 	claudeAccountSource   string
+	codexAccountID        string
+	codexAccountSource    string
 	cmd                   *exec.Cmd
 	file                  terminalPTY
+	exitCode              int
 	history               []byte
 	closed                bool
 	clients               map[chan []byte]bool
@@ -49,7 +52,26 @@ func (t *terminalSession) ownsConversation() bool {
 }
 
 func newTerminalSession(file terminalPTY) *terminalSession {
-	return &terminalSession{file: file, clients: map[chan []byte]bool{}, done: make(chan struct{}), inputs: make(chan string, 8), stopping: make(chan struct{})}
+	return &terminalSession{file: file, exitCode: -1, clients: map[chan []byte]bool{}, done: make(chan struct{}), inputs: make(chan string, 8), stopping: make(chan struct{})}
+}
+
+// exitStatus is the process's exit code after the session ends; -1 while it
+// runs, after a signal, or when the status is unknown.
+func (t *terminalSession) exitStatus() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.exitCode
+}
+
+func terminalExitCode(err error) int {
+	var exit *exec.ExitError
+	if err == nil {
+		return 0
+	}
+	if errors.As(err, &exit) {
+		return exit.ExitCode()
+	}
+	return -1
 }
 
 func (t *terminalSession) summary() map[string]any {
@@ -66,6 +88,7 @@ func (t *terminalSession) summary() map[string]any {
 	}
 	return map[string]any{"id": t.id, "title": t.title, "closed": closed, "workspace": t.workspace, "kind": t.kind,
 		"claude_account_id": t.claudeAccountID, "claude_account_source": t.claudeAccountSource, "cli_session_id": t.sharedID,
+		"codex_account_id": t.codexAccountID, "codex_account_source": t.codexAccountSource,
 		"cli_starting": t.cliStartupPendingLocked()}
 }
 
@@ -193,7 +216,7 @@ func (t *terminalSession) run() {
 	// An SSH process can remain alive after its output side closes. Once no
 	// output can be read, terminate and reap it before completing the session.
 	t.stopPTY()
-	_ = t.file.Wait()
+	waitErr := t.file.Wait()
 	<-writerDone
 	// Admission is sealed under mu before stopping the writer. Release queued
 	// input even when the closed terminal remains visible with its history.
@@ -201,6 +224,7 @@ func (t *terminalSession) run() {
 		<-t.inputs
 	}
 	t.mu.Lock()
+	t.exitCode = terminalExitCode(waitErr)
 	for channel := range t.clients {
 		close(channel)
 		delete(t.clients, channel)

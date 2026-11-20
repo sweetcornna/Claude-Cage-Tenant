@@ -64,7 +64,7 @@ const QuotaTime = createContext(0);
 
 // All rows share a clock. Only quota readings subscribe; a tick doesn't render
 // the account forms or fetch data. Sleep until the next visible unit changes.
-function QuotaClock({ accounts, children }) {
+export function QuotaClock({ accounts, children }) {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
     let timer;
@@ -116,7 +116,7 @@ const usageLabels = {
   signed_out: "登录后可查询额度", local: "已有会话读数", unknown: "尚未查询额度",
 };
 
-function useUsageCheck(profile, environment, perform, change) {
+export function useUsageCheck(profile, environment, perform, change) {
   const [manual, setManual] = useState(null);
   const check = () => perform(async () => {
     setManual({ state: "checking" });
@@ -139,7 +139,7 @@ function useUsageCheck(profile, environment, perform, change) {
   return { state, check };
 }
 
-function QuotaWindow({ label, snapshot, state }) {
+export function QuotaWindow({ label, snapshot, state }) {
   const now = useContext(QuotaTime);
   const reset = snapshot?.resets_at;
   const remaining = reset ? reset - now : null;
@@ -177,7 +177,7 @@ function ProfileUsage({ quota, state }) {
   </div>;
 }
 
-function UsageNote({ profile, state }) {
+export function UsageNote({ profile, state }) {
   const now = useContext(QuotaTime);
   const updated = usageUpdatedAt(profile);
   return <small className="claude-quota-age">

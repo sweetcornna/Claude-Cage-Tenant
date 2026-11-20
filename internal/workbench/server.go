@@ -81,6 +81,7 @@ type Server struct {
 	closing                                          bool
 	shutdown                                         func()
 	claudeAccounts                                   claudeAccountManager
+	codexAccounts                                    codexAccountManager
 	favoritesMu                                      sync.Mutex
 	diagnosticMu                                     sync.Mutex
 	diagnosticRateMu                                 sync.Mutex
@@ -391,6 +392,8 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /api/diagnostics/export", s.diagnosticExport)
 	mux.HandleFunc("GET /api/claude-accounts", s.listClaudeAccounts)
 	mux.HandleFunc("POST /api/claude-accounts", s.mutateClaudeAccounts)
+	mux.HandleFunc("GET /api/codex-accounts", s.listCodexAccounts)
+	mux.HandleFunc("POST /api/codex-accounts", s.mutateCodexAccounts)
 	mux.HandleFunc("GET /api/vault", s.vaultList)
 	mux.HandleFunc("POST /api/vault", s.vaultMutation)
 	mux.HandleFunc("POST /api/vault/browser", s.vaultBrowser)

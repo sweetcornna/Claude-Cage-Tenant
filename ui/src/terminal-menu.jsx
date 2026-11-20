@@ -1,8 +1,8 @@
 import React, { useLayoutEffect, useRef } from "react";
-import { TerminalSquare } from "lucide-react";
+import { Bot, TerminalSquare } from "lucide-react";
 import { AgentIcon } from "./agent-icon";
 
-export function TerminalMenu({ choice, busy, onClose, onSelect }) {
+export function TerminalMenu({ choice, busy, codex = false, onClose, onSelect }) {
   const menu = useRef(null);
   const close = useRef(onClose);
   close.current = onClose;
@@ -58,6 +58,9 @@ export function TerminalMenu({ choice, busy, onClose, onSelect }) {
       <button role="menuitem" disabled={busy} onClick={() => onSelect("claude")}>
         <AgentIcon />Claude 终端
       </button>
+      {codex && <button role="menuitem" disabled={busy} onClick={() => onSelect("codex")}>
+        <Bot size={16} />Codex 终端
+      </button>}
     </div>
   );
 }
