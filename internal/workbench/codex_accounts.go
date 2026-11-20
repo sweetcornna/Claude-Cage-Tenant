@@ -88,6 +88,9 @@ type codexAccountManager struct {
 	defaultChecked time.Time
 	defaultReading codexGuestSnapshot
 	defaultError   error
+	// unrecorded is a pending login directory last seen holding a sign-in
+	// that cannot become an account, such as an API key login.
+	unrecorded string
 }
 
 func (s *Server) loadCodexAccounts() (codexAccountList, error) {
@@ -288,8 +291,26 @@ func (s *Server) selectCodexAccount(requestedID string, login bool, workspace st
 	m := &s.codexAccounts
 	m.mu.Lock()
 	list, err := s.loadCodexAccounts()
+	if err == nil && list.PendingLogin != "" && requestedID == "" && !s.codexLoginActive(list.PendingLogin) {
+		m.mu.Unlock()
+		// Record a login that completed before a controller restart or lock
+		// before a new login could write into the same guest directory. This
+		// waits for a background check of that directory that is under way.
+		if epoch, ok := s.account.access(); ok {
+			if probeErr := s.recoverCodexPending(epoch, list.PendingLogin, login); login && probeErr != nil {
+				return empty, probeErr
+			}
+		}
+		m.mu.Lock()
+		list, err = s.loadCodexAccounts()
+	}
 	if err == nil && login {
 		if requestedID == "" {
+			// Never sign in over a login that could not be recorded; leave it
+			// in its directory and start the new one in a fresh directory.
+			if pending := list.PendingLogin; pending != "" && pending == m.unrecorded && !s.codexLoginActive(pending) {
+				list.PendingLogin, m.unrecorded = "", ""
+			}
 			if list.PendingLogin == "" {
 				list.PendingLogin = randomToken()[:24]
 				m.loginNotice = ""

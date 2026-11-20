@@ -46,16 +46,21 @@ func (m *terminalManager) startSession(cmd *exec.Cmd, workspace, kind string, se
 }
 
 func (m *terminalManager) startSessionWithPTY(cmd *exec.Cmd, workspace, kind string, selection claudeSelection, finished func(), start func() (terminalPTY, error)) (*terminalSession, error) {
-	return m.startSessionWith(cmd, workspace, kind, selection, codexSelection{}, finished, start)
+	var ended func(*terminalSession)
+	if finished != nil {
+		ended = func(*terminalSession) { finished() }
+	}
+	return m.startSessionWith(cmd, workspace, kind, selection, codexSelection{}, ended, start)
 }
 
-func (m *terminalManager) startCodexSession(cmd *exec.Cmd, workspace, kind string, selection codexSelection, finished func()) (*terminalSession, error) {
+// finished receives the ended session, so it can read the exit status.
+func (m *terminalManager) startCodexSession(cmd *exec.Cmd, workspace, kind string, selection codexSelection, finished func(*terminalSession)) (*terminalSession, error) {
 	return m.startSessionWith(cmd, workspace, kind, claudeSelection{}, selection, finished, func() (terminalPTY, error) { return startTerminal(cmd, 100, 30) })
 }
 
 // Account bindings are published together with the session, so a concurrent
 // allocation always counts a terminal that is already running.
-func (m *terminalManager) startSessionWith(cmd *exec.Cmd, workspace, kind string, selection claudeSelection, codex codexSelection, finished func(), start func() (terminalPTY, error)) (*terminalSession, error) {
+func (m *terminalManager) startSessionWith(cmd *exec.Cmd, workspace, kind string, selection claudeSelection, codex codexSelection, finished func(*terminalSession), start func() (terminalPTY, error)) (*terminalSession, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.admissionErrorLocked(); err != nil {
@@ -99,7 +104,7 @@ func (m *terminalManager) startSessionWith(cmd *exec.Cmd, workspace, kind string
 		defer m.workers.Done()
 		session.run()
 		if finished != nil {
-			finished()
+			finished(session)
 		}
 	}()
 	return session, nil

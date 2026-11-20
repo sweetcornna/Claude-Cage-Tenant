@@ -51,13 +51,27 @@ SHARED_CONFIG_KEYS = {"model", "model_reasoning_effort", "model_reasoning_summar
                       "project_doc_max_bytes", "project_doc_fallback_filenames", "personality", "mcp_servers",
                       "notice", "check_for_update_on_startup", "disable_paste_burst", "projects",
                       "developer_instructions", "compact_prompt", "history", "tui", "skills"}
-PRIVATE_CONFIG_WORDS = {"key", "keys", "token", "tokens", "secret", "secrets", "password", "auth", "oauth",
-                        "credential", "credentials", "cookie", "cookies", "proxy", "url", "uri", "host", "endpoint",
-                        "header", "headers", "provider", "providers", "account", "workspace", "login", "cert",
-                        "certs", "ca", "bearer"}
-PRIVATE_ENV_WORDS = {"KEY", "TOKEN", "SECRET", "PASSWORD", "AUTH", "OAUTH", "CREDENTIAL", "CREDENTIALS", "COOKIE",
-                     "PROXY", "URL", "HOST", "ENDPOINT", "REGION", "PROJECT", "PROFILE", "ACCOUNT", "ORG",
-                     "HELPER", "CERT", "CERTS", "CA", "BASE"}
+# Words that name or carry a credential, in a setting name, an environment
+# variable or a command argument (after splitting snake, kebab and camelCase).
+SECRET_WORDS = {"key", "keys", "apikey", "token", "tokens", "secret", "secrets", "password", "passwords", "passwd",
+                "pass", "pwd", "passphrase", "pat", "auth", "oauth", "authorization", "bearer", "credential",
+                "credentials", "cred", "creds", "cookie", "cookies", "session", "sessions", "private", "signature"}
+PRIVATE_CONFIG_WORDS = SECRET_WORDS | {"proxy", "url", "uri", "host", "endpoint", "header", "headers", "provider",
+                                       "providers", "account", "workspace", "login", "cert", "certs", "ca"}
+PRIVATE_ENV_WORDS = {word.upper() for word in SECRET_WORDS} | {
+    "PROXY", "URL", "HOST", "ENDPOINT", "REGION", "PROJECT", "PROFILE", "ACCOUNT", "ORG", "HELPER", "CERT", "CERTS",
+    "CA", "BASE"}
+# Fragments that mark a credential even inside a longer word, as in PGPASSWORD.
+SECRET_FRAGMENTS = ("password", "passwd", "secret", "apikey", "credential", "bearer")
+# An MCP server with its own environment or request headers stays private.
+PRIVATE_MCP_KEYS = {"env", "env_vars"}
+# Shared settings that run a command: dropped when any element looks secret-bearing.
+COMMAND_KEYS = {"notify"}
+# Well-known token formats, recognized even without a flag naming them.
+KNOWN_SECRET = re.compile(r"(?<![A-Za-z0-9])(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,}"
+                          r"|glpat-[A-Za-z0-9_-]{8,}|xox[abeprs]-[A-Za-z0-9-]{8,}|AKIA[0-9A-Z]{12,})")
+# The terminal ends instead of opening a shell, so the host re-checks the account.
+ACCOUNT_REFUSED = 78
 PRIVATE_ENV_PREFIXES = ("OPENAI_", "CODEX_", "AZURE_", "ANTHROPIC_", "AWS_", "GOOGLE_", "GEMINI_")
 WINDOWS = ("primary", "secondary")
 
@@ -481,16 +495,51 @@ def query_usage(binary, env, base, home, expected):
     return summary
 
 
+def name_words(text):
+    """Lowercase words of a snake_case, kebab-case, dotted or camelCase name."""
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(text))
+    text = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", text)
+    text = re.sub(r"([A-Za-z])([0-9])", r"\1 \2", text)
+    return {word for word in re.split(r"[^a-z0-9]+", text.lower()) if word}
+
+
+def names_secret(words):
+    return bool(SECRET_WORDS & words) or any(fragment in word for word in words for fragment in SECRET_FRAGMENTS)
+
+
 def private_config_name(name):
-    return bool(PRIVATE_CONFIG_WORDS.intersection(re.split(r"[^a-z0-9]+", str(name).lower())))
+    words = name_words(name)
+    return bool(PRIVATE_CONFIG_WORDS & words) or names_secret(words)
 
 
 def shared_env_variable(name):
     """A shared variable may change tool behavior but never routing or login."""
     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
         return False
-    upper = name.upper()
-    return not upper.startswith(PRIVATE_ENV_PREFIXES) and not PRIVATE_ENV_WORDS.intersection(upper.split("_"))
+    words = name_words(name)
+    return (not name.upper().startswith(PRIVATE_ENV_PREFIXES) and not PRIVATE_ENV_WORDS & {word.upper() for word in words}
+            and not names_secret(words))
+
+
+def secret_argument(value):
+    """A command element that names, assigns or carries a credential."""
+    if not isinstance(value, str):
+        return False
+    assignment = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)=", value)
+    return bool(names_secret(name_words(value)) or KNOWN_SECRET.search(value)
+                or assignment and not shared_env_variable(assignment.group(1)))
+
+
+def shared_command(value):
+    command = value if isinstance(value, list) else [value]
+    return not any(secret_argument(item) for item in command)
+
+
+def shared_mcp_server(server):
+    """A server is shared only without credentials in its settings, command or arguments."""
+    if not isinstance(server, dict) or any(key in PRIVATE_MCP_KEYS or private_config_name(key) for key in server):
+        return False
+    return shared_command(server.get("command", "")) and shared_command(server.get("args", [])) and shared_value(server) == server
 
 
 def shared_value(value, name=""):
@@ -498,15 +547,14 @@ def shared_value(value, name=""):
         result = {}
         for key, item in value.items():
             if name in ("env", "set"):
-                if shared_env_variable(key) and not isinstance(item, (dict, list)):
+                if shared_env_variable(key) and not isinstance(item, (dict, list)) and not KNOWN_SECRET.search(str(item)):
                     result[key] = item
             elif name == "projects":
                 # Project paths are local folders; only their settings are filtered.
                 result[key] = shared_value(item)
             elif name == "mcp_servers":
                 # A server with a credential, endpoint or header stays private as a whole.
-                filtered = shared_value(item)
-                if filtered == item:
+                if shared_mcp_server(item):
                     result[key] = item
             elif not private_config_name(key):
                 result[key] = shared_value(item, key)
@@ -561,7 +609,8 @@ def shared_overrides(home, cwd):
     except (OSError, ValueError):
         print("~/.codex/config.toml 无法读取，本次未共用其中的设置。", file=sys.stderr)
         return []
-    shared = {key: shared_value(value, key) for key, value in loaded.items() if key in SHARED_CONFIG_KEYS}
+    shared = {key: shared_value(value, key) for key, value in loaded.items()
+              if key in SHARED_CONFIG_KEYS and (key not in COMMAND_KEYS or shared_command(value))}
     layers = [home / "config.toml", *[folder / ".codex/config.toml" for folder in (cwd, *cwd.parents)]]
     for path in layers:
         if path.resolve() == common.resolve():
@@ -676,7 +725,7 @@ def main(args):
         digest = subject(reading)
         if not expected or digest != expected:
             print("此终端未登录所选 Codex 账号。请在 Codex 账号管理中检查登录状态或重新登录。", file=sys.stderr)
-            return 1
+            return ACCOUNT_REFUSED
         note_identity(base, home, digest)
         overrides = shared_overrides(home, Path.cwd()) if account_id != DEFAULT else []
         # Codex and its tools create files in the shared project with the user's umask.

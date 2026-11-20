@@ -113,6 +113,19 @@ class CodexAccountTests(unittest.TestCase):
     def base(self, account=FIRST):
         return self.home / ".local/share/cage/codex-accounts" / account
 
+    def launch_overrides(self, cwd, *args):
+        """Run Codex through the helper and return its -c overrides as values."""
+        self.run_helper("run", FIRST, *args, cwd=cwd)
+        launch = json.loads(self.capture.read_text())
+        argv = launch["argv"][:len(launch["argv"]) - len(args)]
+        self.assertEqual(launch["argv"][len(argv):], list(args))
+        overrides = {}
+        for flag, value in zip(argv[::2], argv[1::2]):
+            self.assertEqual(flag, "-c")
+            key, raw = value.split("=", 1)
+            overrides[key] = tomllib.loads("value = " + raw)["value"]
+        return overrides, launch
+
     def login(self, account=FIRST, env=None):
         result = self.run_helper("login", account, env=env)
         self.assertIn("auth.openai.com/codex/device", result.stdout)
@@ -243,15 +256,8 @@ model_provider = "private-proxy"
         project = self.home / "project"
         (project / ".codex").mkdir(parents=True)
         (project / ".codex/config.toml").write_text('approval_policy = "on-request"\n')
-        self.run_helper("run", FIRST, "--search", "resume", cwd=project)
-        launch = json.loads(self.capture.read_text())
-        argv, env = launch["argv"], launch["env"]
-        self.assertEqual(argv[-2:], ["--search", "resume"])
-        overrides = {}
-        for flag, value in zip(argv[:-2:2], argv[1:-2:2]):
-            self.assertEqual(flag, "-c")
-            key, raw = value.split("=", 1)
-            overrides[key] = tomllib.loads("value = " + raw)["value"]
+        overrides, launch = self.launch_overrides(project, "--search", "resume")
+        env = launch["env"]
         self.assertEqual(overrides, {
             "sandbox_mode": "danger-full-access",
             "features": {"web_search": True},
@@ -277,11 +283,84 @@ model_provider = "private-proxy"
         self.assertIn("AGENTS.md", result.stderr)
         self.assertEqual((account_home / "AGENTS.md").read_text(), "account instructions")
 
+    def test_shared_config_keeps_credentials_private(self):
+        self.login()
+        common = self.home / ".codex"
+        common.mkdir()
+        (common / "config.toml").write_text('''
+notify = ["curl", "-H", "Authorization: Bearer notify-secret", "https://hooks.invalid"]
+[features]
+web_search = true
+apiKey = "camel-api-key"
+[shell_environment_policy]
+set = { GH_PAT = "pat-secret", DB_PASS = "pass-secret", apiKey = "camel-env-secret", authToken = "camel-token-secret", MY_TOOL = "ghp_abcdefghijklmnop", RUST_LOG = "info" }
+[mcp_servers.flagged]
+command = "github-mcp"
+args = ["--token", "ghp_x"]
+[mcp_servers.dashed]
+command = "search-mcp"
+args = ["--api-key", "dashed-secret"]
+[mcp_servers.header]
+command = "fetch-mcp"
+args = ["--header", "Authorization: Bearer header-secret"]
+[mcp_servers.assigned]
+command = "env"
+args = ["GITHUB_TOKEN=assigned-secret", "mcp"]
+[mcp_servers.bare]
+command = "github-mcp"
+args = ["ghp_abcdefghijklmnop"]
+[mcp_servers.forwarded]
+command = "github-mcp"
+env_vars = ["GITHUB_TOKEN"]
+[mcp_servers.quiet_env]
+command = "debug-mcp"
+env = { DEBUG = "1" }
+[mcp_servers.remote]
+command = "remote-mcp"
+http_headers = { "X-Team" = "header-value-secret" }
+[mcp_servers.files]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/cage/projects"]
+[tui]
+notifications = true
+clientSecret = "camel-client-secret"
+''')
+        project = self.home / "project"
+        project.mkdir()
+        overrides, launch = self.launch_overrides(project)
+        self.assertEqual(overrides, {
+            "features": {"web_search": True},
+            "shell_environment_policy": {"set": {"RUST_LOG": "info"}},
+            "mcp_servers": {"files": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/cage/projects"]}},
+            "tui": {"notifications": True},
+        })
+        argv = "\n".join(launch["argv"])
+        for secret in ("secret", "ghp_", "camel-api-key", "Bearer", "GITHUB_TOKEN", "DEBUG"):
+            self.assertNotIn(secret, argv)
+        # A notify command without credentials is still shared.
+        (common / "config.toml").write_text('notify = ["notify-send", "Codex"]\n')
+        self.assertEqual(self.launch_overrides(project)[0], {"notify": ["notify-send", "Codex"]})
+
+    def test_secret_detection_splits_camel_case_and_flags(self):
+        for name in ("apiKey", "authToken", "clientSecret", "bearer_token_env_var", "http_headers", "sessionCookie", "privateKey"):
+            self.assertTrue(helper.private_config_name(name), name)
+        for name in ("web_search", "trust_level", "notifications", "sandbox_mode", "approval_policy", "writable_roots",
+                     "network_access", "persistence", "max_bytes", "startup_timeout_sec", "enabled_tools"):
+            self.assertFalse(helper.private_config_name(name), name)
+        for name in ("GH_PAT", "DB_PASS", "DB_PASSWD", "PGPASSWORD_FILE", "githubToken", "SESSION_ID", "MY_CREDS", "SIGNING_PRIVATE_KEY"):
+            self.assertFalse(helper.shared_env_variable(name), name)
+        for argument in ("--token", "--api-key", "--apiKey", "Authorization: Bearer x", "GITHUB_TOKEN=x", "HTTPS_PROXY=x",
+                         "--password=x", "sk-abcdefghijkl", "ghp_abcdefghijklmnop"):
+            self.assertTrue(helper.secret_argument(argument), argument)
+        for argument in ("-y", "@modelcontextprotocol/server-filesystem", "/home/cage/projects", "--quiet", "LOG_LEVEL=debug", 3):
+            self.assertFalse(helper.secret_argument(argument), argument)
+
     def test_run_requires_the_selected_identity(self):
         self.login()
         for env in ({**self.env, "CAGE_CODEX_SUBJECT": "0" * 64}, {k: v for k, v in self.env.items() if k != "CAGE_CODEX_SUBJECT"}):
             result = self.run_helper("run", FIRST, env=env, check=False)
-            self.assertEqual(result.returncode, 1)
+            # A distinct status ends the terminal so the host re-checks the account.
+            self.assertEqual(result.returncode, helper.ACCOUNT_REFUSED)
             self.assertIn("Codex", result.stderr)
             self.assertFalse(self.capture.exists())
         missing = {**self.env, "PATH": "/nonexistent"}

@@ -181,7 +181,7 @@ func (s *Server) codexPanelView(ctx context.Context) (codexPanel, codexAccountLi
 	}
 	if supported && ready && !update && list.PendingLogin != "" && !s.codexLoginActive(list.PendingLogin) {
 		// Restore a login that completed before a controller restart.
-		_ = s.recoverCodexPending(ctx, list.PendingLogin)
+		_ = s.recoverCodexPending(ctx, list.PendingLogin, false)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -310,15 +310,43 @@ func (m *codexAccountManager) finish(id string, call *claudeRefresh, err error) 
 	close(call.done)
 }
 
-func (s *Server) recoverCodexPending(ctx context.Context, id string) error {
+func (s *Server) recoverCodexPending(ctx context.Context, id string, force bool) error {
 	m := &s.codexAccounts
 	m.mu.Lock()
 	recent := time.Since(m.attempted[id]) < time.Minute
 	m.mu.Unlock()
-	if recent {
+	if !force && recent {
 		return nil
 	}
 	return s.refreshCodex(ctx, id, false)
+}
+
+// recheckCodexAccount observes an account in the background after a terminal
+// using it ended at once, as the guest helper does when the account is signed
+// out or changed. One probe per account runs at a time.
+func (s *Server) recheckCodexAccount(id string) {
+	epoch, unlocked := s.account.access()
+	if !unlocked {
+		return
+	}
+	m := &s.codexAccounts
+	m.mu.Lock()
+	list, err := s.loadCodexAccounts()
+	if err != nil || list.find(id) == nil || m.refreshing[id] != nil {
+		m.mu.Unlock()
+		return
+	}
+	call := m.claim(id)
+	m.mu.Unlock()
+	ctx, finish, err := s.beginActivity(epoch)
+	if err != nil {
+		m.finish(id, call, err)
+		return
+	}
+	go func() {
+		defer finish()
+		m.finish(id, call, s.runCodexRefresh(ctx, id, false))
+	}()
 }
 
 // A poll begun before the login completed may have observed the previous
@@ -396,7 +424,14 @@ func (s *Server) runCodexRefresh(parent context.Context, id string, finished boo
 	}
 	now, notice := time.Now(), ""
 	if id == list.PendingLogin {
+		// A sign-in without a ChatGPT identity cannot be recorded, but a new
+		// login must not overwrite it.
+		unrecorded := reading.subject() == "" && (reading.LoggedIn || reading.AuthMode != "")
 		switch {
+		case !finished && s.codexLoginActive(id):
+			// A login started in this directory after the probe began. Its own
+			// completion check records the result.
+			return nil
 		case reading.subject() != "":
 			if list.bySubject(reading.subject()) != nil {
 				notice = "此身份已在 Codex 账号列表中，本次登录未新增账号。如需更新原账号的登录，请在原账号卡片上重新登录。"
@@ -408,6 +443,9 @@ func (s *Server) runCodexRefresh(parent context.Context, id string, finished boo
 			list.PendingLogin = ""
 		case finished:
 			notice = "本次登录未完成，没有添加 Codex 账号"
+			if unrecorded {
+				notice = "本次登录不是 ChatGPT 订阅账号（例如 API Key 登录），没有添加 Codex 账号"
+			}
 			// A new attempt may already be entering this guest directory.
 			if s.op.TryLock() {
 				if !s.codexLoginActive(id) {
@@ -415,6 +453,11 @@ func (s *Server) runCodexRefresh(parent context.Context, id string, finished boo
 				}
 				s.op.Unlock()
 			}
+		}
+		if unrecorded {
+			m.unrecorded = id
+		} else if m.unrecorded == id {
+			m.unrecorded = ""
 		}
 	} else {
 		err = list.observe(id, reading, now)

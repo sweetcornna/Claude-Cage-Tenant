@@ -49,7 +49,7 @@ func (s *Server) createCodexTerminalLocked(input terminalRequest) (*terminalSess
 	if err != nil {
 		return nil, err
 	}
-	var finished func()
+	var finished func(*terminalSession)
 	if selection.ID != "" {
 		if componentUpdate {
 			return nil, errGuestUpdateRequired
@@ -63,13 +63,7 @@ func (s *Server) createCodexTerminalLocked(input terminalRequest) (*terminalSess
 		if !login && selection.Subject == "" {
 			return nil, errors.New("Codex 账号状态已变化，请重试")
 		}
-		if login {
-			finished = func() {
-				ctx, cancel := context.WithTimeout(s.lifetimeContext(), 25*time.Second)
-				defer cancel()
-				_ = s.confirmCodexLogin(ctx, selection.ID)
-			}
-		}
+		finished = s.codexTerminalFinished(selection.ID, login)
 	}
 	script := codexTerminalScript(s.cliWorkspace(workspace), command, selection.GuestID, selection.Subject, login)
 	cmd := s.sshCommand(s.lifetimeContext(), "-tt", s.sshTarget(), "--", script)
@@ -90,9 +84,34 @@ func (s *Server) createCodexTerminalLocked(input terminalRequest) (*terminalSess
 	return session, err
 }
 
+// codexQuickExit bounds how soon after start a failed exit is taken as the
+// guest helper refusing the account rather than Codex ending normally.
+const codexQuickExit = 20 * time.Second
+
+func (s *Server) codexTerminalFinished(id string, login bool) func(*terminalSession) {
+	if login {
+		return func(*terminalSession) {
+			ctx, cancel := context.WithTimeout(s.lifetimeContext(), 25*time.Second)
+			defer cancel()
+			_ = s.confirmCodexLogin(ctx, id)
+		}
+	}
+	started := time.Now()
+	return func(session *terminalSession) {
+		// The helper ends the terminal when the account is no longer signed in
+		// as selected. Re-check it in the background so allocation stops
+		// choosing it; the terminal's teardown never waits for the probe.
+		if session.exitStatus() > 0 && time.Since(started) < codexQuickExit {
+			s.recheckCodexAccount(id)
+		}
+	}
+}
+
 // The saved command is interpreted only by the guest's interactive shell and
 // leaves a shell when Codex exits. With a managed account, the shell keeps
 // CODEX_HOME and the shim, so later codex invocations stay on that account.
+// When the helper refuses the account (status 78), the terminal ends instead,
+// so the host learns that the account needs to be checked.
 func codexTerminalScript(workspace, command, accountID, subject string, login bool) string {
 	if login {
 		return "cd \"$HOME\" && exec /usr/local/bin/cage-codex-account login " + shellescape.Quote(accountID)
@@ -101,7 +120,8 @@ func codexTerminalScript(workspace, command, accountID, subject string, login bo
 	if accountID != "" {
 		body = `export CAGE_CODEX_ACCOUNT_ID=` + shellescape.Quote(accountID) + ` CAGE_CODEX_SUBJECT=` + shellescape.Quote(subject) + "; " +
 			`export CODEX_HOME="$HOME/.local/share/cage/codex-accounts/$CAGE_CODEX_ACCOUNT_ID/home"; (umask 077; mkdir -p "$CODEX_HOME"); ` +
-			`export PATH="/usr/local/lib/cage-codex-bin:$PATH"; eval "$CAGE_TERMINAL_COMMAND"; unset CAGE_TERMINAL_COMMAND; exec bash -i`
+			`export PATH="/usr/local/lib/cage-codex-bin:$PATH"; eval "$CAGE_TERMINAL_COMMAND"; cage_status=$?; unset CAGE_TERMINAL_COMMAND; ` +
+			`if [ "$cage_status" = 78 ]; then exit 78; fi; unset cage_status; exec bash -i`
 	}
 	return "cd " + shellescape.Quote(workspace) +
 		" && exec env TERM=xterm-256color COLORTERM=truecolor CAGE_WORKBENCH=1 CAGE_TERMINAL_COMMAND=" +

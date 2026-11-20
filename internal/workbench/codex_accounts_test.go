@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -83,6 +84,7 @@ func TestCodexBalancedSchedulingUsesLoadHeadroomRotationAndAffinity(t *testing.T
 
 func TestCodexEmptyRosterFallsBackToDefaultCodexHome(t *testing.T) {
 	s := testServer(t)
+	s.codexAccounts.probe = func(context.Context, string) (codexGuestSnapshot, error) { return codexGuestSnapshot{}, nil }
 	if selection, err := s.selectCodexAccount("", false, "/project"); err != nil || selection != (codexSelection{}) {
 		t.Fatalf("empty roster did not use ~/.codex: %+v %v", selection, err)
 	}
@@ -287,6 +289,179 @@ func TestCodexDeviceLoginAddsAccountOnce(t *testing.T) {
 	}
 }
 
+func TestCodexLoginRecordsPendingSignInBeforeReusingItsDirectory(t *testing.T) {
+	s := testServer(t)
+	s.ready = true
+	pending := strings.Repeat("c", 24)
+	owner := codexGuestSnapshot{LoggedIn: true, AuthMode: "chatgpt", Email: "owner@example.test", Organization: "workspace"}
+	var mu sync.Mutex
+	readings := map[string]codexGuestSnapshot{pending: owner}
+	var probeErr error
+	probes := map[string]int{}
+	s.codexAccounts.probe = func(_ context.Context, id string) (codexGuestSnapshot, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		probes[id]++
+		return readings[id], probeErr
+	}
+	reset := func() {
+		if err := s.saveCodexAccounts(codexAccountList{Accounts: []codexAccount{}, PendingLogin: pending}); err != nil {
+			t.Fatal(err)
+		}
+		s.codexAccounts.mu.Lock()
+		// A background check moments ago must not let a login skip its own.
+		s.codexAccounts.attempted = map[string]time.Time{pending: time.Now()}
+		s.codexAccounts.mu.Unlock()
+		mu.Lock()
+		probes = map[string]int{}
+		mu.Unlock()
+	}
+	reset()
+	login, err := s.selectCodexAccount("", true, "")
+	list, _ := s.loadCodexAccounts()
+	if err != nil || login.ID == pending || list.PendingLogin != login.ID || len(list.Accounts) != 1 || list.Accounts[0].ID != pending ||
+		list.Accounts[0].Email != "owner@example.test" || probes[pending] != 1 {
+		t.Fatalf("a new login reused an unrecorded sign-in: %+v %+v %v %v", login, list, probes, err)
+	}
+
+	// An API key login cannot become an account; the next login uses a fresh directory.
+	reset()
+	readings[pending] = codexGuestSnapshot{AuthMode: "api_key"}
+	if login, err = s.selectCodexAccount("", true, ""); err != nil || login.ID == pending {
+		t.Fatalf("a new login would overwrite an API key login: %+v %v", login, err)
+	}
+	if list, _ = s.loadCodexAccounts(); len(list.Accounts) != 0 || list.PendingLogin != login.ID {
+		t.Fatalf("unrecordable login was added: %+v", list)
+	}
+
+	// A signed-out directory is reused; a failed check refuses the login.
+	reset()
+	readings[pending] = codexGuestSnapshot{}
+	if login, err = s.selectCodexAccount("", true, ""); err != nil || login.ID != pending {
+		t.Fatalf("signed-out pending directory was not reused: %+v %v", login, err)
+	}
+	reset()
+	probeErr = errors.New("guest unavailable")
+	if _, err = s.selectCodexAccount("", true, ""); err == nil {
+		t.Fatal("started a login without checking the pending directory")
+	}
+	probeErr = nil
+
+	// A login started while a probe of the pending directory runs waits for
+	// it and never enters the directory that probe records.
+	reset()
+	readings[pending] = owner
+	entered, release := make(chan struct{}), make(chan struct{})
+	s.codexAccounts.probe = func(_ context.Context, id string) (codexGuestSnapshot, error) {
+		mu.Lock()
+		probes[id]++
+		mu.Unlock()
+		close(entered)
+		<-release
+		return owner, nil
+	}
+	s.codexAccounts.mu.Lock()
+	s.codexAccounts.attempted = nil
+	s.codexAccounts.mu.Unlock()
+	background := make(chan error, 1)
+	go func() { background <- s.recoverCodexPending(context.Background(), pending, false) }()
+	<-entered
+	started := make(chan codexSelection, 1)
+	go func() {
+		selection, err := s.selectCodexAccount("", true, "")
+		if err != nil {
+			t.Error(err)
+		}
+		started <- selection
+	}()
+	select {
+	case selection := <-started:
+		t.Fatalf("login did not wait for the pending check: %+v", selection)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if err = <-background; err != nil {
+		t.Fatal(err)
+	}
+	if selection := <-started; selection.ID == pending || probes[pending] != 1 {
+		t.Fatalf("login entered the recorded directory: %+v %v", selection, probes)
+	}
+
+	// A background check never records a pending directory with a live login.
+	reset()
+	s.codexAccounts.probe = func(context.Context, string) (codexGuestSnapshot, error) { return owner, nil }
+	s.terminals.sessions = map[string]*terminalSession{"login": {codexAccountID: pending, kind: "codex-login", done: make(chan struct{})}}
+	if err = s.refreshCodex(context.Background(), pending, false); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ = s.loadCodexAccounts(); len(list.Accounts) != 0 || list.PendingLogin != pending {
+		t.Fatalf("background check recorded a directory under a live login: %+v", list)
+	}
+}
+
+func TestCodexRefusedTerminalRechecksItsAccount(t *testing.T) {
+	s := testServer(t)
+	s.ready = true
+	t.Cleanup(s.terminals.close)
+	a := strings.Repeat("a", 24)
+	if err := s.saveCodexAccounts(codexAccountList{Accounts: []codexAccount{codexFixture(a, "a@example.test")}}); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	probes := 0
+	release := make(chan struct{})
+	s.codexAccounts.probe = func(context.Context, string) (codexGuestSnapshot, error) {
+		mu.Lock()
+		probes++
+		mu.Unlock()
+		<-release
+		return codexGuestSnapshot{}, nil
+	}
+	count := func() int { mu.Lock(); defer mu.Unlock(); return probes }
+	selection := codexSelection{ID: a, GuestID: a, Subject: claudeIdentityHash("a@example.test", "workspace")}
+	// A normal exit after use leaves the account alone.
+	session, err := s.terminals.startCodexSession(terminalChildCommand("echo"), "/project", "codex", selection, s.codexTerminalFinished(a, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = session.enqueueInput(context.Background(), terminalInputLine("exit")); err != nil {
+		t.Fatal(err)
+	}
+	awaitTerminalSignal(t, session.done)
+	// The helper's refusal ends the terminal at once with a failure status.
+	refused, err := s.terminals.startCodexSession(terminalChildCommand("refused"), "/project", "codex", selection, s.codexTerminalFinished(a, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitTerminalSignal(t, refused.done)
+	if code := refused.exitStatus(); code != 78 || session.exitStatus() != 0 {
+		t.Fatalf("exit status: refused %d, normal %d", code, session.exitStatus())
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for count() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Further refusals while the check runs do not start another probe.
+	s.recheckCodexAccount(a)
+	s.recheckCodexAccount(a)
+	close(release)
+	for time.Now().Before(deadline) {
+		s.codexAccounts.mu.Lock()
+		busy := s.codexAccounts.refreshing[a] != nil
+		s.codexAccounts.mu.Unlock()
+		if list, _ := s.loadCodexAccounts(); !busy && list.Accounts[0].Status == "signed_out" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if list, _ := s.loadCodexAccounts(); list.Accounts[0].Status != "signed_out" || count() != 1 {
+		t.Fatalf("refused account stayed schedulable or was probed %d times: %+v", count(), list.Accounts[0])
+	}
+	if _, err = s.selectCodexAccount("", false, ""); err == nil {
+		t.Fatal("allocation still chose the refused account")
+	}
+}
+
 func TestCodexUsageRefreshRecordsQuotaAndIdentityChanges(t *testing.T) {
 	s := testServer(t)
 	s.ready = true
@@ -359,6 +534,18 @@ func TestCodexTerminalScriptsKeepTheSelectedAccountInTheShell(t *testing.T) {
 				t.Fatalf("CODEX_HOME not private: %v %v", info, err)
 			}
 		}
+	}
+	// The helper's refusal status ends a managed terminal instead of opening a shell.
+	work := t.TempDir()
+	cmd := exec.Command("bash", "-c", codexTerminalScript(work, "(exit 78)", managed, "expected", false))
+	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}
+	cmd.Stdin = strings.NewReader("printf shell-returned > shell-result\nexit\n")
+	var exit *exec.ExitError
+	if b, err := cmd.CombinedOutput(); !errors.As(err, &exit) || exit.ExitCode() != 78 {
+		t.Fatalf("refusal did not end the terminal: %v: %s", err, b)
+	}
+	if _, err := os.Stat(filepath.Join(work, "shell-result")); !os.IsNotExist(err) {
+		t.Fatal("a shell opened after the account was refused")
 	}
 	if got := codexTerminalScript("/w", "codex", managed, "", true); got != `cd "$HOME" && exec /usr/local/bin/cage-codex-account login `+managed {
 		t.Fatal(got)
