@@ -46,11 +46,11 @@
 1. **下载并校验**（arm64 主机把文件名中的 `amd64` 换成 `arm64`）：
 
    ```sh
-   base=https://github.com/sweetcornna/Claude-Cage-Tenant/releases/download/v0.1.12
-   curl -fLO "$base/Cage-Tenant-NoVirt-0.1.12-linux-amd64.tar.gz" -fLO "$base/SHA256SUMS"
+   base=https://github.com/sweetcornna/Claude-Cage-Tenant/releases/download/v0.1.13
+   curl -fLO "$base/Cage-Tenant-NoVirt-0.1.13-linux-amd64.tar.gz" -fLO "$base/SHA256SUMS"
    sha256sum -c --ignore-missing SHA256SUMS
-   tar -xzf Cage-Tenant-NoVirt-0.1.12-linux-amd64.tar.gz
-   cd Cage-Tenant-NoVirt-0.1.12-linux-amd64
+   tar -xzf Cage-Tenant-NoVirt-0.1.13-linux-amd64.tar.gz
+   cd Cage-Tenant-NoVirt-0.1.13-linux-amd64
    ```
 
 2. **安装**：
@@ -77,8 +77,8 @@
 3. **启动网关**：下载与主机架构对应的服务端归档并校验，然后运行：
 
    ```sh
-   tar -xzf Cage-Tenant-Server-0.1.12-linux-amd64.tar.gz
-   cd Cage-Tenant-Server-0.1.12-linux-amd64
+   tar -xzf Cage-Tenant-Server-0.1.13-linux-amd64.tar.gz
+   cd Cage-Tenant-Server-0.1.13-linux-amd64
    ./cage-tenant -origin https://cage.example.org \
      -state-dir /var/lib/cage-tenant -incus-image cage-blank
    ```
