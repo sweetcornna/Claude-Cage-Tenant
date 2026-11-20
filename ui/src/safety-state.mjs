@@ -1,3 +1,9 @@
+// Errors that only an environment restart clears; progress text ("正在重启环境…")
+// and confirmation titles do not match.
+export function needsEnvironmentRestart(message) {
+  return typeof message === "string" && /需要重启环境|请[^，。；？]*?重启环境|停止并重启环境/.test(message);
+}
+
 export function isSafetyCheckMessage(message) {
   return typeof message === "string" && /关键(?:检查|检测)(?:尚未|未|失败|证据不完整)|完成关键检查|外网(?:未放行|保持关闭)|浏览器配置检查未通过/.test(message);
 }

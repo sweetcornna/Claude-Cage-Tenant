@@ -11,6 +11,7 @@ import {
   MoreHorizontal,
   Power,
   RefreshCw,
+  RotateCcw,
   Shield,
   TerminalSquare,
   X,
@@ -55,8 +56,8 @@ import {
   tabName,
 } from "./workspace-state.mjs";
 import { SafetyPanel } from "./safety";
-import { SafetyChecklistContext, SafetyMessage } from "./safety-message";
-import { networkState, isGuestLocalURL } from "./safety-state.mjs";
+import { EnvironmentRestartContext, SafetyChecklistContext, SafetyMessage } from "./safety-message";
+import { networkState, isGuestLocalURL, needsEnvironmentRestart } from "./safety-state.mjs";
 import { needsProxySetup } from "./onboarding-state.mjs";
 import { NetworkLatency } from "./network-latency";
 import { useWindowVisibility } from "./window-visibility";
@@ -682,6 +683,34 @@ function App() {
       })
     )
       await action("/stop");
+  };
+  // Stop, wait for the stop job, then start again: the one-click way out of
+  // "needs an environment restart" errors.
+  const restarting = useRef(false);
+  const restartEnvironment = async () => {
+    if (restarting.current) return;
+    if (
+      !(await confirm({
+        title: "重启环境？",
+        body: "请先保存文件。环境会停止后重新启动，当前终端会话会结束；浏览器登录和项目文件会保留，重新检测通过前外网保持关闭。",
+        confirm: "重启环境",
+      }))
+    )
+      return;
+    restarting.current = true;
+    try {
+      await stopAndExit({
+        stop: () => api("/stop", {}),
+        readStatus: () => api("/status"),
+        exit: () => startEnvironment(),
+        isCancelled: () => false,
+        onStatus: setStatus,
+      });
+    } catch (error) {
+      notify(error.message);
+    } finally {
+      restarting.current = false;
+    }
   };
   const cancelAutomaticExit = () => {
     quitAfterStop.current = null;
@@ -1454,6 +1483,7 @@ function App() {
     );
   return (
     <SafetyChecklistContext.Provider value={() => setSafetyOpen(true)}>
+    <EnvironmentRestartContext.Provider value={running && !busy && !startRequest ? restartEnvironment : null}>
     <div className={`app ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <div
         className="workbench-shell"
@@ -1932,20 +1962,34 @@ function App() {
             <AudioControls audio={audio} />
             <EnvironmentClock timezone={settings.timezone} clock12Hour={settings.clock_12_hour} />
             <span className="status-feedback" role="status">
+              {/* The footer's own restart button sits beside this text. */}
+              <EnvironmentRestartContext.Provider value={null}>
               <SafetyMessage message={toast ||
                 (busy
                   ? status.job.message
                   : running
-                    ? status.ready
-                      ? isCloudWorkbench() ? "文件保存在云端" : "文件与本机同步"
-                      : "环境运行中 · 浏览器待恢复"
+                    ? needsEnvironmentRestart(status.job?.error)
+                      ? status.job.error
+                      : status.ready
+                        ? isCloudWorkbench() ? "文件保存在云端" : "文件与本机同步"
+                        : "环境运行中 · 浏览器待恢复"
                     : "")} />
+              </EnvironmentRestartContext.Provider>
             </span>
             {status.job?.log && (
               <button title="操作详情" onClick={() => setDetails(true)}>
                 <MoreHorizontal size={15} />
               </button>
             )}
+            <button
+              className="status-restart"
+              onClick={restartEnvironment}
+              disabled={Boolean(startRequest) || !running || busy}
+              title="停止并重新启动当前环境"
+            >
+              <RotateCcw size={12} />
+              <span>重启环境</span>
+            </button>
             <button
               onClick={stop}
               disabled={
@@ -2114,6 +2158,7 @@ function App() {
       )}
       {dialogs}
     </div>
+    </EnvironmentRestartContext.Provider>
     </SafetyChecklistContext.Provider>
   );
 }

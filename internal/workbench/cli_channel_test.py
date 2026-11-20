@@ -52,6 +52,15 @@ class ChannelTests(unittest.TestCase):
         self.assertEqual(channel.channel_message('<channel source="session" request_id="' + request + '">\n' + body + '\n</channel>'), (request, body))
         self.assertEqual(channel.clip_text("你好abc", 4), "你")
 
+    def test_slash_command_titles_hide_transcript_markup(self):
+        command = "<command-message>model</command-message>\n<command-name>/model</command-name>\n<command-args>opus</command-args>"
+        path = self.history(self.session, self.project, [
+            {"type": "user", "message": {"role": "user", "content": command}},
+            {"type": "user", "message": {"role": "user", "content": "<local-command-stdout>Set model to opus</local-command-stdout>"}},
+            {"type": "user", "message": {"role": "user", "content": "继续上次的任务"}},
+        ])
+        self.assertEqual(channel.history_summary(path), (self.project, "/model"))
+
     def test_account_switch_preserves_tools_and_receipt(self):
         tool = {"type":"tool_use","id":"tool-completed","name":"Bash","input":{"command":"already completed"}}
         path = self.history(self.session,self.project,[

@@ -731,9 +731,11 @@ button.large {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.status-bar button:last-child {
+.status-bar button:last-child,
+.status-bar button.status-restart {
   border-left: 1px solid var(--line);
   padding-left: 10px;
+  flex-shrink: 0;
 }
 .connection-banner {
   background: color-mix(in srgb, var(--danger) 5%, transparent);
