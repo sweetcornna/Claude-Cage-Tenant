@@ -299,8 +299,9 @@ def history_summary(path):
                 channel = channel_message(text) if row.get("isMeta") else None
                 if channel:
                     title = channel[1][:40]
-                elif not row.get("isMeta"):
-                    title = text[:40]
+                elif not row.get("isMeta") and not text.startswith("<local-"):
+                    m = re.search(r"<command-name>(.*?)<", text)
+                    title = (m.group(1) if m else text)[:40]
             if workspace and title:
                 break
     # Names and directory changes are appended to the transcript. Read a

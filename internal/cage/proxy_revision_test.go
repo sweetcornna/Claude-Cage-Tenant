@@ -3,6 +3,7 @@ package cage
 import (
 	"context"
 	"encoding/json"
+	"github.com/sylvinus/agent-vm/internal/guestprofile"
 	"github.com/sylvinus/agent-vm/internal/managedproxy"
 	"os"
 	"path/filepath"
@@ -57,6 +58,38 @@ func TestProxyRevisionRevokesOldReportAtSameEndpoint(t *testing.T) {
 	changed.ProxyURL = "socks5://127.0.0.1:3333"
 	if err = g.SyncProxyRevision(changed); err == nil {
 		t.Fatal("transport changed without environment restart")
+	}
+}
+
+// Load gives each read its own guest profile. A node switch must still apply
+// while the guest identity is unchanged, and must refuse a different identity.
+func TestProxyRevisionComparesGuestProfileByValue(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.ProxyRevision = "first"
+	cfg.GuestProfile = &guestprofile.Profile{Version: 1, Options: guestprofile.Options{Hostname: "studio", Username: "dev"}}
+	g, err := NewEgressGate(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close("done")
+	next := cfg
+	next.ProxyRevision = "second"
+	reloaded := *cfg.GuestProfile
+	next.GuestProfile = &reloaded
+	if err = g.SyncProxyRevision(next); err != nil {
+		t.Fatalf("unchanged guest profile rejected a node switch: %v", err)
+	}
+	changed := next
+	changed.ProxyRevision = "third"
+	other := reloaded
+	other.Hostname = "other"
+	changed.GuestProfile = &other
+	if err = g.SyncProxyRevision(changed); err == nil {
+		t.Fatal("guest identity changed without environment restart")
+	}
+	changed.GuestProfile = nil
+	if err = g.SyncProxyRevision(changed); err == nil {
+		t.Fatal("removed guest identity accepted without environment restart")
 	}
 }
 

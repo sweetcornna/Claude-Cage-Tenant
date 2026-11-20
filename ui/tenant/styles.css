@@ -636,6 +636,11 @@ input[readonly] {
   color: var(--text);
 }
 
+/* The switcher scrolls and clips overflow; keep the focus ring inside the tab. */
+.switcher .tab:focus-visible {
+  outline-offset: -2px;
+}
+
 .tab[aria-selected="true"] {
   border-color: var(--accent);
   background: var(--accent-soft);
@@ -723,9 +728,10 @@ input[readonly] {
   font-size: 13px;
 }
 
+/* Baseline alignment keeps the monospace VM id level with the badge text. */
 .ctx-main {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
   min-width: 0;
 }
@@ -741,6 +747,10 @@ input[readonly] {
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ctx-main > .status-dot {
+  align-self: center;
 }
 
 .contextbar[data-status="none"] .ctx-name {
@@ -1007,7 +1017,7 @@ input[readonly] {
 .vm-card-meta {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
   color: var(--text-2);
   font-size: 12px;

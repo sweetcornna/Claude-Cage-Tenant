@@ -6,6 +6,7 @@ import {
   isGuestLocalURL,
   canonicalExitPolicy,
   isSafetyCheckMessage,
+  needsEnvironmentRestart,
 } from "./safety-state.mjs";
 
 test("check failures and incomplete evidence link to the checklist without tagging unrelated errors", () => {
@@ -18,6 +19,19 @@ test("check failures and incomplete evidence link to the checklist without taggi
   ]) assert.equal(isSafetyCheckMessage(message), true, message);
   for (const message of [undefined, "", "关键检查已通过", "关键检查进行中", "项目文件夹连接失败", "Git 设置已写入，但检查尚未通过。", "资源限制未通过核验"])
     assert.equal(isSafetyCheckMessage(message), false, message);
+});
+
+test("errors that need an environment restart offer the restart action", () => {
+  for (const message of [
+    "出口地址或环境设置变化需要重启环境",
+    "proxy: 出口地址或环境设置变化需要重启环境",
+    "配置已变更或无法读取，请重启环境并重新检测",
+    "网络门槛控制记录不可用，请停止并重启环境",
+    "浏览器组件未能恢复，请保存工作后重启环境。",
+    "浏览器检测未返回完整结果，请更新或重启环境",
+  ]) assert.equal(needsEnvironmentRestart(message), true, message);
+  for (const message of [undefined, "", "正在重启环境以加载 VM 外网络门槛…", "应用设置并重启环境？", "保存后，重启环境后生效。", "关键检查尚未通过，外网保持关闭"])
+    assert.equal(needsEnvironmentRestart(message), false, message);
 });
 
 test("an unchanged exit policy does not restart the VM because of empty optional fields", () => {
