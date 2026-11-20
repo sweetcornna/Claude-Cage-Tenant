@@ -30,6 +30,8 @@ type terminalSession struct {
 	loginLinkMu           sync.Mutex
 	loginLinkCleanup      sync.Once
 	claudeAccountSource   string
+	codexAccountID        string
+	codexAccountSource    string
 	cmd                   *exec.Cmd
 	file                  terminalPTY
 	history               []byte
@@ -66,6 +68,7 @@ func (t *terminalSession) summary() map[string]any {
 	}
 	return map[string]any{"id": t.id, "title": t.title, "closed": closed, "workspace": t.workspace, "kind": t.kind,
 		"claude_account_id": t.claudeAccountID, "claude_account_source": t.claudeAccountSource, "cli_session_id": t.sharedID,
+		"codex_account_id": t.codexAccountID, "codex_account_source": t.codexAccountSource,
 		"cli_starting": t.cliStartupPendingLocked()}
 }
 

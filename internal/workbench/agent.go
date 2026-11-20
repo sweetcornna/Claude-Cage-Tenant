@@ -109,6 +109,8 @@ func AgentOperations() []AgentOperation {
 	add("guest.reselect", "Clear only the same unstarted installation the UI can reselect", "DELETE", "/api/environment/guest-systems", object(map[string]string{"id": "string"}))
 	get("claude-accounts.get", "Read account roster, quotas and scheduling", "/api/claude-accounts")
 	post("claude-accounts.change", "Apply the same join, cancel, update, scheduling, refresh and removal actions as the UI", "/api/claude-accounts", from(claudeAccountInput{}))
+	get("codex-accounts.get", "Read Codex account roster, quotas and scheduling (Linux guests)", "/api/codex-accounts")
+	post("codex-accounts.change", "Apply the same update, scheduling, refresh and remove actions as the Codex account panel; log in through a codex-login terminal", "/api/codex-accounts", from(codexAccountInput{}))
 	get("vault.get", "List metadata; passwords remain hidden exactly as in the UI", "/api/vault")
 	post("vault.change", "Save/delete/unblock; reveal requires the same account_password reauthentication as the UI", "/api/vault", object(map[string]string{"action": "string", "entry": "object", "id": "string", "origin": "string", "account_password": "string"}))
 	ops[len(ops)-1].InputSchema["properties"].(map[string]any)["entry"] = from(vaultEntry{})

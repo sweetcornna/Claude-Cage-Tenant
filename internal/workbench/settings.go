@@ -29,6 +29,7 @@ type Preferences struct {
 	Workspace             string `json:"workspace"`
 	BrowserHomeURL        string `json:"browser_home_url"`
 	ClaudeTerminalCommand string `json:"claude_terminal_command"`
+	CodexTerminalCommand  string `json:"codex_terminal_command"`
 	Keyboard              string `json:"keyboard"`
 	Clock12Hour           bool   `json:"clock_12_hour"`
 	AutoTimezone          bool   `json:"auto_timezone"`
@@ -42,6 +43,13 @@ func claudeTerminalCommand(p Preferences) string {
 		return "claude"
 	}
 	return strings.TrimSpace(p.ClaudeTerminalCommand)
+}
+
+func codexTerminalCommand(p Preferences) string {
+	if strings.TrimSpace(p.CodexTerminalCommand) == "" {
+		return "codex"
+	}
+	return strings.TrimSpace(p.CodexTerminalCommand)
 }
 
 func browserHomeURL(p Preferences) string {
@@ -173,6 +181,7 @@ func settingsView(c cage.Config, p Preferences) Settings {
 	}
 	p.BrowserHomeURL = browserHomeURL(p)
 	p.ClaudeTerminalCommand = claudeTerminalCommand(p)
+	p.CodexTerminalCommand = codexTerminalCommand(p)
 	return Settings{Preferences: p, DNSURL: c.DNSURL, Timezone: c.Timezone, Locale: c.Locale, BrowserLanguage: c.BrowserLanguage, ExitPolicy: c.ExitPolicy.Normalized()}
 }
 func proposedSettings(input Settings, old cage.Config, profile string) (cage.Config, Preferences, error) {
@@ -195,6 +204,10 @@ func proposedSettings(input Settings, old cage.Config, profile string) (cage.Con
 		return c, p, errors.New("Claude 终端命令必须为一行，且不超过 4096 字节")
 	}
 	p.ClaudeTerminalCommand = claudeTerminalCommand(p)
+	if len(p.CodexTerminalCommand) > 4096 || strings.ContainsAny(p.CodexTerminalCommand, "\x00\r\n") {
+		return c, p, errors.New("Codex 终端命令必须为一行，且不超过 4096 字节")
+	}
+	p.CodexTerminalCommand = codexTerminalCommand(p)
 	p.BrowserHomeURL = strings.TrimSpace(browserHomeURL(p))
 	home, e := url.Parse(p.BrowserHomeURL)
 	if e != nil || home == nil || (home.Scheme != "https" && home.Scheme != "http") || home.Hostname() == "" || home.User != nil {

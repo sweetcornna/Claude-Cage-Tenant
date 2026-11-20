@@ -25,6 +25,7 @@ type terminalRequest struct {
 	Workspace       string `json:"workspace"`
 	Kind            string `json:"kind"`
 	ClaudeAccountID string `json:"claude_account_id"`
+	CodexAccountID  string `json:"codex_account_id"`
 	sharedID        string
 	requestContext  context.Context
 }
@@ -45,6 +46,16 @@ func (m *terminalManager) startSession(cmd *exec.Cmd, workspace, kind string, se
 }
 
 func (m *terminalManager) startSessionWithPTY(cmd *exec.Cmd, workspace, kind string, selection claudeSelection, finished func(), start func() (terminalPTY, error)) (*terminalSession, error) {
+	return m.startSessionWith(cmd, workspace, kind, selection, codexSelection{}, finished, start)
+}
+
+func (m *terminalManager) startCodexSession(cmd *exec.Cmd, workspace, kind string, selection codexSelection, finished func()) (*terminalSession, error) {
+	return m.startSessionWith(cmd, workspace, kind, claudeSelection{}, selection, finished, func() (terminalPTY, error) { return startTerminal(cmd, 100, 30) })
+}
+
+// Account bindings are published together with the session, so a concurrent
+// allocation always counts a terminal that is already running.
+func (m *terminalManager) startSessionWith(cmd *exec.Cmd, workspace, kind string, selection claudeSelection, codex codexSelection, finished func(), start func() (terminalPTY, error)) (*terminalSession, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.admissionErrorLocked(); err != nil {
@@ -60,6 +71,10 @@ func (m *terminalManager) startSessionWithPTY(cmd *exec.Cmd, workspace, kind str
 		title = fmt.Sprintf("Claude %d", m.sequence)
 	} else if kind == "claude-login" {
 		title = "Claude 账号登录"
+	} else if kind == "codex" {
+		title = fmt.Sprintf("Codex %d", m.sequence)
+	} else if kind == "codex-login" {
+		title = "Codex 账号登录"
 	}
 	session := newTerminalSession(file)
 	session.id, session.title, session.workspace, session.cmd = randomToken()[:16], title, workspace, cmd
@@ -71,6 +86,9 @@ func (m *terminalManager) startSessionWithPTY(cmd *exec.Cmd, workspace, kind str
 		session.claudeAccountSource = "default"
 	} else if selection.ID != "" {
 		session.claudeAccountSource = "managed"
+	}
+	if codex.ID != "" {
+		session.codexAccountID, session.codexAccountSource = codex.ID, "managed"
 	}
 	if m.sessions == nil {
 		m.sessions = make(map[string]*terminalSession)
@@ -178,6 +196,29 @@ func (m *terminalManager) existingClaudeLogin(id string, login bool) (*terminalS
 	return nil, nil
 }
 
+// A Codex account directory serves many terminals or a single device login.
+func (m *terminalManager) existingCodexLogin(id string, login bool) (*terminalSession, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, session := range m.sessions {
+		if session.codexAccountID != id {
+			continue
+		}
+		select {
+		case <-session.done:
+			continue
+		default:
+		}
+		if session.kind == "codex-login" && login {
+			return session, nil
+		}
+		if login || session.kind == "codex-login" {
+			return nil, errors.New("请先结束此 Codex 账号的登录或运行中的终端，再更改登录身份")
+		}
+	}
+	return nil, nil
+}
+
 func (m *terminalManager) remove(id string) {
 	m.mu.Lock()
 	session := m.sessions[id]
@@ -225,6 +266,12 @@ func (s *Server) createTerminal(input terminalRequest) (*terminalSession, error)
 
 // Caller holds the environment operation lock through PTY publication.
 func (s *Server) createTerminalLocked(input terminalRequest) (*terminalSession, error) {
+	if input.Kind == "codex" || input.Kind == "codex-login" {
+		return s.createCodexTerminalLocked(input)
+	}
+	if input.CodexAccountID != "" {
+		return nil, errors.New("只有 Codex 终端可以指定 Codex 账号")
+	}
 	if s.windowsGuest != nil {
 		return s.createWindowsTerminal(input)
 	}
