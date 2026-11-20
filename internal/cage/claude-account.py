@@ -548,6 +548,22 @@ def shared_memory_path(memory):
     return _runtime["path"](memory)
 
 
+SHARED_ENV_PREFIXES = ("CLAUDE_CODE_", "DISABLE_", "ENABLE_", "MAX_", "BASH_", "MCP_")
+PRIVATE_ENV_PREFIXES = ("CLAUDE_CODE_USE_", "CLAUDE_CODE_SKIP_", "CLAUDE_CODE_CLIENT_", "CLAUDE_CODE_OAUTH", "CLAUDE_CODE_API_")
+PRIVATE_ENV_WORDS = {"KEY", "TOKEN", "SECRET", "PASSWORD", "AUTH", "OAUTH", "CREDENTIAL", "CREDENTIALS", "COOKIE",
+                     "PROXY", "URL", "HOST", "ENDPOINT", "REGION", "PROJECT", "PROFILE", "ACCOUNT", "ORG",
+                     "HELPER", "CERT", "CERTS", "CA"}
+
+
+def shared_env_variable(name):
+    """A shared env variable may toggle CLI behavior but never routing or login."""
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]*", name):
+        return False
+    if not name.startswith(SHARED_ENV_PREFIXES) or name.startswith(PRIVATE_ENV_PREFIXES):
+        return False
+    return not PRIVATE_ENV_WORDS.intersection(name.split("_"))
+
+
 def shared_launch_arguments_locked(base, args, settings_fd):
     directory = Path.cwd().resolve()
     try:
@@ -591,8 +607,9 @@ def shared_launch_arguments_locked(base, args, settings_fd):
         else:
             own_memory.symlink_to(memory, target_is_directory=True)
     settings = {"autoMemoryDirectory": shared_memory_path(memory)}
-    # Only local behavior is shared. Never copy env, apiKeyHelper, login/org
-    # constraints, OAuth metadata, or account-synced remote configuration.
+    # Only local behavior is shared. Never copy apiKeyHelper, login/org
+    # constraints, OAuth metadata, account-synced remote configuration, or an
+    # env variable that could select a provider or carry a credential.
     common_settings = json_file(Path.home() / ".claude/settings.json")
     shared_keys = {"model", "permissions", "hooks", "statusLine", "attribution", "language",
                    "effortLevel", "alwaysThinkingEnabled", "includeCoAuthoredBy", "respectGitignore",
@@ -600,6 +617,12 @@ def shared_launch_arguments_locked(base, args, settings_fd):
                    "theme", "skipDangerousModePermissionPrompt", "tui", "autoMemoryEnabled"}
     if isinstance(common_settings, dict):
         settings.update({key: value for key, value in common_settings.items() if key in shared_keys})
+        # Feature flags such as Code Mode are switched on through env.
+        if isinstance(common_settings.get("env"), dict):
+            shared_env = {name: value for name, value in common_settings["env"].items()
+                          if isinstance(value, str) and shared_env_variable(name)}
+            if shared_env:
+                settings["env"] = shared_env
     # Respect an explicit memory location in existing user/project settings.
     paths = [Path.home() / ".claude/settings.json", config_directory(base) / "settings.json"]
     for parent in reversed((Path.cwd(), *Path.cwd().parents)):
@@ -611,6 +634,11 @@ def shared_launch_arguments_locked(base, args, settings_fd):
             # values. A shared default must not turn into a command-line override.
             for key in shared_keys & stored.keys():
                 settings.pop(key, None)
+            if isinstance(stored.get("env"), dict) and isinstance(settings.get("env"), dict):
+                for name in stored["env"]:
+                    settings["env"].pop(name, None)
+                if not settings["env"]:
+                    settings.pop("env")
         if isinstance(stored, dict) and "autoMemoryDirectory" in stored:
             settings["autoMemoryDirectory"] = stored["autoMemoryDirectory"]
     result, iterator = [], iter(args)
@@ -621,6 +649,9 @@ def shared_launch_arguments_locked(base, args, settings_fd):
         if arg == "--settings" or arg.startswith("--settings="):
             value = next(iterator) if arg == "--settings" else arg.split("=", 1)[1]
             supplied = json.loads(value) if value.lstrip().startswith("{") else json.loads(Path(value).read_text())
+            if isinstance(supplied, dict) and isinstance(supplied.get("env"), dict) and isinstance(settings.get("env"), dict):
+                # Explicit launch settings win variable by variable.
+                supplied = {**supplied, "env": {**settings["env"], **supplied["env"]}}
             settings.update(supplied)
         else:
             result.append(arg)

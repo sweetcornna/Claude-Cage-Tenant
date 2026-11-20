@@ -17,6 +17,7 @@ import { api, writeClipboard, nativeAvailable } from "./api";
 import { runtimeSocketURL } from "./client-context.mjs";
 import { readClipboardContent, transferFiles, hasFiles, imagePayload, prepareClipboardPaste, sendImage } from "./image-transfer";
 import { terminalClipboardText } from "./terminal-clipboard.mjs";
+import { terminalKeepaliveMessage, terminalKeepaliveMs, terminalReconnectPlan } from "./terminal-reconnect.mjs";
 import { sendFiles, shellFilePaths } from "./file-transfer";
 import { installRemoteInput } from "./remote-input";
 import { useWindowVisibility } from "./window-visibility";
@@ -313,6 +314,11 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
     [attempt, setAttempt] = useState(0),
     [preparing, setPreparing] = useState(Boolean(session.cli_session_id && !session.closed));
   const revealStartup = useRef();
+  // Consecutive quick reconnect failures; survives each new connection attempt.
+  const reconnectFailures = useRef(0);
+  const [stalled, setStalled] = useState(false);
+  const closedRef = useRef(session.closed);
+  closedRef.current = session.closed;
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const focusedRef = useRef(focused);
@@ -398,8 +404,15 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
           );
       } catch {}
     };
+    let openedAt = 0, reconnectTimer = null, keepalive = null, awaitVisible = null;
     ws.onopen = () => {
+      openedAt = Date.now();
       setConnected(true);
+      setStalled(false);
+      // Keep the stream from looking idle to proxies while someone can see it.
+      keepalive = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN && document.visibilityState === "visible") ws.send(terminalKeepaliveMessage);
+      }, terminalKeepaliveMs);
       resize();
       if (startupVisible && visibleRef.current && focusedRef.current) terminal.focus();
     };
@@ -431,7 +444,30 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
         terminal.write(new Uint8Array(event.data), () => { replayingHistory = false; });
       } else terminal.write(new Uint8Array(event.data));
     };
-    ws.onclose = () => { setConnected(false); reveal(); };
+    ws.onclose = () => {
+      clearInterval(keepalive);
+      setConnected(false);
+      reveal();
+      if (disposed || closedRef.current) return;
+      const plan = terminalReconnectPlan(reconnectFailures.current, openedAt ? Date.now() - openedAt : 0);
+      reconnectFailures.current = plan.failures;
+      if (!plan.delay) {
+        setStalled(true);
+        return;
+      }
+      const retry = () => { if (!disposed && !closedRef.current) setAttempt((v) => v + 1); };
+      // A hidden page reconnects when it is shown again rather than in the background.
+      if (document.visibilityState === "visible") reconnectTimer = setTimeout(retry, plan.delay);
+      else {
+        awaitVisible = () => {
+          if (document.visibilityState !== "visible") return;
+          document.removeEventListener("visibilitychange", awaitVisible);
+          awaitVisible = null;
+          retry();
+        };
+        document.addEventListener("visibilitychange", awaitVisible);
+      }
+    };
     const send = (data) => {
       if (disposed || ws.readyState !== WebSocket.OPEN) throw new Error("终端已断开，请重新连接后重试");
       ws.send(JSON.stringify({ type: "input", data }));
@@ -583,6 +619,9 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
     return () => {
       disposed = true;
       clearTimeout(startupTimer);
+      clearTimeout(reconnectTimer);
+      clearInterval(keepalive);
+      if (awaitVisible) document.removeEventListener("visibilitychange", awaitVisible);
       revealStartup.current = null;
       startupRender.dispose();
       clipboardHandler.dispose();
@@ -630,9 +669,9 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
         <div className="terminal-note">
           {session.closed
             ? "终端会话已结束。可点击项目右侧的终端图标新建终端。"
-            : "正在连接终端…"}
+            : stalled ? "终端连接已断开。" : "正在连接终端…"}
           {!session.closed && (
-            <button onClick={() => setAttempt((v) => v + 1)}>
+            <button onClick={() => { reconnectFailures.current = 0; setStalled(false); setAttempt((v) => v + 1); }}>
               <RefreshCw size={13} />
               重新连接
             </button>
