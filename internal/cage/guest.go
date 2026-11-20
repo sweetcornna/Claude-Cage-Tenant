@@ -38,6 +38,9 @@ var claudeAccountHelper string
 //go:embed client_runtime.py
 var ClientRuntimeHelper string
 
+//go:embed codex-account.py
+var codexAccountHelper string
+
 func clientRuntimeScript() string {
 	return "sudo tee /usr/local/bin/client_runtime.py >/dev/null <<'CLIENT_RUNTIME'\n" + ClientRuntimeHelper + "\nCLIENT_RUNTIME\nsudo chmod 0644 /usr/local/bin/client_runtime.py\n"
 }
@@ -51,6 +54,20 @@ sudo tee /usr/local/lib/cage-claude-bin/claude >/dev/null <<'CAGE_CLAUDE_SHIM'
 exec /usr/local/bin/cage-claude-account run "$CAGE_CLAUDE_ACCOUNT_ID" "$@"
 CAGE_CLAUDE_SHIM
 sudo chmod 0755 /usr/local/lib/cage-claude-bin/claude
+`
+}
+
+// The Codex helper reuses client_runtime.py installed by claudeAccountScript.
+// Its shim scopes codex invocations in a Codex terminal to the selected
+// account's private CODEX_HOME.
+func codexAccountScript() string {
+	return "sudo tee /usr/local/bin/cage-codex-account >/dev/null <<'CAGE_CODEX_ACCOUNT'\n" + codexAccountHelper + "\nCAGE_CODEX_ACCOUNT\nsudo chmod 0755 /usr/local/bin/cage-codex-account\n" +
+		`sudo install -d -m 0755 /usr/local/lib/cage-codex-bin
+sudo tee /usr/local/lib/cage-codex-bin/codex >/dev/null <<'CAGE_CODEX_SHIM'
+#!/bin/sh
+exec /usr/local/bin/cage-codex-account run "$CAGE_CODEX_ACCOUNT_ID" "$@"
+CAGE_CODEX_SHIM
+sudo chmod 0755 /usr/local/lib/cage-codex-bin/codex
 `
 }
 
@@ -323,7 +340,7 @@ func (c Config) StartScript() string {
 func (c Config) SetupScript() string { return c.GuestProfile.Linux(GuestSetup) }
 
 func componentStartScript() string {
-	return APTBootstrapScript + "\n" + claudeAccountScript() + browserServices() + "\nsudo tee /etc/claude-cage/editor-theme.json >/dev/null <<'CAGE_EDITOR_THEME'\n" + editorTheme + "\nCAGE_EDITOR_THEME\nif systemctl is-active --quiet cage-editor.service; then sudo systemctl stop cage-editor.service; fi\n" + guestStart
+	return APTBootstrapScript + "\n" + claudeAccountScript() + codexAccountScript() + browserServices() + "\nsudo tee /etc/claude-cage/editor-theme.json >/dev/null <<'CAGE_EDITOR_THEME'\n" + editorTheme + "\nCAGE_EDITOR_THEME\nif systemctl is-active --quiet cage-editor.service; then sudo systemctl stop cage-editor.service; fi\n" + guestStart
 }
 
 func markGuestStart(body string) string {
