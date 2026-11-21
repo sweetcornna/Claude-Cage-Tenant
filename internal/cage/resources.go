@@ -221,8 +221,9 @@ type memoryPolicy struct {
 	maximum, target uint64
 	idleSince       time.Time
 	failures        int
-	// resident is what the guest held at the last good sample.
-	resident uint64
+	// resident is what the guest held at the last good sample, short what
+	// the outer level was last told the machine lacks.
+	resident, short uint64
 }
 
 func gb(size uint64) string {

@@ -117,21 +117,34 @@ func (p *memoryPolicy) machineCapacity(s ResourceSample, known bool, m MachineMe
 }
 
 // plan is the target rule. It grows at once when the guest needs memory,
-// within what the machine can back (the demand itself is always granted up
-// to the maximum: a guest OOM is worse than machine reclaim); follows the
-// machine down when it shrinks, taking only memory above the demand; returns
-// idle memory after sustained headroom; and holds on a failed sample, growing
-// one step per further failure while the machine has room.
+// within what the machine can back, and tells the outer level what the
+// machine lacks (shortBytes); follows the machine down when it shrinks,
+// never below the guest's working set; returns idle memory after sustained
+// headroom; and holds on a failed sample, growing one step per further
+// failure while the machine has room.
 func (p *memoryPolicy) plan(in guestInput) guestPlan {
 	if !in.ok {
 		p.idleSince = time.Time{}
 		p.failures++
 		capacity := p.machineCapacity(ResourceSample{}, false, in.machine)
-		result := guestPlan{target: p.target, wanted: p.target, capacity: capacity, reason: "sample_failed_hold"}
-		if p.failures > guestFailureHold && !in.machine.Pressure && p.target < capacity {
-			result.target = min(capacity, roundUpUnit(p.target+guestFailureStep))
-			result.wanted, result.reason = result.target, "sample_failed_grow"
+		// Hold everything, including what the outer level was told the
+		// machine is short of: a failed sample is no evidence that it ended.
+		result := guestPlan{target: p.target, wanted: p.target, capacity: capacity, shortBytes: p.short, reason: "sample_failed_hold"}
+		if p.failures > guestFailureHold && p.target < p.maximum {
+			// A guest that stops answering may be out of memory: one step more
+			// per failure, within what the machine backs, and the outer level
+			// is asked for the step the machine lacks (the gateway's own rule
+			// for a guest that does not answer).
+			want := min(p.maximum, roundUpUnit(p.target+guestFailureStep))
+			if !in.machine.Pressure && p.target < capacity {
+				result.target, result.reason = min(capacity, want), "sample_failed_grow"
+			}
+			result.wanted = want
+			if want > capacity {
+				result.shortBytes = max(p.short, want-capacity)
+			}
 		}
+		p.short = result.shortBytes
 		return result
 	}
 	p.failures = 0
@@ -143,7 +156,18 @@ func (p *memoryPolicy) plan(in guestInput) guestPlan {
 	demand := p.guestDemand(s, in.swapIn)
 	pressure, severe := guestPressure(s)
 	capacity := p.machineCapacity(s, true, in.machine)
+	// Growth stays within what the machine can back. Where the machine's
+	// available memory is measured (Linux), never beyond it, even for a guest
+	// about to run out: the machine's OOM killer would take QEMU, the whole
+	// guest, while the guest's own OOM order takes one browser process. The
+	// shortfall goes to the outer level instead (shortBytes). Where it is not
+	// measured (macOS, Windows), capacity is only an estimate, and a guest in
+	// trouble gets its demand as before.
+	backed := min(p.maximum, max(capacity, p.target))
 	ceiling := min(p.maximum, max(capacity, demand))
+	if in.machine.Measured {
+		ceiling = backed
+	}
 	result := guestPlan{target: p.target, wanted: p.target, capacity: capacity, demand: demand, pressure: pressure, severe: severe, reason: "steady"}
 	if pressure || demand > p.target {
 		p.idleSince = time.Time{}
@@ -151,38 +175,51 @@ func (p *memoryPolicy) plan(in guestInput) guestPlan {
 		case in.machine.Pressure && pressure:
 			// The machine is short as well: a guest under pressure gets what
 			// keeps it out of that pressure, never the whole budget.
-			result.target, result.wanted, result.reason = max(p.target, demand), max(p.target, demand), "machine_short_guest_short"
+			result.target, result.wanted, result.reason = max(p.target, min(demand, ceiling)), max(p.target, demand), "machine_short_guest_short"
 		case in.machine.Pressure:
 			result.wanted, result.reason = demand, "machine_short_waiting"
 		case severe:
 			// Only an imminent out-of-memory condition justifies the whole
-			// budget at once.
-			result.target, result.wanted, result.reason = max(p.target, ceiling), p.maximum, "guest_severe"
+			// budget at once (where the machine's memory is not measured).
+			grown := roundUpUnit(p.target + max(2*gib, p.target/2))
+			result.target, result.wanted, result.reason = max(p.target, ceiling), min(p.maximum, max(demand, grown)), "guest_severe"
 		case pressure:
 			// Grow geometrically instead of jumping to the maximum: a short
 			// burst stops at a modest target, a sustained one still reaches the
 			// maximum within a few two-second probes.
 			grown := roundUpUnit(p.target + max(2*gib, p.target/2))
-			result.target = max(p.target, min(ceiling, max(demand, grown)))
+			result.target = max(p.target, min(backed, max(demand, grown)))
 			result.wanted, result.reason = min(p.maximum, max(demand, grown)), "guest_pressure"
 		default:
-			result.target, result.wanted, result.reason = demand, demand, "guest_needs"
+			result.target, result.wanted, result.reason = max(p.target, min(demand, backed)), demand, "guest_needs"
 		}
 		if result.wanted > capacity {
 			result.shortBytes = result.wanted - capacity
 		}
-		result.short = pressure && result.target >= min(p.maximum, max(capacity, demand)) && (result.target >= p.maximum || capacity < p.maximum)
+		result.short = pressure && result.target >= backed && (result.target >= p.maximum || capacity < p.maximum)
+		p.short = result.shortBytes
 		return result
 	}
 	if p.target > capacity {
 		// The machine got smaller (the gateway shrank it, or its own use
-		// grew): give back what the guest does not need, at once, before the
-		// machine swaps. Never below the demand.
+		// grew): give back what the machine cannot back, at once, before it
+		// swaps. Where the machine is measured, down to the guest's working
+		// set plus a cushion, never below it, telling the outer level the
+		// rest of the demand; elsewhere down to the demand.
 		p.idleSince = time.Time{}
-		result.target, result.wanted, result.reason = max(demand, capacity), max(demand, capacity), "machine_smaller"
+		floor := demand
+		if in.machine.Measured {
+			floor = min(demand, max(min(2*gib, p.maximum), roundUpUnit(s.Total-min(s.Total, s.Available)+guestUnit)))
+		}
+		result.target, result.wanted, result.reason = min(p.target, max(floor, capacity)), demand, "machine_smaller"
+		if demand > capacity {
+			result.shortBytes = demand - capacity
+		}
+		p.short = result.shortBytes
 		return result
 	}
 	result.wanted = demand
+	p.short = 0
 	if demand+512*mib > p.target {
 		p.idleSince = time.Time{}
 		return result
@@ -300,4 +337,40 @@ func parseGovernor(lines []string, uptime float64) map[string]GuestClass {
 		return nil
 	}
 	return classes
+}
+
+// GuestPolicy is the balloon target rule of one guest, for simulations and
+// tools outside the host agent.
+type GuestPolicy struct{ policy memoryPolicy }
+
+// GuestDecision is one GuestPolicy decision.
+type GuestDecision struct {
+	Target, Wanted, Capacity, Demand, ShortBytes uint64
+	Pressure, Short                              bool
+	Reason                                       string
+}
+
+// NewGuestPolicy starts a guest at its boot maximum, as the host agent does.
+func NewGuestPolicy(maximum uint64) *GuestPolicy {
+	return &GuestPolicy{policy: memoryPolicy{maximum: maximum, target: maximum}}
+}
+
+// Decide plans one sample; a nil sample is a failed one. The policy assumes
+// the target is applied: call Applied with what the balloon accepted.
+func (g *GuestPolicy) Decide(now time.Time, sample *ResourceSample, swapIn, quiet bool, machine MachineMemory) GuestDecision {
+	in := guestInput{now: now, swapIn: swapIn, quiet: quiet, machine: machine}
+	if sample != nil {
+		in.sample, in.ok = *sample, true
+	}
+	plan := g.policy.plan(in)
+	return GuestDecision{Target: plan.target, Wanted: plan.wanted, Capacity: plan.capacity, Demand: plan.demand, ShortBytes: plan.shortBytes,
+		Pressure: plan.pressure, Short: plan.short, Reason: plan.reason}
+}
+
+// Applied records the target the balloon now has.
+func (g *GuestPolicy) Applied(target uint64) { g.policy.target = target }
+
+// PlanGuestClasses is planGuestClasses for simulations and tools.
+func PlanGuestClasses(size uint64, classes map[string]GuestClass) ClassLimits {
+	return planGuestClasses(size, classes)
 }

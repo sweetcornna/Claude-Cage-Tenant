@@ -27,7 +27,7 @@ func TestGuestPlanFollowsTheMachine(t *testing.T) {
 	}
 	// Under pressure it grows into what the machine can back, not beyond.
 	plan = p.plan(guestInput{now: now, ok: true, sample: guestSample(3*gib, 2900*mib, 64*mib), machine: linuxMachine(8*gib, 3*gib)})
-	if plan.reason != "guest_severe" || plan.target != plan.capacity || plan.capacity >= 6*gib || plan.shortBytes == 0 {
+	if plan.reason != "guest_severe" || plan.target != plan.capacity || plan.capacity >= 6*gib || plan.shortBytes != 0 {
 		t.Fatalf("pressure within capacity %+v", plan)
 	}
 	// The gateway shrinks the machine: 400 MiB left. The guest gives back
@@ -40,15 +40,36 @@ func TestGuestPlanFollowsTheMachine(t *testing.T) {
 	if plan.reason != "machine_smaller" || plan.target != 4864*mib {
 		t.Fatalf("machine shrink plan %+v", plan)
 	}
+	// A machine that cannot back the demand: the guest goes down to what the
+	// machine backs, never below its working set plus a cushion (3.25 GiB),
+	// and the outer level is told what is missing.
 	plan = p.plan(guestInput{now: now, ok: true, sample: guestSample(5*gib, 3*gib, 1536*mib), machine: linuxMachine(6*gib, 0)})
-	if plan.reason != "machine_smaller" || plan.target != plan.demand || plan.demand != 4352*mib {
-		t.Fatalf("machine shrink stops at the demand %+v", plan)
+	if plan.reason != "machine_smaller" || plan.target != 3328*mib || plan.demand != 4352*mib || plan.shortBytes != plan.demand-plan.capacity {
+		t.Fatalf("machine shrink stops at the working set %+v", plan)
 	}
-	// A machine that cannot back even the demand: the demand is still kept.
+	plan = p.plan(guestInput{now: now, ok: true, sample: guestSample(5*gib, 3*gib, 4*gib), machine: linuxMachine(6*gib, 0)})
+	if plan.reason != "machine_smaller" || plan.target != 3328*mib || plan.capacity >= plan.target {
+		t.Fatalf("machine shrink below the working set %+v", plan)
+	}
+	// A machine that cannot back the demand: the guest keeps what it has,
+	// does not grow into the machine's swap, and the gateway is told.
 	p = memoryPolicy{maximum: 6 * gib, target: 4 * gib}
 	plan = p.plan(guestInput{now: now, ok: true, sample: guestSample(4*gib, 3*gib, 0), machine: linuxMachine(6*gib, 0)})
-	if plan.target < plan.demand || plan.target != 4*gib+256*mib && plan.target != plan.demand {
+	if plan.target != 4*gib || plan.shortBytes != plan.demand-plan.capacity || plan.reason != "guest_needs" {
 		t.Fatalf("starved machine plan %+v", plan)
+	}
+	// About to run out of memory on a measured machine: still no growth past
+	// what the machine backs (its OOM killer would take the whole guest);
+	// the shortfall is published for the outer level.
+	plan = p.plan(guestInput{now: now, ok: true, sample: guestSample(4*gib, 4*gib-100*mib, 0), machine: linuxMachine(6*gib, 0)})
+	if plan.reason != "guest_severe" || plan.target != 4*gib || plan.shortBytes == 0 || !plan.short {
+		t.Fatalf("severe on a starved machine %+v", plan)
+	}
+	// Where the machine's memory is not measured, a guest in trouble gets
+	// its demand.
+	plan = p.plan(guestInput{now: now, ok: true, sample: guestSample(4*gib, 4*gib-100*mib, 0), machine: MachineMemory{Total: 16 * gib, Boot: 16 * gib}})
+	if plan.reason != "guest_severe" || plan.target < plan.demand {
+		t.Fatalf("severe on an unmeasured machine %+v", plan)
 	}
 	// macOS or Windows under an early warning: growth stops at the old half
 	// share, and a guest above it returns its excess.
@@ -84,6 +105,12 @@ func TestGuestPlanHoldsOnFailedSamples(t *testing.T) {
 	p = memoryPolicy{maximum: 6 * gib, target: 3 * gib, failures: 5}
 	if plan := p.plan(guestInput{now: now, machine: MachineMemory{Pressure: true}}); plan.target != 3*gib || plan.reason != "sample_failed_hold" {
 		t.Fatalf("failed sample on a short machine %+v", plan)
+	}
+	// A guest that keeps failing on a machine without room asks the outer
+	// level for the step.
+	p = memoryPolicy{maximum: 6 * gib, target: 3 * gib, resident: 3 * gib, failures: 5}
+	if plan := p.plan(guestInput{now: now, machine: linuxMachine(4*gib, 0)}); plan.target != 3*gib || plan.shortBytes != 4*gib-(3*gib-256*mib) {
+		t.Fatalf("failed sample on a full machine %+v", plan)
 	}
 	// The first good sample resumes: nothing stays paused.
 	plan := p.plan(guestInput{now: now, ok: true, sample: guestSample(3*gib, gib, 0), machine: MachineMemory{}})
@@ -134,7 +161,7 @@ func TestGuestShortAdvice(t *testing.T) {
 	// when the machine cannot back it: then the gateway is told.
 	p = memoryPolicy{maximum: 6 * gib, target: 3 * gib}
 	plan = p.plan(guestInput{now: now, ok: true, sample: s, machine: linuxMachine(8*gib, 512*mib)})
-	if plan.shortBytes == 0 || plan.target < plan.demand {
+	if plan.shortBytes == 0 || plan.target != plan.capacity || plan.target >= plan.demand || !plan.short {
 		t.Fatalf("machine-limited plan %+v", plan)
 	}
 }
@@ -198,7 +225,7 @@ func TestGuestPlanProperties(t *testing.T) {
 		}
 		machine.Pressure = random.IntN(5) == 0
 		ok := random.IntN(6) != 0
-		before := p.target
+		before, before0short := p.target, p.short
 		plan := p.plan(guestInput{now: now.Add(time.Duration(random.IntN(60)) * time.Second), ok: ok, sample: s, machine: machine, quiet: random.IntN(2) == 0})
 		if plan.target > maximum || plan.target < min(2*gib, maximum) && plan.target < before {
 			t.Fatalf("target out of bounds %+v", plan)
@@ -207,10 +234,20 @@ func TestGuestPlanProperties(t *testing.T) {
 			t.Fatalf("failed sample shrank %+v", plan)
 		}
 		if ok && plan.target < before && plan.target < plan.demand {
-			t.Fatalf("shrank below the demand %+v", plan)
+			// Only to follow a measured machine down, never below the working
+			// set plus a cushion, and the rest is asked of the outer level.
+			if !machine.Measured || plan.target < min(plan.demand, max(2*gib, roundUpUnit(s.Total-s.Available+guestUnit))) || plan.shortBytes != plan.demand-plan.capacity {
+				t.Fatalf("shrank below the demand %+v", plan)
+			}
+		}
+		if !ok && plan.shortBytes < before0short {
+			t.Fatalf("a failed sample withdrew the outer request %+v", plan)
 		}
 		if plan.target > before && ok && !plan.pressure && plan.demand <= before {
 			t.Fatalf("grew without need %+v", plan)
+		}
+		if ok && machine.Measured && plan.target > before && plan.target > plan.capacity {
+			t.Fatalf("grew past what a measured machine backs %+v", plan)
 		}
 	}
 }
