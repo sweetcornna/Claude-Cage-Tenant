@@ -244,6 +244,30 @@ class DiscoveryTests(unittest.TestCase):
         server.stdin.close()
         self.assertEqual(server.wait(5), 0)
 
+    def test_codex_discover_runs_the_installed_codex_helper(self):
+        source = (here / "codex_sessions.py").read_bytes()
+        name = hashlib.sha256(source).hexdigest()
+        with patch.object(self.discovery, "codex_name", name), patch.object(self.discovery, "codex", None):
+            with self.assertRaises(self.discovery.Missing):
+                self.discovery.handle("codex-discover", {"accounts": ["default"], "workspaces": [self.project]})
+            folder = self.home / ".local/share/cage/codex-session-code"
+            folder.mkdir(parents=True)
+            (folder / (name + ".py")).write_bytes(source + b"# changed\n")
+            with self.assertRaises(self.discovery.Missing):
+                self.discovery.handle("codex-discover", {"accounts": ["default"], "workspaces": [self.project]})
+            (folder / (name + ".py")).write_bytes(source)
+            codex = load("plain_codex", here / "codex_sessions.py")
+            thread = str(uuid.uuid4())
+            rollout = self.home / ".codex/sessions/2026/11/21" / ("rollout-2026-11-21T00-00-00-" + thread + ".jsonl")
+            rollout.parent.mkdir(parents=True)
+            rollout.write_text(json.dumps({"type": "session_meta", "payload": {"id": thread, "cwd": self.project}}) + "\n" +
+                               json.dumps({"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "codex title"}]}}) + "\n")
+            request = {"accounts": ["default"], "workspaces": [self.project]}
+            expected = codex.discover(request)
+            self.assertEqual(self.discovery.handle("codex-discover", dict(request)), expected)
+            self.assertEqual([item["thread_id"] for item in expected], [thread])
+            self.assertEqual(self.discovery.handle("codex-discover", {"accounts": ["default"], "workspaces": [self.project], "bad": None}), expected)
+
     def test_refuses_to_start_without_the_intact_channel_helper(self):
         code = self.home / ".local/share/cage/cli-channel-code"
         code.mkdir(parents=True)

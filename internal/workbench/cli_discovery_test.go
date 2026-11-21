@@ -114,7 +114,17 @@ func TestDiscoveryRewritesOnlyChangedRecords(t *testing.T) {
 
 func sessionList(t *testing.T, s *Server, query string) (int, sessionListAnswer) {
 	t.Helper()
-	w := request(s, "GET", "/api/cli/sessions"+query, s.origin, "", true)
+	return listAt(t, s, "/api/cli/sessions"+query)
+}
+
+func phoneList(t *testing.T, s *Server, query string) (int, sessionListAnswer) {
+	t.Helper()
+	return listAt(t, s, "/api/mobile/cli/sessions"+query)
+}
+
+func listAt(t *testing.T, s *Server, path string) (int, sessionListAnswer) {
+	t.Helper()
+	w := request(s, "GET", path, s.origin, "", true)
 	var answer sessionListAnswer
 	if w.Code == http.StatusOK {
 		if err := json.Unmarshal(w.Body.Bytes(), &answer); err != nil {
@@ -650,5 +660,125 @@ func TestHeldRequestsEndWhenTheServerCloses(t *testing.T) {
 	}
 	if elapsed := time.Since(closed); elapsed > 2*time.Second {
 		t.Fatalf("held requests ended %v after the server closed", elapsed)
+	}
+}
+
+func TestPhoneSessionListUsesTheResidentHelperForCodex(t *testing.T) {
+	s, id, project := metadataFixture(t)
+	home, logins, _ := residentGuest(t, s)
+	record, err := s.mobileCLI.record(s.profile, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTranscript(t, filepath.Join(home, ".claude", "projects", "fixture", record.CLIID+".jsonl"), map[string]any{"cwd": guestPath(project), "type": "user", "uuid": uuid.NewString(), "message": map[string]string{"content": "guest title"}})
+	thread := uuid.NewString()
+	writeTranscript(t, filepath.Join(home, ".codex", "sessions", "2026", "11", "21", "rollout-2026-11-21T00-00-00-"+thread+".jsonl"),
+		map[string]any{"type": "session_meta", "payload": map[string]any{"id": thread, "cwd": guestPath(project)}},
+		map[string]any{"type": "response_item", "payload": map[string]any{"type": "message", "role": "user", "content": []map[string]string{{"type": "input_text", "text": "codex title"}}}})
+	s.ready = true
+	list := func(query string) (int, sessionListAnswer) {
+		t.Helper()
+		code, answer := phoneList(t, s, query)
+		if code == http.StatusOK && (len(answer.Sessions) != 2 || answer.Notice != "") {
+			t.Fatalf("phone list = %+v", answer)
+		}
+		return code, answer
+	}
+	// The first lists install both helpers and start the resident one.
+	for range 3 {
+		list("")
+	}
+	warm := logins()
+	started := time.Now()
+	for range 3 {
+		list("")
+	}
+	_, current := list("")
+	t.Logf("warm phone list: %v per request; %d logins to warm up", time.Since(started)/4, warm)
+	if logins() != warm {
+		t.Fatalf("warm phone lists opened %d logins", logins()-warm)
+	}
+	if code, _ := list("?after=" + current.Revision); code != http.StatusNoContent {
+		t.Fatalf("an unchanged phone list answered %d", code)
+	}
+	held := make(chan sessionListAnswer, 1)
+	go func() {
+		_, answer := phoneList(t, s, "?after="+current.Revision+"&wait=20")
+		held <- answer
+	}()
+	time.Sleep(300 * time.Millisecond)
+	if w := request(s, "POST", "/api/mobile/cli/sessions/"+id+"/metadata", s.origin, `{"pinned":true}`, true); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	select {
+	case answer := <-held:
+		if len(answer.Sessions) != 2 || !answer.Sessions[0].Pinned {
+			t.Fatalf("held phone list = %+v", answer)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a held phone list missed a pin")
+	}
+	if logins() != warm {
+		t.Fatalf("phone lists opened %d logins", logins()-warm)
+	}
+}
+
+func TestOnlyListDiscoveryReusesTheAgentListing(t *testing.T) {
+	s, id, project := metadataFixture(t)
+	home, logins, claudeRuns := residentGuest(t, s)
+	record, err := s.mobileCLI.record(s.profile, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTranscript(t, filepath.Join(home, ".claude", "projects", "fixture", record.CLIID+".jsonl"), map[string]any{"cwd": guestPath(project), "type": "user", "uuid": uuid.NewString(), "message": map[string]string{"content": "guest title"}})
+	s.ready = true
+	sessionList(t, s, "")
+	sessionList(t, s, "")
+	before, runs := logins(), claudeRuns()
+	// Project removal acts on the running state, so it observes afresh.
+	if err := s.discoverTerminalConversations(context.Background(), []string{project}); err != nil {
+		t.Fatal(err)
+	}
+	if logins() != before+1 || claudeRuns() != runs+1 {
+		t.Fatalf("a direct discovery reused the list's observation: %d logins, %d listings", logins()-before, claudeRuns()-runs)
+	}
+}
+
+func TestStalledResidentHelperLeavesTimeForTheChannelHelper(t *testing.T) {
+	previous := residentReadTimeout
+	residentReadTimeout = time.Second
+	t.Cleanup(func() { residentReadTimeout = previous })
+	s, id, project := metadataFixture(t)
+	home, _, _ := residentGuest(t, s)
+	record, err := s.mobileCLI.record(s.profile, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTranscript(t, filepath.Join(home, ".claude", "projects", "fixture", record.CLIID+".jsonl"), map[string]any{"cwd": guestPath(project), "type": "user", "uuid": uuid.NewString(), "message": map[string]string{"content": "guest title"}})
+	// The next CLI listing stalls once.
+	stall := "#!/bin/sh\n[ \"$1\" = agents ] || exit 64\nif [ -e \"$HOME/stall\" ]; then rm -f \"$HOME/stall\"; sleep 12; fi\nprintf '[]\\n'\n"
+	if err := os.WriteFile(filepath.Join(home, "bin", "claude"), []byte(stall), 0700); err != nil {
+		t.Fatal(err)
+	}
+	s.ready = true
+	sessionList(t, s, "")
+	sessionList(t, s, "")
+	if err := os.WriteFile(filepath.Join(home, "stall"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	// A new registered process makes the resident helper list again.
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "sessions"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", "sessions", "1.json"), []byte(`{"pid":1,"sessionId":"x"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	code, answer := sessionList(t, s, "")
+	if code != http.StatusOK || len(answer.Sessions) != 1 || answer.Notice != "" {
+		t.Fatalf("after a stalled resident helper: %d %+v", code, answer)
+	}
+	if elapsed := time.Since(started); elapsed > 8*time.Second {
+		t.Fatalf("the list took %v", elapsed)
 	}
 }

@@ -7,7 +7,8 @@ ends a waiting request, and each reply is "D <id> <exit> <stdout length>
 <stderr length>\n" + both. The channel helper's own discover() and view()
 produce every answer; this process only remembers what it already read.
 It serves read paths only: handoff, purge and launch need a fresh registry
-and stay with the channel helper.
+and stay with the channel helper. A list's Codex discovery runs the Codex
+helper's own discover() here as well.
 """
 import copy
 import hashlib
@@ -30,11 +31,16 @@ WAIT_LIMIT = 25.0
 # reading a request, and the workbench starts a successor through a new login
 # shell, so changes to the login environment apply.
 RETIRED = 4
+# The Codex helper is not installed yet; the workbench uses its own bootstrap.
+MISSING = 5
 OUTPUT_LIMIT = 1 << 20
 REQUEST_LIMIT = 1 << 20
 SUMMARY_LIMIT = 20000
 
 channel = None
+codex = None
+codex_name = ""
+codex_lock = threading.Lock()
 summaries = {}
 agents = {}
 agent_locks = {}
@@ -179,7 +185,43 @@ def waited(request, interval, check):
             return result
 
 
+class Missing(Exception):
+    pass
+
+
+def load_module(name, path, digest):
+    # Load only the exact file the workbench's own bootstrap installed.
+    try:
+        intact = re.fullmatch("[0-9a-f]{64}", digest or "") and hashlib.sha256(path.read_bytes()).hexdigest() == digest
+    except OSError:
+        intact = False
+    if not intact:
+        return None
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def codex_discover(request):
+    global codex
+    with codex_lock:
+        if codex is None:
+            codex = load_module("codex_sessions", Path.home() / ".local/share/cage/codex-session-code" / (codex_name + ".py"), codex_name)
+            if codex is None:
+                raise Missing()
+    # The same answers as the Codex helper's main() gives for "discover".
+    try:
+        return codex.discover(request)
+    except ValueError as error:
+        return {"error": str(error)}
+    except (OSError, KeyError, TypeError):
+        return {"error": "电脑未能处理 Codex 会话请求，请稍后重试。"}
+
+
 def handle(mode, request):
+    if mode == "codex-discover":
+        return codex_discover(request)
     if mode == "discover":
         sessions, hashed = discover(request)
         return {"hash": hashed, "sessions": sessions}
@@ -211,6 +253,8 @@ def serve(requests, replies, lifetime=600.0):
             output = json.dumps(handle(message["mode"], request), ensure_ascii=False).encode()
             if len(output) > OUTPUT_LIMIT:
                 code, output, error = 3, b"", b"output limit"
+        except Missing:
+            code, output, error = MISSING, b"", b""
         except Exception as failure:
             # The workbench answers this request with the channel helper.
             code, output, error = 1, b"", type(failure).__name__.encode()
@@ -248,21 +292,17 @@ def serve(requests, replies, lifetime=600.0):
 
 
 def main():
+    global codex_name
     os.umask(0o077)
-    arguments = sys.argv[1:4]
-    name, expected, lifetime = arguments + ["", "", "600"][len(arguments):]
-    path = Path.home() / ".local/share/cage/cli-channel-code" / (name + ".py")
-    # The workbench's ordinary bootstrap installs the channel helper. Load
-    # only that exact file; anything else answers through the helper itself.
-    try:
-        intact = re.fullmatch("[0-9a-f]{64}", name) and hashlib.sha256(path.read_bytes()).hexdigest() == expected
-    except OSError:
-        intact = False
-    if not intact:
+    arguments = sys.argv[1:5]
+    name, expected, lifetime, codex_name = arguments + ["", "", "600", ""][len(arguments):]
+    # The workbench's ordinary bootstrap installs the channel helper; without
+    # that exact file every request is answered by the helper itself.
+    module = None
+    if re.fullmatch("[0-9a-f]{64}", name):
+        module = load_module("cli_channel", Path.home() / ".local/share/cage/cli-channel-code" / (name + ".py"), expected)
+    if module is None:
         return 3
-    spec = importlib.util.spec_from_file_location("cli_channel", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
     install(module)
     serve(sys.stdin.buffer, sys.stdout.buffer, float(lifetime))
     return 0

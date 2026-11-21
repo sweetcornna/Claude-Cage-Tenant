@@ -241,7 +241,8 @@ func (s *Server) mobileProjects(w http.ResponseWriter, r *http.Request) {
 //
 //   - Every answer carries "revision", an opaque string that changes whenever
 //     anything else in the answer changes ("sessions" or "notice"). It is a
-//     content hash, so it stays valid across host restarts.
+//     content hash; after a host restart every session's "generation"
+//     changes, so the first answer is always a full list.
 //   - ?after=<revision> answers 204 No Content while the list still equals
 //     that revision, and 200 with the full list otherwise.
 //   - ?after=<revision>&wait=<1..25> holds the request for up to that many
@@ -258,6 +259,15 @@ func (s *Server) mobileProjects(w http.ResponseWriter, r *http.Request) {
 //     guest observation and the full list on every request.
 //
 // "archived=true" combines with both parameters.
+//
+// Freshness: host changes (create, archive, restore, purge, rename, pin) are
+// in every answer at once and reach a held request within 250 ms. Every new
+// request starts from a guest observation made after it arrived, so a held
+// answer is never older than its wait (at most 25 s); on Linux guests the
+// resident helper wakes it about 1 s after a guest change. The running flags
+// may reuse the guest's claude agents --json listing for up to 30 s when the
+// CLI's session registry shows no change. "updated_at" is part of the list,
+// so during a running turn a held list answers about once a second.
 func (s *Server) mobileSessions(w http.ResponseWriter, r *http.Request) {
 	paths, err := s.projectPaths()
 	if err != nil {
@@ -599,7 +609,12 @@ func (s *Server) authorizedMobileSessionRecord(w http.ResponseWriter, r *http.Re
 //     only to a server whose session list answers carry "revision", and the
 //     session list's pacing and fallback rules apply: at most one request
 //     per second, and on 400, 404 or an early 204 it keeps its 1 s / 4 s
-//     polling.
+//     polling. The 1 s floor stays because each read re-parses the whole
+//     transcript and each answer carries the whole session (up to 448 KiB
+//     of turns); while a reply streams, its state changes with every hook,
+//     so reads still arrive about once a second. What waiting adds is the
+//     first change after a quiet period within about 250 ms, and no polling
+//     while nothing happens.
 func (s *Server) mobileSessionView(w http.ResponseWriter, r *http.Request) {
 	view, ok := s.authorizedMobileSession(w, r)
 	if !ok {

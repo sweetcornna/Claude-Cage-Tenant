@@ -35,7 +35,16 @@ const residentRetry = time.Minute
 // residentReadTimeout bounds a discover or view on the resident helper,
 // including its start, so a stalled connection leaves the channel helper
 // most of the request's 15 s.
-const residentReadTimeout = 8 * time.Second
+var residentReadTimeout = 8 * time.Second
+
+// residentMissing is the resident helper's answer when the Codex helper it
+// would load is not installed yet; the per-request helper installs it.
+const residentMissing = 5
+
+// listDiscoveryKey marks the discoveries made for session lists. Only those
+// use the resident helper's reused claude agents --json listing; callers
+// that act on the running state (project removal) observe afresh.
+type listDiscoveryKey struct{}
 
 // residentLifetime bounds one resident helper. After it, the helper answers
 // residentRetired without reading the request, and a new one, started through
@@ -135,7 +144,7 @@ func (d *cliDiscovery) share(ctx context.Context, key string, arrival time.Time,
 // discoveryContext keeps the request's values but not its cancellation: the
 // run is shared, and the first caller leaving must not fail the others.
 func (s *Server) discoveryContext(parent context.Context) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), discoveryTimeout)
+	ctx, cancel := context.WithTimeout(context.WithValue(context.WithoutCancel(parent), listDiscoveryKey{}, true), discoveryTimeout)
 	stop := context.AfterFunc(s.lifetimeContext(), cancel)
 	return ctx, func() { stop(); cancel() }
 }
@@ -144,7 +153,9 @@ func (s *Server) discoveryContext(parent context.Context) (context.Context, cont
 // that the ordinary bootstrap installed, and only if that file is intact.
 func cliDiscoveryCommand() string {
 	bootstrap := fmt.Sprintf(`import base64,gzip;exec(compile(gzip.decompress(base64.b85decode("%s")),"cli_discovery.py","exec"))`, cliDiscoveryEncoded)
-	return shellescape.QuoteCommand([]string{"python3", "-I", "-u", "-c", bootstrap, cliChannelVersion, fmt.Sprintf("%x", sha256.Sum256([]byte(cliChannelInstalled))), fmt.Sprint(int(residentLifetime.Seconds()))})
+	// The Codex helper file is named by the digest of its content.
+	codex := fmt.Sprintf("%x", sha256.Sum256([]byte(codexSessionsHelper)))
+	return shellescape.QuoteCommand([]string{"python3", "-I", "-u", "-c", bootstrap, cliChannelVersion, fmt.Sprintf("%x", sha256.Sum256([]byte(cliChannelInstalled))), fmt.Sprint(int(residentLifetime.Seconds())), codex})
 }
 
 func (s *Server) cliDiscoveryProcess(ctx context.Context) *exec.Cmd {
@@ -198,6 +209,8 @@ func (s *Server) residentRequest(ctx context.Context, mode string, input any) (j
 			continue
 		case err == nil && reply.code == 0 && json.Valid(reply.stdout):
 			return reply.stdout, residentAnswered
+		case err == nil && reply.code == residentMissing:
+			return nil, residentUnavailable
 		case ctx.Err() != nil && errors.Is(err, context.Canceled):
 			return nil, residentLost // the caller left
 		case errors.Is(err, errGuestSessionEnded):
@@ -216,7 +229,7 @@ func (s *Server) residentRequest(ctx context.Context, mode string, input any) (j
 func (s *Server) residentCLIChannel(ctx context.Context, mode string, input any, output any) bool {
 	switch output := output.(type) {
 	case *[]terminalConversation:
-		if mode != "discover" {
+		if mode != "discover" || ctx.Value(listDiscoveryKey{}) == nil {
 			return false
 		}
 		ctx, cancel := context.WithTimeout(ctx, residentReadTimeout)
@@ -247,6 +260,24 @@ func (s *Server) residentCLIChannel(ctx context.Context, mode string, input any,
 		return true
 	}
 	return false
+}
+
+// residentCodexDiscover answers a list's Codex discovery from the resident
+// helper, which runs the Codex helper's own discover() in process. The
+// answer is the Codex helper's reply, including its {"error"} form.
+func (s *Server) residentCodexDiscover(ctx context.Context, input any, output any) bool {
+	raw, ok := output.(*json.RawMessage)
+	if !ok || ctx.Value(listDiscoveryKey{}) == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, residentReadTimeout)
+	defer cancel()
+	reply, outcome := s.residentRequest(ctx, "codex-discover", input)
+	if outcome != residentAnswered {
+		return false
+	}
+	*raw = append((*raw)[:0], reply...)
+	return true
 }
 
 // noteView keeps what the latest view of a session was read from; an empty
@@ -328,9 +359,13 @@ func (s *Server) watchGuestSessions(ctx context.Context) {
 		input, known := d.lastInput, d.lastHash
 		d.mu.Unlock()
 		epoch, unlocked := s.account.access()
+		s.mu.Lock()
+		ready := s.ready && !s.closing
+		s.mu.Unlock()
 		var reply json.RawMessage
 		outcome := residentUnavailable
-		if input != nil && unlocked {
+		// A stopped guest is not watched; held lists look at it every 5 s.
+		if input != nil && unlocked && ready {
 			request := make(map[string]any, len(input)+2)
 			for key, value := range input {
 				request[key] = value

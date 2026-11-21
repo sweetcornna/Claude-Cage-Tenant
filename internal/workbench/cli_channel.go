@@ -153,6 +153,9 @@ func guestLoginCommand(helper string) string {
 // login shell and decodes the helper's JSON reply. Startup banners cannot
 // reach the reply because the login shell's output goes to stderr.
 func (s *Server) runGuestHelper(ctx context.Context, started time.Time, source, mode, helper string, input any, output any) error {
+	if source == "codex-sessions" && mode == "discover" && s.residentCodexDiscover(ctx, input, output) {
+		return nil
+	}
 	data, err := json.Marshal(input)
 	if err != nil {
 		return err
