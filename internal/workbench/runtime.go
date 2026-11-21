@@ -155,7 +155,9 @@ func (s *Server) attach() error {
 		if err != nil {
 			return err
 		}
-		state, err := environment.State(ctx)
+		// A reused state could still show the mounts of a start in progress,
+		// and this decides whether to close the gate.
+		state, err := environment.FreshState(ctx)
 		if err != nil {
 			return err
 		}
@@ -446,7 +448,7 @@ func (s *Server) startEnvironment(syncTimezone bool) error {
 		if err != nil {
 			return err
 		}
-		state, err := environment.State(s.operationContext())
+		state, err := environment.FreshState(s.operationContext())
 		if err != nil {
 			return err
 		}
