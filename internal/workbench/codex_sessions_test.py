@@ -552,7 +552,12 @@ class CodexSessionTests(unittest.TestCase):
         squeezed, cold = self.rollout(self.turn_rows("compressed", "ok"))
         cold.rename(cold.with_name(cold.name + ".zst"))
         result = sessions.view({"thread": squeezed, "account": "default"})
-        self.assertEqual((result["connection_notice"], result["can_send"]), (sessions.COMPRESSED_NOTICE, False))
+        self.assertEqual((result["connection_notice"], result["can_send"], result["history_compressed"]), (sessions.COMPRESSED_NOTICE, False, True))
+        # The desktop TUI can still resume what this helper cannot read.
+        process = self.launch(str(uuid.uuid4()), thread=squeezed)
+        tui = [row for row in self.calls_of("tui") if row["pid"] == process.pid][0]
+        self.assertEqual(tui["argv"][-1], squeezed)
+        self.assertFalse(sessions.view({"thread": thread, "account": "default"})["history_compressed"])
 
 
 if __name__ == "__main__":

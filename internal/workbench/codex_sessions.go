@@ -77,6 +77,9 @@ type codexConversation struct {
 	Owner string        `json:"owner"`
 	Lease string        `json:"lease"`
 	CLI   *codexCLICaps `json:"cli,omitempty"`
+	// HistoryCompressed: the thread's history is stored compressed, which the
+	// helper cannot read but the Codex TUI resumes.
+	HistoryCompressed bool `json:"history_compressed"`
 }
 
 // codexCLICaps is what the guest's Codex CLI supports, from its own help.

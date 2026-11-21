@@ -287,7 +287,7 @@ func (s *Server) checkCodexOpen(ctx context.Context, record *mobileRecord, root 
 	if thread != "" && current.CLI != nil && current.CLI.Complete && !current.CLI.Resume {
 		return "", errors.New("电脑上的 Codex 版本不支持继续会话，请更新 Codex 后重试。")
 	}
-	if thread != "" && len(current.Turns) == 0 && current.ConnectionNotice != "" && !current.CanSend {
+	if thread != "" && len(current.Turns) == 0 && current.ConnectionNotice != "" && !current.CanSend && !current.HistoryCompressed {
 		return "", errors.New(current.ConnectionNotice)
 	}
 	return thread, nil

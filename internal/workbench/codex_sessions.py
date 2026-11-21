@@ -363,10 +363,17 @@ def find_rollout(home, thread):
     return max(paths, key=lambda path: path.stat().st_mtime, default=None)
 
 
-def compressed_rollout(home, thread):
+def compressed_path(home, thread):
+    """The newest compressed rollout of a thread, which this helper cannot read
+    but the Codex TUI can resume."""
     folder = home / "sessions"
-    return any(COMPRESSED.fullmatch(path.name) for pattern in ("rollout-*-" + thread + ".jsonl.zst", "rollout-*-" + thread + "_*.jsonl.zst")
-               for path in folder.glob("[0-9]*/[0-9]*/[0-9]*/" + pattern))
+    paths = [path for pattern in ("rollout-*-" + thread + ".jsonl.zst", "rollout-*-" + thread + "_*.jsonl.zst")
+             for path in folder.glob("[0-9]*/[0-9]*/[0-9]*/" + pattern) if COMPRESSED.fullmatch(path.name) and not path.is_symlink()]
+    return max(paths, key=lambda path: path.stat().st_mtime, default=None)
+
+
+def compressed_rollout(home, thread):
+    return compressed_path(home, thread) is not None
 
 
 def texts(content, kinds):
@@ -712,7 +719,8 @@ def view(request):
         leases = ([lease] if lease else []) + (desktop_leases(thread, account, path, all_states(connection)) if thread else [])
         desktop = bool(leases)
         groups = ({run["pid"]} if ours else set()) | {item["pgid"] for item in leases if item.get("pgid")}
-        tui = foreign(path, thread, users, groups) if path else set()
+        held = path or (compressed_path(home, thread) if thread else None)
+        tui = foreign(held, thread, users, groups) if held else set()
         tui = {pid for pid in tui if not any(lease_member(item, pid) for item in leases)}
         claimed = set()
         for sent in state.get("sent", []):
@@ -764,7 +772,7 @@ def view(request):
                   "updated_at": updated, "turns": turns, "running": owner != "", "active": bool(ours or (tui or desktop) and pending),
                   "can_send": readable and owner == "" and not (thread and path is None), "history_truncated": shortened,
                   "connection_notice": notice, "account_refused": not ours and run.get("exit_code") == ACCOUNT_REFUSED,
-                  "owner": owner, "lease": (lease or {}).get("id", "")}
+                  "owner": owner, "lease": (lease or {}).get("id", ""), "history_compressed": compressed}
     if request.get("probe"):
         result["cli"] = probe({})
     return result
@@ -1168,11 +1176,12 @@ def tui_launch(request):
         others = all_states(connection)
         if thread:
             path = find_rollout(home, thread)
-            if path is None:
+            packed = None if path else compressed_path(home, thread)
+            if path is None and packed is None:
                 raise ValueError("未找到这段 Codex 会话的历史，可能已在电脑上删除。")
             if desktop_leases(thread, account, path, others):
                 raise ValueError(OTHER_TERMINAL)
-            if foreign(path, thread, users, set()):
+            if foreign(path or packed, thread, users, set()):
                 raise ValueError(OTHER_PROCESS)
             if not caps.get("resume"):
                 raise ValueError("电脑上的 Codex 版本不支持继续会话，请更新 Codex 后重试。")

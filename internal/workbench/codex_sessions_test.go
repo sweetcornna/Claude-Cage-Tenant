@@ -644,6 +644,31 @@ func TestCodexDesktopOpenBindsATerminal(t *testing.T) {
 	}
 }
 
+// History the helper cannot show keeps the phone read-only but still opens on
+// the desktop, where Codex itself resumes it; missing history does not open.
+func TestCodexOpenResumesCompressedHistory(t *testing.T) {
+	s, project, guest := newCodexFixture(t)
+	t.Cleanup(s.terminals.close)
+	s.projectShares = map[string]*projectShare{project: {done: make(chan struct{})}}
+	row := listedCodexSession(t, s, guest, project, "压缩历史")
+	record, _ := s.mobileCLI.record(s.profile, row.ID)
+	cli := map[string]any{"installed": true, "complete": true, "version": "0.171.0", "resume": true, "resume_no_daemon": true}
+	guest.reply("view", map[string]any{"thread_id": record.CLIID, "account": "default", "workspace": guestPath(project), "turns": []any{}, "can_send": false, "owner": "",
+		"connection_notice": "未找到这段 Codex 会话的历史，可能已在电脑上删除。", "cli": cli})
+	path := "/api/cli/sessions/" + row.ID + "/open"
+	if w := request(s, "POST", path, s.origin, "{}", true); w.Code != 409 || !strings.Contains(w.Body.String(), "未找到") || len(s.terminals.snapshot()) != 0 {
+		t.Fatal("missing history", w.Code, w.Body.String())
+	}
+	guest.reply("view", map[string]any{"thread_id": record.CLIID, "account": "default", "workspace": guestPath(project), "turns": []any{}, "can_send": false, "owner": "",
+		"connection_notice": "这段会话的历史由较新的 Codex 压缩保存，暂时无法在这里显示，可在电脑终端中继续。", "history_compressed": true, "cli": cli})
+	if w := request(s, "POST", path, s.origin, "{}", true); w.Code != 200 {
+		t.Fatal("compressed history", w.Code, w.Body.String())
+	}
+	if launch := waitCodexCalls(t, guest, "tui-launch", 1)[0]; launch["thread"] != record.CLIID {
+		t.Fatal("launch", launch)
+	}
+}
+
 // The menu's Codex entry makes a session for a client that lists them.
 func TestCodexMenuTerminalBecomesASession(t *testing.T) {
 	s, project, guest := newCodexFixture(t)
