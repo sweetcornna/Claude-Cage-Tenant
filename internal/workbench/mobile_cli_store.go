@@ -50,8 +50,10 @@ type mobileSummary struct {
 	// CodexAccountID is the Codex account the session is pinned to; empty is
 	// the environment's own ~/.codex login.
 	CodexAccountID string `json:"codex_account_id,omitempty"`
-	// placeholder marks a Codex session that never reached a thread.
-	placeholder bool
+	// placeholder marks a Codex session that never reached a thread;
+	// menuPlaceholder one that the desktop's menu made (its Codex closed
+	// before it made a thread, so there is nothing to show on either device).
+	placeholder, menuPlaceholder bool
 }
 type mobileTurn struct {
 	Tools       []cliconversation.ToolActivity `json:"tools,omitempty"`
@@ -188,6 +190,7 @@ func (record *mobileRecord) summary() mobileSummary {
 	if record.codex() {
 		view.CodexAccountID = record.CodexAccount
 		view.placeholder = !record.Resume && len(record.Turns) == 0
+		view.menuPlaceholder = view.placeholder && record.Terminal
 	}
 	return view
 }

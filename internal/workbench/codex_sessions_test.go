@@ -496,8 +496,14 @@ func TestCodexDesktopListingIsOptIn(t *testing.T) {
 	if listed("?providers=claude,codex") {
 		t.Fatal("placeholder listed on the desktop")
 	}
-	if sessions, _ := codexSessions(t, s); !slices.ContainsFunc(sessions, func(row mobileSummary) bool { return row.ID == placeholder }) {
-		t.Fatal("the phone lost its new session")
+	// The phone hides it too, but keeps a new session of its own.
+	mine := uuid.NewString()
+	if _, err := s.mobileCLI.createProvider(s.profile, project, mine, codexProvider, nil); err != nil {
+		t.Fatal(err)
+	}
+	if sessions, _ := codexSessions(t, s); slices.ContainsFunc(sessions, func(row mobileSummary) bool { return row.ID == placeholder }) ||
+		!slices.ContainsFunc(sessions, func(row mobileSummary) bool { return row.ID == mine }) {
+		t.Fatal("phone placeholders", sessions)
 	}
 	terminal, err := s.terminals.startCodexSession(terminalChildCommand("echo"), project, "codex", codexSelection{}, nil)
 	if err != nil {
@@ -972,6 +978,21 @@ if args[:1] != ["exec"]:
     for line in sys.stdin:
         if line.strip() == "q":
             break
+        if held is None:
+            # A new thread's rollout appears with its first message.
+            thread = str(uuid.uuid4())
+            path = home / "sessions/2026/11/21" / ("rollout-2026-11-21T10-00-00-" + thread + ".jsonl")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            held = path.open("a")
+            held.write(json.dumps({"timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()), "type": "session_meta",
+                                   "payload": {"id": thread, "cwd": os.getcwd(), "source": "cli", "originator": "codex-tui"}}) + "\n")
+        for kind, payload in (("event_msg", {"type": "task_started"}),
+                              ("response_item", {"type": "message", "role": "user", "content": [{"type": "input_text", "text": line.strip()}]}),
+                              ("response_item", {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "tui: " + line.strip()}]}),
+                              ("event_msg", {"type": "task_complete"})):
+            held.write(json.dumps({"type": kind, "payload": payload}) + "\n")
+        held.flush()
+        print("answered " + line.strip(), flush=True)
     sys.exit(0)
 text = sys.stdin.read()
 if "resume" in args:
@@ -1108,6 +1129,96 @@ func TestCodexDesktopTerminalThroughShippedHelper(t *testing.T) {
 	view = wait("phone turn after the desktop", func(view mobileSession) bool { return len(view.Turns) == 2 && idle(view) })
 	if view.Turns[1].Text != "reply: after the desktop" {
 		t.Fatalf("turn %+v", view.Turns[1])
+	}
+}
+
+// A session made from the desktop menu through the shipped helper ends as one
+// row on both devices whatever its Codex did: a message seen while it ran, a
+// message only after it quit, or nothing at all.
+func TestCodexMenuSessionThroughShippedHelper(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		message, peek bool
+	}{{"message seen while open", true, true}, {"message then quit", true, false}, {"no message", false, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, project, _ := shippedCodexWorkbench(t)
+			body, _ := json.Marshal(map[string]string{"kind": "codex", "workspace": project})
+			w := request(s, "POST", "/api/terminals?providers=claude,codex", s.origin, string(body), true)
+			var created map[string]any
+			if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &created) != nil || created["cli_session_provider"] != codexProvider {
+				t.Fatal(w.Code, w.Body.String())
+			}
+			id := created["cli_session_id"].(string)
+			terminal := s.terminals.get(created["id"].(string))
+			screen := terminal.subscribe()
+			defer screen.Close()
+			readTerminalUntil(t, screen, "codex tui ready")
+			lists := func() (desktop, phone []mobileSummary) {
+				for _, path := range []string{"/api/cli/sessions?providers=claude,codex", "/api/mobile/cli/sessions"} {
+					w := request(s, "GET", path, "", "", true)
+					var answer struct {
+						Sessions []mobileSummary `json:"sessions"`
+					}
+					if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &answer) != nil {
+						t.Fatal(path, w.Code, w.Body.String())
+					}
+					rows := slices.DeleteFunc(answer.Sessions, func(row mobileSummary) bool { return row.Provider != codexProvider })
+					if desktop == nil {
+						desktop = rows
+					} else {
+						phone = rows
+					}
+				}
+				return desktop, phone
+			}
+			if tc.message {
+				if err := terminal.enqueueInput(context.Background(), "hello from the tui\r"); err != nil {
+					t.Fatal(err)
+				}
+				readTerminalUntil(t, screen, "answered hello from the tui")
+			}
+			if tc.peek {
+				desktop, phone := lists()
+				for _, rows := range [][]mobileSummary{desktop, phone} {
+					if len(rows) != 1 || rows[0].ID != id || rows[0].Owner != "desktop" {
+						t.Fatalf("while open: %+v", rows)
+					}
+				}
+			}
+			if err := terminal.enqueueInput(context.Background(), "q\r"); err != nil {
+				t.Fatal(err)
+			}
+			awaitTerminalSignal(t, terminal.done)
+			deadline := time.Now().Add(20 * time.Second)
+			for {
+				desktop, phone := lists()
+				want := 0
+				if tc.message {
+					want = 1
+				}
+				settled := len(desktop) == want && len(phone) == want
+				for _, rows := range [][]mobileSummary{desktop, phone} {
+					for _, row := range rows {
+						settled = settled && row.ID == id && row.Owner == ""
+					}
+				}
+				if settled {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("after quitting: desktop %+v phone %+v", desktop, phone)
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
+			if !tc.message {
+				return
+			}
+			w = request(s, "GET", "/api/mobile/cli/sessions/"+id, "", "", true)
+			var view mobileSession
+			if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &view) != nil || len(view.Turns) != 1 || view.Turns[0].Text != "tui: hello from the tui" || view.CanSend == nil || !*view.CanSend {
+				t.Fatalf("view %d %s", w.Code, w.Body.String())
+			}
+		})
 	}
 }
 

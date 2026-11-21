@@ -541,9 +541,9 @@ func (s *Server) sessionListAnswer(granted map[string]bool, archived bool, list 
 		if item.Provider != codexProvider {
 			return !list.claude
 		}
-		// A desktop session whose Codex closed before it made a thread has
-		// nothing to resume; the phone keeps its own new sessions.
-		return !list.codex || !list.phone && item.placeholder && item.Owner == ""
+		// A session whose Codex closed before it made a thread has nothing to
+		// resume: the desktop hides it, and the phone keeps only its own.
+		return !list.codex || item.placeholder && item.Owner == "" && (!list.phone || item.menuPlaceholder)
 	})
 	// Equal pins and times keep a fixed order, so equal lists hash equally.
 	sort.SliceStable(sessions, func(i, j int) bool {

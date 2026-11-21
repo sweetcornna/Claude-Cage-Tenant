@@ -515,6 +515,43 @@ class CodexSessionTests(unittest.TestCase):
         self.assertEqual((result["thread_id"], result["owner"]), (thread, "desktop"))
         self.assertEqual(self.send(str(uuid.uuid4()), later), {"ok": True})
 
+    def quit_tui(self, process):
+        self.calls.with_name("calls.jsonl.quit").touch()
+        process.wait(10)
+        self.calls.with_name("calls.jsonl.quit").unlink()
+
+    def test_a_new_session_that_ends_before_it_is_bound_takes_its_thread(self):
+        connection = str(uuid.uuid4())
+        process = self.launch(connection)
+        older, _ = self.rollout(self.turn_rows("from yesterday", "ok"))
+        thread, _ = self.rollout(self.turn_rows("quick question", "ok"), now=True)
+        self.quit_tui(process)
+        listed = sessions.discover({"accounts": ["default"], "workspaces": [str(self.project)]})
+        self.assertEqual(sorted((item["thread_id"], item["connection"], item["owner"]) for item in listed), sorted([(older, "", ""), (thread, connection, "")]))
+        self.assertEqual(self.state(connection).get("thread_id"), thread)
+        self.assertNotIn("lease", self.state(connection))
+        # The phone continues that thread, not a new one.
+        self.assertEqual(self.send(connection), {"ok": True})
+        self.assertEqual(self.wait({"connection": connection, "account": "default"}, lambda result: result["owner"] == "")["thread_id"], thread)
+        # Two threads it could have made, or one another process holds: none is taken.
+        for count, held in ((2, False), (1, True)):
+            other = str(uuid.uuid4())
+            process = self.launch(other)
+            made = [self.rollout(self.turn_rows("ambiguous", "ok"), now=True) for _ in range(count)]
+            self.quit_tui(process)
+            proc = self.home / "proc"
+            if held:
+                holder = subprocess.Popen(["sleep", "30"])
+                self.addCleanup(holder.kill)
+                (proc / str(holder.pid) / "fd").mkdir(parents=True)
+                os.symlink(made[0][1], proc / str(holder.pid) / "fd" / "3")
+            with patch.object(sessions, "PROC", proc if held else sessions.PROC):
+                result = sessions.view({"connection": other, "account": "default"})
+            self.assertEqual((result["thread_id"], self.state(other).get("thread_id", "")), ("", ""))
+            self.assertNotIn("lease", self.state(other))
+            listed = sessions.discover({"accounts": ["default"], "workspaces": [str(self.project)]})
+            self.assertTrue({thread for thread, _ in made} <= {item["thread_id"] for item in listed if not item["connection"]})
+
     def test_archive_stop_and_purge(self):
         os.environ["FAKE_CODEX_MODE"] = "sleep"
         connection, request_id = str(uuid.uuid4()), str(uuid.uuid4())

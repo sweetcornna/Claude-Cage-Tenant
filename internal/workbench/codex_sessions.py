@@ -267,6 +267,41 @@ def desktop_leases(thread, account, path, states):
     return found
 
 
+def settle_lease(connection, state, users):
+    """Drop a lease whose Codex has ended. A new desktop session that never
+    learnt its thread takes the one thread its Codex can have made: in the
+    lease's directory, started after the lease was taken, claimed by no other
+    session and held open by no process. Caller holds the connection's lock."""
+    lease = state.get("lease")
+    if not isinstance(lease, dict) or lease_state(lease) != "ended":
+        return ""
+    state.pop("lease")
+    if lease.get("thread") or state.get("thread_id"):
+        return ""
+    try:
+        home = codex_home(lease.get("account") or "default")
+    except ValueError:
+        return ""
+    since = float(lease.get("acquired_at") or 0) - 5
+    claimed = {claimed_thread(key, value) for key, value in all_states(connection).items()} - {""}
+    files, threads = users
+    found = set()
+    for mtime, path, _ in rollouts(home)[:LISTED]:
+        if mtime < since:
+            continue
+        try:
+            meta = head(path)
+        except OSError:
+            continue
+        if (meta and not meta["subagent"] and meta["id"] not in claimed and candidate(meta, meta.get("created") or mtime, lease)
+                and not files.get(os.path.realpath(path)) and not threads.get(meta["id"])):
+            found.add(meta["id"])
+    if len(found) != 1:
+        return ""
+    state["thread_id"] = found.pop()
+    return state["thread_id"]
+
+
 def bind_lease(connection, state, users):
     """Bind a new desktop session to the one thread its Codex process holds open.
     Caller holds the connection's lock. Binding happens once; a thread the TUI
@@ -701,10 +736,8 @@ def view(request):
     readable = not connection or load_state(ROOT / connection / "state.json")[1]
     users = rollout_users()
     with state_view(connection) as state:
+        settle_lease(connection, state, users)
         lease = state.get("lease")
-        if isinstance(lease, dict) and lease_state(lease) == "ended":
-            state.pop("lease")
-            lease = None
         if lease:
             bind_lease(connection, state, users)
         if state and not state.get("thread_id"):
@@ -801,9 +834,12 @@ def discover(request):
     # A new desktop session learns its thread from the process holding it.
     for connection, state in states.items():
         lease = state.get("lease")
-        if isinstance(lease, dict) and not lease.get("thread") and not state.get("thread_id") and lease_state(lease) == "held" and threads_held(lease, users):
+        if not isinstance(lease, dict) or lease.get("thread") or state.get("thread_id"):
+            continue
+        held = lease_state(lease)
+        if held == "held" and threads_held(lease, users) or held == "ended":
             with state_file(connection) as current:
-                if bind_lease(connection, current, users):
+                if bind_lease(connection, current, users) or settle_lease(connection, current, users) or "lease" not in current:
                     states[connection] = json.loads(json.dumps(current))
     leases = {key: state["lease"] for key, state in states.items() if isinstance(state.get("lease"), dict) and leased(state["lease"])}
     groups = {state["run"]["pid"] for state in states.values() if alive(state.get("run"))} | {lease["pgid"] for lease in leases.values() if lease.get("pgid")}
@@ -887,6 +923,7 @@ def send(request):
     cwd = Path(request["cwd"])
     folder = ROOT / connection
     with state_file(connection, strict=True) as state:
+        settle_lease(connection, state, rollout_users())
         known = state.get("thread_id") or started_thread(folder)
         if known and thread and known != thread:
             raise ValueError("会话身份已变化，请重新读取会话列表")
@@ -1186,6 +1223,7 @@ def tui_launch(request):
         raise ValueError("无法确认终端进程，请关闭此终端后重试")
     users = rollout_users()
     with state_file(connection) as state:
+        settle_lease(connection, state, users)
         if state.get("account", account) != account:
             raise ValueError("会话账号已变化，请重新读取会话列表")
         known = state.get("thread_id") or started_thread(ROOT / connection)
