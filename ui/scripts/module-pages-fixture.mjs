@@ -147,6 +147,18 @@ export function resourceAllocations(now) {
       observation: sample({ maximum_bytes: 3 * GiB, target_bytes: 3 * GiB, short: true, limited_by: "maximum", guest: { total_bytes: 3 * GiB, available_bytes: 0.2 * GiB, oom_kills: 0 },
         summary: "环境内存紧张（分配 3 GB，需要 3.4 GB），已到上限。" }) },
     manual: null,
+    // The outage: the old default at its maximum and short; and the automatic
+    // size recalculated while short at the old maximum.
+    outage: { ...base, automatic: false, allocation_origin: "legacy_default", memory_gib: 3, cpus: 3, configured_memory_bytes: 3 * GiB, configured_cpus: 3,
+      restart_required: false, legacy_allocation: true,
+      notice: "内存 3 GB、CPU 3 核与旧版本的默认设置相同。改为自动（推荐）后，这台机器可以给到 6 GB、5 核，需要重启环境；如果这是你特意设的，可以保留。",
+      offer: { automatic: true, memory_gib: 6, cpus: 5, restart_required: true },
+      advice: { message: "环境内存已用满手动设置的 3 GB。改为自动（推荐）后可以调到 6 GB，需要重启环境。", memory_bytes: 6 * GiB, restart_required: true },
+      observation: sample({ maximum_bytes: 3 * GiB, target_bytes: 3 * GiB, short: true, limited_by: "maximum", guest: { total_bytes: 3 * GiB, available_bytes: 0.15 * GiB, oom_kills: 2 } }) },
+    "restart-short": { ...base, automatic: true, allocation_origin: "automatic", memory_gib: 6, cpus: 5, configured_memory_bytes: 3 * GiB, configured_cpus: 3,
+      restart_required: true, notice: "自动分配已按这台机器重新计算为内存 6 GB、CPU 5 核，重启环境后生效。",
+      advice: { message: "可以把内存调到 6 GB，需要重启环境。", memory_bytes: 6 * GiB, restart_required: true },
+      observation: sample({ maximum_bytes: 3 * GiB, target_bytes: 3 * GiB, short: true, limited_by: "maximum" }) },
     older: { automatic: true, memory_gib: 12, cpus: 5, running: false, recommended_memory_bytes: 12 * GiB, recommended_cpus: 5, max_memory_gib: 12, max_cpus: 5 },
   };
 }

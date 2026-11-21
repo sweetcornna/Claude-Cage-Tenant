@@ -82,6 +82,24 @@ test("short with advice: manual points to automatic, automatic to a restart, mac
   assert.equal(machine.live.state.label, "内存紧张 · 机器没有更多");
 });
 
+test("notice and advice together: one action, never two", () => {
+  const short = observation({ short: true, limited_by: "maximum", target_bytes: 3 * GiB, maximum_bytes: 3 * GiB });
+  // The outage: an old default at its 3 GB maximum, short.
+  const outage = resourceAllocationView({ ...base, automatic: false, allocation_origin: "legacy_default", memory_gib: 3, cpus: 3, legacy_allocation: true,
+    notice: "内存 3 GB、CPU 3 核与旧版本的默认设置相同。…", offer: { automatic: true, memory_gib: 6, cpus: 5, restart_required: true }, observation: short,
+    advice: { message: "环境内存已用满手动设置的 3 GB。改为自动（推荐）后可以调到 6 GB，需要重启环境。", memory_bytes: 6 * GiB, restart_required: true } }, { now });
+  assert.equal(outage.notice.offer.label, "改为自动");
+  assert.equal(outage.advice.message.startsWith("环境内存已用满"), true);
+  assert.equal(outage.advice.action, null, "the notice's offer is the one 改为自动");
+  // Automatic recalculated while running, and short at the old maximum.
+  const recalculated = resourceAllocationView({ ...base, automatic: true, allocation_origin: "automatic", restart_required: true, observation: short,
+    notice: "自动分配已按这台机器重新计算为内存 6 GB、CPU 5 核，重启环境后生效。",
+    advice: { message: "可以把内存调到 6 GB，需要重启环境。", memory_bytes: 6 * GiB, restart_required: true } }, { now });
+  assert.equal(recalculated.notice.restart, true);
+  assert.equal(recalculated.advice.action, null, "the notice's restart is the one restart");
+  assert.equal(recalculated.restart, false);
+});
+
 test("older server: none of the new fields keeps today's controls", () => {
   assert.equal(resourceAllocationView({ automatic: true, memory_gib: 12, cpus: 5, running: false, recommended_memory_bytes: 12 * GiB, recommended_cpus: 5, max_memory_gib: 12, max_cpus: 5 }).kind, "older");
   assert.equal(resourceAllocationView({ runtime: "container" }).kind, "unsupported");

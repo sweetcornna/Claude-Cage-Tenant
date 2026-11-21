@@ -45,15 +45,15 @@ export function resourceAllocationView(data, { now = Date.now() } = {}) {
   }
   const advice = data.advice || data.observation?.advice;
   if (advice?.message) {
-    view.advice = {
-      message: advice.message,
-      restart: Boolean(advice.restart_required),
-      // Manual and short: the way out is automatic; automatic and short: a restart.
-      action: !advice.restart_required ? null : data.automatic ? "restart" : "automatic",
-    };
+    // Manual and short: the way out is automatic; automatic and short: a restart.
+    let action = !advice.restart_required ? null : data.automatic ? "restart" : "automatic";
+    // The notice may already carry that action (the outage case: an old
+    // default at its maximum); then the advice is said, not offered twice.
+    if ((action === "automatic" && view.notice?.offer) || (action === "restart" && view.notice?.restart)) action = null;
+    view.advice = { message: advice.message, restart: Boolean(advice.restart_required), action };
   }
   // A plain "saved, restart to apply" when nothing above already says so.
-  view.restart = Boolean(data.running && data.restart_required) && !view.notice?.restart && !(view.notice?.offer) && view.advice?.action !== "restart";
+  view.restart = Boolean(data.running && data.restart_required) && !view.notice?.restart && !view.notice?.offer && view.advice?.action !== "restart";
   return view;
 }
 
