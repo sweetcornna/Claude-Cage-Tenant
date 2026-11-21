@@ -125,7 +125,8 @@ func (s *Server) macOSResourceStatus(w http.ResponseWriter, r *http.Request) {
 		requestError(w, err)
 		return
 	}
-	memory, cpus, allocationErr := allocation.Limits()
+	// macOS guests keep the sizing from before machine-following allocation.
+	memory, cpus, allocationErr := allocation.LegacyLimits()
 	if allocationErr == nil {
 		_, _, allocationErr = requirements.Limits(allocation)
 	} else {
