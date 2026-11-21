@@ -3,6 +3,7 @@ package tenant
 import (
 	"context"
 	"log"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -11,7 +12,10 @@ import (
 
 // Elastic memory sizes running VMs to this host. Each VM boots at the trusted
 // profile's limits.memory, its ceiling, and the balancer then moves its
-// limits.memory through the virtio balloon:
+// limits.memory through the virtio balloon. The rule is allocateMemory
+// (allocation.go): max-min fair water-filling over held demands. planMemory
+// below is the previous policy, still selectable with
+// CAGE_TENANT_MEMORY_POLICY=legacy:
 //
 //   - A guest that runs short (less than its headroom available) grows at
 //     once, also while the host is short of memory: a guest OOM kill is worse.
@@ -63,6 +67,17 @@ type InstanceMemory struct {
 	// when the guest did not answer, and then GuestSilent is set.
 	GuestTotal, GuestAvailable int64
 	GuestSilent                bool
+	// GuestStall is the guest's memory stall (PSI some avg10, percent) and
+	// GuestSwapIns its pswpin counter (GuestSwapKnown when it was read); both
+	// are optional readings. NestedShort is what a Cage guest nested in this
+	// VM wants and the VM cannot back now, from the host agent inside.
+	GuestStall     float64
+	GuestSwapIns   uint64
+	GuestSwapKnown bool
+	NestedShort    int64
+	// NestedPressure: the nested guest is under memory pressure itself, so its
+	// shortfall is a shortage, not missing headroom.
+	NestedPressure bool
 	// Active is set by the balancer, not by the runtime: the workspace was
 	// used (browser traffic, a portal open, guest CPU) within memoryActiveWindow.
 	Active bool
@@ -95,6 +110,14 @@ type memoryBalancing struct {
 	failure  string
 	// silent counts the sweeps in a row each running guest did not answer.
 	silent map[string]int
+	// held is each VM's held demand and swapIns its last pswpin counter.
+	held    map[string]demandState
+	swapIns map[string]uint64
+	// legacy selects the previous fair-share policy
+	// (CAGE_TENANT_MEMORY_POLICY=legacy in the gateway's environment).
+	legacy bool
+	// report explains the last round, for the status.
+	report allocationResult
 }
 
 type memoryChange struct {
@@ -108,12 +131,17 @@ func (s *Server) startMemoryBalancer() {
 	if s.cfg.MemoryInterval == 0 || !ok || !runtime.ElasticMemory() {
 		return
 	}
-	s.memory = memoryBalancing{runtime: runtime, changes: make(map[string]bool), pause: make(map[string]time.Time), failures: make(map[string]string), silent: make(map[string]int)}
+	s.memory = memoryBalancing{runtime: runtime, changes: make(map[string]bool), pause: make(map[string]time.Time), failures: make(map[string]string), silent: make(map[string]int),
+		held: make(map[string]demandState), swapIns: make(map[string]uint64), legacy: os.Getenv("CAGE_TENANT_MEMORY_POLICY") == "legacy"}
 	reserve := "the larger of 2 GiB and 15% of host memory"
 	if s.cfg.MemoryReserve > 0 {
 		reserve = mib(s.cfg.MemoryReserve)
 	}
-	log.Printf("cage-tenant: elastic VM memory every %s; host reserve %s, VM minimum %s", s.cfg.MemoryInterval, reserve, mib(s.memoryMin()))
+	policy := "max-min fair over held demand"
+	if s.memory.legacy {
+		policy = "legacy fair share"
+	}
+	log.Printf("cage-tenant: elastic VM memory every %s (%s); host reserve %s, VM minimum %s", s.cfg.MemoryInterval, policy, reserve, mib(s.memoryMin()))
 	s.workers.Go(func() {
 		ticker := time.NewTicker(s.cfg.MemoryInterval)
 		defer ticker.Stop()
@@ -186,7 +214,30 @@ func (s *Server) balanceOnce() {
 			silent[id] = s.memory.silent[id] >= memorySilentSweeps
 		}
 	}
-	for _, change := range planMemory(state, s.cfg.MemoryReserve, s.memoryMin(), fixed, holdShrink, silent) {
+	swapIn := make(map[string]bool)
+	for id, entry := range state.Instances {
+		if !entry.GuestSwapKnown {
+			continue
+		}
+		if previous, seen := s.memory.swapIns[id]; seen && entry.GuestSwapIns > previous {
+			swapIn[id] = true
+		}
+		s.memory.swapIns[id] = entry.GuestSwapIns
+	}
+	for id := range s.memory.swapIns {
+		if entry, ok := state.Instances[id]; !ok || entry.Status != "Running" {
+			delete(s.memory.swapIns, id)
+		}
+	}
+	var plan []memoryChange
+	if s.memory.legacy {
+		plan = planMemory(state, s.cfg.MemoryReserve, s.memoryMin(), fixed, holdShrink, silent)
+	} else {
+		result := allocateMemory(allocationInput{now: now, state: state, reserve: s.cfg.MemoryReserve, minimum: s.memoryMin(),
+			fixed: fixed, holdShrink: holdShrink, silent: silent, swapIn: swapIn}, s.memory.held)
+		s.memory.held, s.memory.report, plan = result.held, result, result.changes
+	}
+	for _, change := range plan {
 		if s.context.Err() != nil {
 			return
 		}

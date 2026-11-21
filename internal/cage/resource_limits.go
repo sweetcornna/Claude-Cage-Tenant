@@ -16,6 +16,54 @@ type ResourceAllocation struct {
 	Automatic bool `json:"automatic"`
 	MemoryGiB int  `json:"memory_gib"`
 	CPUs      int  `json:"cpus"`
+	// Chosen is "user" on an allocation saved through the settings API by
+	// this version or later; older files lack it (older versions ignore it).
+	Chosen string `json:"chosen,omitempty"`
+}
+
+// The origins of an allocation.
+const (
+	// OriginAutomatic: no saved allocation, or automatic saved.
+	OriginAutomatic = "automatic"
+	// OriginUser: an explicit allocation someone chose.
+	OriginUser = "user"
+	// OriginLegacyDefault: an explicit allocation, saved by an older version,
+	// that equals the old automatic default on this machine: most likely
+	// written by a settings form that was saved with its default values.
+	OriginLegacyDefault = "legacy_default"
+)
+
+// LegacyDefaultAction is what an allocation of OriginLegacyDefault becomes:
+// "offer" keeps it and offers automatic sizing in the status; "apply" treats
+// it as automatic. Matching the old formula cannot prove nobody chose it, so
+// the default keeps it.
+var LegacyDefaultAction = "offer"
+
+// Origin classifies the allocation. Pure apart from reading the machine.
+func (a ResourceAllocation) Origin() string {
+	if a.Automatic {
+		return OriginAutomatic
+	}
+	if a.Chosen == OriginUser {
+		return OriginUser
+	}
+	// The old default followed host.MemGiB, which inside a ballooned machine
+	// moves between its current size and its boot size.
+	for memory := max(host.MemGiB(), 1); memory <= max(machineBootGiB(), host.MemGiB()); memory++ {
+		if legacyMemory, legacyCPUs := legacyAutomaticLimits(memory, host.CPUs()); legacyMemory == a.MemoryGiB && legacyCPUs == a.CPUs {
+			return OriginLegacyDefault
+		}
+	}
+	return OriginUser
+}
+
+// Effective is the allocation that applies: a legacy default becomes
+// automatic only when LegacyDefaultAction says so.
+func (a ResourceAllocation) Effective() ResourceAllocation {
+	if LegacyDefaultAction == "apply" && a.Origin() == OriginLegacyDefault {
+		return ResourceAllocation{Automatic: true}
+	}
+	return a
 }
 
 func ResourceAllocationPath(configPath string) string {
@@ -42,7 +90,34 @@ func AutomaticMemoryGiB(shareGiB int) int {
 	return min(shareGiB, max(AutomaticMemoryFloorGiB, host.MemGiB()*3/8), AutomaticMemoryCapGiB)
 }
 
+// Limits is the boot-time maximum and vCPUs of a ballooned Linux guest. An
+// automatic allocation follows the machine (AutomaticLimits); an explicit one
+// is taken as it is, within the larger of the host share and the automatic
+// maximum.
 func (a ResourceAllocation) Limits() (memory, cpus int, err error) {
+	a = a.Effective()
+	if a.Automatic {
+		memory, cpus = AutomaticLimits()
+		return memory, cpus, nil
+	}
+	memory, cpus = ManualLimitRange()
+	if a.MemoryGiB < 2 || a.MemoryGiB > memory || a.CPUs < 1 || a.CPUs > cpus {
+		return 0, 0, fmt.Errorf("内存上限须为 2–%d GiB，CPU 须为 1–%d 个逻辑核心", memory, cpus)
+	}
+	return a.MemoryGiB, a.CPUs, nil
+}
+
+// ManualLimitRange is the largest explicit allocation: the host share or the
+// automatic maximum, whichever is larger.
+func ManualLimitRange() (memory, cpus int) {
+	memory, cpus = ResourceLimits()
+	automaticMemory, automaticCPUs := AutomaticLimits()
+	return max(memory, automaticMemory), max(cpus, automaticCPUs)
+}
+
+// LegacyLimits is the sizing before machine-following automatic sizing:
+// guests without a balloon (macOS) keep it.
+func (a ResourceAllocation) LegacyLimits() (memory, cpus int, err error) {
 	memory, cpus = ResourceLimits()
 	if a.Automatic {
 		return AutomaticMemoryGiB(memory), cpus, nil

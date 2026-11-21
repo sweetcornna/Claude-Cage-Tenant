@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -23,8 +24,33 @@ FAKE_CODEX = """#!{python}
 import json, os, pathlib, sys, time, uuid
 args = sys.argv[1:]
 home = pathlib.Path(os.environ.get("CODEX_HOME") or pathlib.Path.home() / ".codex")
+level = os.environ.get("FAKE_CODEX_FLAGS", "all")
+flags, commands = level == "all", level in ("all", "old")
+options = "  -C, --cd <DIR>\\n      --add-dir <DIR>\\n      --no-daemon\\n" if flags else ""
+if args == ["--version"]:
+    print("codex-cli 0.171.0")
+    sys.exit(0)
+if args[-1:] == ["--help"]:
+    with open(os.environ["FAKE_CODEX_CALLS"] + ".help", "a") as calls:
+        calls.write(" ".join(args) + "\\n")
+    if args == ["--help"]:
+        print("Codex CLI\\n\\nCommands:\\n  exec    Run Codex non-interactively\\n" + ("  resume  Resume a previous session (picker by default; use --last to continue\\n          the most recent)\\n  delete  Permanently delete a saved session\\n" if commands else "") + "  help    Print this message\\n\\nOptions:\\n" + options)
+    elif args[0] == "resume":
+        print("Usage: codex resume [OPTIONS] [SESSION_ID]\\n" + options)
+    elif args[0] == "delete":
+        print("Usage: codex delete [OPTIONS] <SESSION>\\n" + ("      --force\\n" if flags else ""))
+    sys.exit(0)
 with open(os.environ["FAKE_CODEX_CALLS"], "a") as calls:
-    calls.write(json.dumps({{"argv": args, "cwd": os.getcwd(), "subject": os.environ.get("CAGE_CODEX_SUBJECT", "")}}) + "\\n")
+    calls.write(json.dumps({{"argv": args, "cwd": os.getcwd(), "subject": os.environ.get("CAGE_CODEX_SUBJECT", ""), "pid": os.getpid(), "home": str(home)}}) + "\\n")
+if args[:1] == ["delete"]:
+    for path in home.glob("sessions/*/*/*/rollout-*-" + args[-1] + "*.jsonl*"):
+        path.unlink()
+    sys.exit(0)
+if args[:1] != ["exec"]:
+    # The interactive TUI: it stays until the test lets it quit.
+    while not os.path.exists(os.environ["FAKE_CODEX_CALLS"] + ".quit"):
+        time.sleep(0.02)
+    sys.exit(0)
 mode = os.environ.get("FAKE_CODEX_MODE", "reply")
 text = sys.stdin.read()
 if mode == "wait":
@@ -94,12 +120,14 @@ class CodexSessionTests(unittest.TestCase):
                 except OSError:
                     pass
 
-    def rollout(self, rows, thread=None, home=None, day="2026/11/20"):
+    def rollout(self, rows, thread=None, home=None, day="2026/11/20", now=False):
         thread = thread or str(uuid.uuid4())
         path = (home or self.home / ".codex") / "sessions" / day / ("rollout-2026-11-20T10-00-00-" + thread + ".jsonl")
         path.parent.mkdir(parents=True, exist_ok=True)
         meta = record("session_meta", {"id": thread, "cwd": str(self.project), "originator": "codex-tui", "source": "cli",
                                        "base_instructions": {"text": "synthetic base instructions"}})
+        if now:
+            meta["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
         path.write_text("".join(json.dumps(row) + "\n" for row in [meta, *rows]))
         return thread, path
 
@@ -327,6 +355,295 @@ class CodexSessionTests(unittest.TestCase):
         self.assertFalse(path.exists())
         self.assertTrue(kept.exists())
         self.assertEqual(sessions.purge({"thread": thread, "account": "default", "workspace": str(self.project)}), {"ok": True})
+
+    def calls_of(self, kind=None):
+        if not self.calls.exists():
+            return []
+        rows = [json.loads(line) for line in self.calls.read_text().splitlines()]
+        return [row for row in rows if kind is None or (row["argv"][:1] == ["exec"]) == (kind == "exec")]
+
+    def launch(self, connection, lease=None, thread="", account="default", subject="", wait=True):
+        request = {"connection": connection, "lease": lease or str(uuid.uuid4()), "thread": thread, "account": account,
+                   "subject": subject, "cwd": str(self.project), "additional_directories": []}
+        process = subprocess.Popen([sys.executable, "-I", str(source), "tui-launch", json.dumps(request)], cwd=str(self.project),
+                                   env=self.env_now(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.addCleanup(self.finish, process)
+        if wait:
+            deadline = time.monotonic() + 15
+            while not any(row.get("pid") == process.pid for row in self.calls_of("tui")):
+                if process.poll() is not None:
+                    self.fail("tui-launch ended: %r" % (process.stderr.read().decode(),))
+                if time.monotonic() > deadline:
+                    self.fail("the TUI did not start")
+                time.sleep(0.02)
+        return process
+
+    def env_now(self):
+        return dict(os.environ)
+
+    def finish(self, process):
+        if process.poll() is None:
+            process.kill()
+        process.communicate()
+
+    def state(self, connection):
+        return sessions.read_json(sessions.ROOT / connection / "state.json", {})
+
+    def send(self, connection, thread="", text="from the phone"):
+        return sessions.send({"connection": connection, "request_id": str(uuid.uuid4()), "text": text, "account": "default",
+                              "thread": thread, "cwd": str(self.project)})
+
+    def test_probe_reads_the_cli_help(self):
+        result = sessions.probe({})
+        self.assertEqual({key: result[key] for key in ("installed", "version", "resume", "no_daemon", "resume_no_daemon", "delete")},
+                         {"installed": True, "version": "0.171.0", "resume": True, "no_daemon": True, "resume_no_daemon": True, "delete": True})
+        asked = self.calls.with_name("calls.jsonl.help").read_text().splitlines()
+        self.assertEqual(sorted(asked), ["--help", "delete --help", "resume --help"])
+        # Cached for the same binary.
+        sessions.probe({})
+        self.assertEqual(len(self.calls.with_name("calls.jsonl.help").read_text().splitlines()), 3)
+        (sessions.ROOT / "probe.json").unlink()
+        os.environ["FAKE_CODEX_FLAGS"] = "none"
+        result = sessions.probe({})
+        self.assertEqual((result["resume"], result["no_daemon"], result["delete"]), (False, False, False))
+        os.environ["PATH"] = str(self.home / "empty")
+        self.assertFalse(sessions.probe({})["installed"])
+        self.assertEqual(sessions.help_commands("Commands:\n  resume  x\n          wrapped words\n  fork-it  y\n\n  later  z"), {"resume", "fork-it"})
+
+    def test_tui_launch_takes_a_lease_that_blocks_the_phone_until_codex_ends(self):
+        thread, _ = self.rollout(self.turn_rows("desk", "ok"))
+        connection, lease = str(uuid.uuid4()), str(uuid.uuid4())
+        process = self.launch(connection, lease, thread)
+        state = self.state(connection)
+        # Every step execs, so the lease records the PID that is now Codex.
+        self.assertEqual(state["lease"]["pid"], process.pid)
+        self.assertEqual((state["lease"]["id"], state["lease"]["thread"], state["thread_id"]), (lease, thread, thread))
+        tui = [row for row in self.calls_of("tui") if row["pid"] == process.pid][0]
+        self.assertEqual(tui["argv"], ["resume", "-C", str(self.project), "--no-daemon", thread])
+        with self.assertRaisesRegex(ValueError, "电脑的 Codex 终端"):
+            self.send(connection, thread)
+        # Another connection of the same thread is refused as well.
+        with self.assertRaisesRegex(ValueError, "电脑的 Codex 终端"):
+            self.send(str(uuid.uuid4()), thread)
+        result = sessions.view({"connection": connection, "thread": thread, "account": "default"})
+        self.assertEqual((result["owner"], result["lease"], result["can_send"], result["running"]), ("desktop", lease, False, True))
+        self.assertEqual(result["connection_notice"], sessions.DESKTOP_NOTICE)
+        listed = sessions.discover({"accounts": ["default"], "workspaces": [str(self.project)]})
+        self.assertEqual([(item["thread_id"], item["owner"], item["lease"]) for item in listed], [(thread, "desktop", lease)])
+        self.calls.with_name("calls.jsonl.quit").touch()
+        process.wait(10)
+        self.calls.with_name("calls.jsonl.quit").unlink()
+        self.assertEqual(sessions.view({"connection": connection, "thread": thread, "account": "default"})["owner"], "")
+        self.assertNotIn("lease", self.state(connection))
+        self.assertEqual(self.send(connection, thread), {"ok": True})
+
+    def test_launch_is_refused_while_another_writer_owns_the_thread(self):
+        thread, _ = self.rollout(self.turn_rows("busy", "ok"))
+        connection = str(uuid.uuid4())
+        with sessions.state_file(connection) as state:
+            state.update(thread_id=thread, account="default", run={"request_id": str(uuid.uuid4()), "pid": os.getpid(), "start": sessions.fingerprint(os.getpid())})
+        refused = self.launch(connection, thread=thread, wait=False)
+        _, error = refused.communicate(timeout=15)
+        self.assertEqual(refused.returncode, sessions.LAUNCH_REFUSED)
+        self.assertIn(sessions.PHONE_RUNNING, error.decode())
+        self.assertEqual(self.calls_of("tui"), [])
+        self.assertNotIn("lease", self.state(connection))
+        other = str(uuid.uuid4())
+        first = self.launch(other, thread=self.rollout(self.turn_rows("second", "ok"))[0])
+        for connection_id in (other, str(uuid.uuid4())):
+            second = self.launch(connection_id, thread=self.state(other)["thread_id"], wait=False)
+            _, error = second.communicate(timeout=15)
+            self.assertEqual(second.returncode, sessions.LAUNCH_REFUSED)
+            self.assertIn(sessions.OTHER_TERMINAL, error.decode())
+        self.assertEqual(len(self.calls_of("tui")), 1)
+        self.assertIsNone(first.poll())
+
+    def test_old_corrupt_and_unknown_states(self):
+        thread, _ = self.rollout(self.turn_rows("old", "ok"))
+        old = str(uuid.uuid4())
+        with sessions.state_file(old) as state:
+            state.update(thread_id=thread, account="default", cwd=str(self.project))
+        self.assertEqual(self.send(old, thread), {"ok": True})
+        corrupt = str(uuid.uuid4())
+        (sessions.ROOT / corrupt).mkdir(parents=True)
+        (sessions.ROOT / corrupt / "state.json").write_text("{not json")
+        with self.assertRaisesRegex(ValueError, "状态无法读取"):
+            self.send(corrupt)
+        self.assertFalse(sessions.view({"connection": corrupt, "account": "default"})["can_send"])
+        unknown = str(uuid.uuid4())
+        with sessions.state_file(unknown) as state:
+            state["lease"] = {"id": str(uuid.uuid4()), "pid": 4242, "start": "x", "thread": ""}
+        with patch.object(sessions, "process_start", return_value=None):
+            self.assertEqual(sessions.lease_state(self.state(unknown)["lease"]), "unknown")
+            with self.assertRaisesRegex(ValueError, "电脑的 Codex 终端"):
+                self.send(unknown)
+        # A lease of a process that has ended is dropped by the next send.
+        ended = str(uuid.uuid4())
+        with sessions.state_file(ended) as state:
+            state["lease"] = {"id": str(uuid.uuid4()), "pid": 999999, "start": "gone", "thread": ""}
+        os.environ["FAKE_CODEX_MODE"] = "wait"
+        self.assertEqual(self.send(ended), {"ok": True})
+        self.assertNotIn("lease", self.state(ended))
+
+    def test_new_desktop_session_binds_once_and_its_thread_is_withheld_until_then(self):
+        connection, lease = str(uuid.uuid4()), str(uuid.uuid4())
+        process = self.launch(connection, lease)
+        self.assertEqual(self.calls_of("tui")[0]["argv"], ["-C", str(self.project), "--no-daemon"])
+        older, _ = self.rollout(self.turn_rows("from yesterday", "ok"))
+        thread, path = self.rollout(self.turn_rows("new on the desktop", "ok"), now=True)
+        # The rollout appeared after the lease, in its directory: it may be the
+        # new session's, so it is neither listed nor writable from the phone.
+        listed = sessions.discover({"accounts": ["default"], "workspaces": [str(self.project)]})
+        self.assertEqual(sorted((item["thread_id"], item["connection"], item["owner"]) for item in listed), sorted([(older, "", ""), ("", connection, "desktop")]))
+        with self.assertRaisesRegex(ValueError, "电脑的 Codex 终端"):
+            self.send(str(uuid.uuid4()), thread)
+        # The process holding it binds it.
+        proc = self.home / "proc"
+        (proc / str(process.pid) / "fd").mkdir(parents=True)
+        (proc / str(process.pid) / "cmdline").write_bytes(b"node\0/usr/lib/codex.js\0")
+        os.symlink(path, proc / str(process.pid) / "fd" / "7")
+        with patch.object(sessions, "PROC", proc):
+            listed = sessions.discover({"accounts": ["default"], "workspaces": [str(self.project)]})
+        self.assertEqual(sorted((item["thread_id"], item["connection"], item["owner"]) for item in listed), sorted([(older, "", ""), (thread, connection, "desktop")]))
+        self.assertEqual((self.state(connection)["thread_id"], self.state(connection)["lease"]["thread"]), (thread, thread))
+        # A thread the TUI opens later never re-binds the session.
+        later, later_path = self.rollout(self.turn_rows("switched", "ok"))
+        os.unlink(proc / str(process.pid) / "fd" / "7")
+        os.symlink(later_path, proc / str(process.pid) / "fd" / "7")
+        with patch.object(sessions, "PROC", proc):
+            result = sessions.view({"connection": connection, "account": "default"})
+        self.assertEqual((result["thread_id"], result["owner"]), (thread, "desktop"))
+        self.assertEqual(self.send(str(uuid.uuid4()), later), {"ok": True})
+
+    def quit_tui(self, process):
+        self.calls.with_name("calls.jsonl.quit").touch()
+        process.wait(10)
+        self.calls.with_name("calls.jsonl.quit").unlink()
+
+    def test_a_new_session_that_ends_before_it_is_bound_takes_its_thread(self):
+        connection = str(uuid.uuid4())
+        process = self.launch(connection)
+        older, _ = self.rollout(self.turn_rows("from yesterday", "ok"))
+        thread, _ = self.rollout(self.turn_rows("quick question", "ok"), now=True)
+        self.quit_tui(process)
+        listed = sessions.discover({"accounts": ["default"], "workspaces": [str(self.project)]})
+        self.assertEqual(sorted((item["thread_id"], item["connection"], item["owner"]) for item in listed), sorted([(older, "", ""), (thread, connection, "")]))
+        self.assertEqual(self.state(connection).get("thread_id"), thread)
+        self.assertNotIn("lease", self.state(connection))
+        # The phone continues that thread, not a new one.
+        self.assertEqual(self.send(connection), {"ok": True})
+        self.assertEqual(self.wait({"connection": connection, "account": "default"}, lambda result: result["owner"] == "")["thread_id"], thread)
+        # Two threads it could have made, or one another process holds: none is taken.
+        for count, held in ((2, False), (1, True)):
+            other = str(uuid.uuid4())
+            process = self.launch(other)
+            made = [self.rollout(self.turn_rows("ambiguous", "ok"), now=True) for _ in range(count)]
+            self.quit_tui(process)
+            proc = self.home / "proc"
+            if held:
+                holder = subprocess.Popen(["sleep", "30"])
+                self.addCleanup(holder.kill)
+                (proc / str(holder.pid) / "fd").mkdir(parents=True)
+                os.symlink(made[0][1], proc / str(holder.pid) / "fd" / "3")
+            with patch.object(sessions, "PROC", proc if held else sessions.PROC):
+                result = sessions.view({"connection": other, "account": "default"})
+            self.assertEqual((result["thread_id"], self.state(other).get("thread_id", "")), ("", ""))
+            self.assertNotIn("lease", self.state(other))
+            listed = sessions.discover({"accounts": ["default"], "workspaces": [str(self.project)]})
+            self.assertTrue({thread for thread, _ in made} <= {item["thread_id"] for item in listed if not item["connection"]})
+
+    def test_a_thread_the_desktop_tui_moves_to_is_not_idle(self):
+        thread, _ = self.rollout(self.turn_rows("bound", "ok"))
+        other, other_path = self.rollout(self.turn_rows("after /new", "ok"))
+        connection = str(uuid.uuid4())
+        process = self.launch(connection, thread=thread)
+        proc = self.home / "proc"
+        (proc / str(process.pid) / "fd").mkdir(parents=True)
+        (proc / str(process.pid) / "cmdline").write_bytes(b"codex\0")
+        os.symlink(other_path, proc / str(process.pid) / "fd" / "9")
+        with patch.object(sessions, "PROC", proc):
+            listed = sessions.discover({"accounts": ["default"], "workspaces": [str(self.project)]})
+            viewed = sessions.view({"thread": other, "account": "default"})
+            with self.assertRaisesRegex(ValueError, "Codex 终端"):
+                self.send(str(uuid.uuid4()), other)
+        owners = {item["thread_id"]: item["owner"] for item in listed}
+        self.assertEqual(owners, {thread: "desktop", other: "external"})
+        self.assertEqual((viewed["owner"], viewed["can_send"]), ("external", False))
+
+    def test_archive_stop_and_purge(self):
+        os.environ["FAKE_CODEX_MODE"] = "sleep"
+        connection, request_id = str(uuid.uuid4()), str(uuid.uuid4())
+        sessions.send({"connection": connection, "request_id": request_id, "text": "long", "account": "default", "cwd": str(self.project)})
+        result = self.wait({"connection": connection, "account": "default"}, lambda result: result["thread_id"] and result["owner"] == "phone")
+        self.assertEqual(sessions.stop({"connection": connection, "reason": "archive"}), {"ok": True})
+        result = sessions.view({"connection": connection, "account": "default"})
+        self.assertEqual((result["owner"], result["turns"][-1]["status"]), ("", "stopped"))
+        self.assertEqual(sessions.stop({"connection": connection, "reason": "archive"}), {"ok": True})
+        self.assertEqual(sessions.stop({"connection": str(uuid.uuid4()), "reason": "archive"}), {"ok": True})
+        thread = result["thread_id"]
+        lease = str(uuid.uuid4())
+        process = self.launch(connection, lease, thread)
+        with self.assertRaisesRegex(ValueError, "请先关闭该终端"):
+            sessions.purge({"thread": thread, "account": "default", "connection": connection, "workspace": str(self.project)})
+        process.kill()
+        process.wait(10)
+        self.assertEqual(sessions.purge({"thread": thread, "account": "default", "connection": connection, "workspace": str(self.project)}), {"ok": True})
+        deletes = [row for row in self.calls_of("tui") if row["argv"][:1] == ["delete"]]
+        self.assertEqual([row["argv"] for row in deletes], [["delete", "--force", thread]])
+        self.assertIsNone(sessions.find_rollout(self.home / ".codex", thread))
+        # Without delete support the rollout is removed directly.
+        (sessions.ROOT / "probe.json").unlink()
+        os.environ["FAKE_CODEX_FLAGS"] = "none"
+        other, other_path = self.rollout(self.turn_rows("plain", "ok"))
+        self.assertEqual(sessions.purge({"thread": other, "account": "default", "workspace": str(self.project)}), {"ok": True})
+        self.assertFalse(other_path.exists())
+        self.assertEqual(len([row for row in self.calls_of("tui") if row["argv"][:1] == ["delete"]]), 1)
+
+    def test_tui_flags_come_from_the_probe(self):
+        every = dict(sessions.UNPROBED, complete=True, resume=True, cd=True, add_dir=True, no_daemon=True, resume_cd=True,
+                     resume_add_dir=True, resume_no_daemon=True)
+        thread, extra = str(uuid.uuid4()), str(self.home)
+        self.assertEqual(sessions.tui_args(every, thread, self.project, [extra]),
+                         ["resume", "-C", str(self.project), "--add-dir", extra, "--no-daemon", thread])
+        self.assertEqual(sessions.tui_args(every, "", self.project, [extra]), ["-C", str(self.project), "--add-dir", extra, "--no-daemon"])
+        old = dict(sessions.UNPROBED, complete=True, resume=True)
+        self.assertEqual(sessions.tui_args(old, thread, self.project, [extra]), ["resume", thread])
+        self.assertEqual(sessions.tui_args(sessions.UNPROBED, "", self.project, [extra]), [])
+        # An older CLI: no optional flags, and the TUI starts in the project.
+        os.environ["FAKE_CODEX_FLAGS"] = "old"
+        resumed, _ = self.rollout(self.turn_rows("old cli", "ok"))
+        process = self.launch(str(uuid.uuid4()), thread=resumed)
+        tui = [row for row in self.calls_of("tui") if row["pid"] == process.pid][0]
+        self.assertEqual((tui["argv"], os.path.realpath(tui["cwd"])), (["resume", resumed], os.path.realpath(self.project)))
+
+    def test_launch_waits_for_an_unfinished_probe(self):
+        thread, _ = self.rollout(self.turn_rows("slow", "ok"))
+        connection = str(uuid.uuid4())
+        request = {"connection": connection, "lease": str(uuid.uuid4()), "thread": thread, "account": "default", "subject": "",
+                   "cwd": str(self.project), "additional_directories": []}
+        with patch.object(sessions, "PROBE_TIMEOUT", 0.001):
+            with self.assertRaisesRegex(ValueError, "暂时无法确认"):
+                sessions.tui_launch(request)
+        self.assertFalse((sessions.ROOT / "probe.json").exists())
+        self.assertNotIn("lease", self.state(connection))
+        self.assertEqual(self.calls_of("tui"), [])
+
+    def test_newer_rollout_names(self):
+        thread, path = self.rollout(self.turn_rows("suffixed", "ok"))
+        suffixed = path.with_name(path.name[:-len(".jsonl")] + "_" + str(uuid.uuid4()) + ".jsonl")
+        path.rename(suffixed)
+        listed = sessions.discover({"accounts": ["default"], "workspaces": [str(self.project)]})
+        self.assertEqual([item["thread_id"] for item in listed], [thread])
+        self.assertEqual(sessions.view({"thread": thread, "account": "default"})["turns"][0]["prompt"], "suffixed")
+        squeezed, cold = self.rollout(self.turn_rows("compressed", "ok"))
+        cold.rename(cold.with_name(cold.name + ".zst"))
+        result = sessions.view({"thread": squeezed, "account": "default"})
+        self.assertEqual((result["connection_notice"], result["can_send"], result["history_compressed"]), (sessions.COMPRESSED_NOTICE, False, True))
+        # The desktop TUI can still resume what this helper cannot read.
+        process = self.launch(str(uuid.uuid4()), thread=squeezed)
+        tui = [row for row in self.calls_of("tui") if row["pid"] == process.pid][0]
+        self.assertEqual(tui["argv"][-1], squeezed)
+        self.assertFalse(sessions.view({"thread": thread, "account": "default"})["history_compressed"])
 
 
 if __name__ == "__main__":
