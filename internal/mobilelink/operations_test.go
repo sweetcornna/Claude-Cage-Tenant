@@ -20,6 +20,9 @@ func TestSnapshotPollingQuery(t *testing.T) {
 		{"after=-1&epoch=" + id, false}, {"after=0&after=1", false}, {"after=1&other=x", false},
 		{"after=1&epoch=" + id + "&epoch=" + id, false}, {"after=%31&epoch=" + id, false},
 		{"after=18446744073709551616", false},
+		{"after=2&wait=25", true}, {"wait=25&after=2&epoch=" + id, true}, {"after=2&epoch=" + id + "&wait=1", true},
+		{"wait=25", false}, {"after=2&wait=0", false}, {"after=2&wait=05", false}, {"after=2&wait=100", false},
+		{"after=2&wait=1&wait=2", false}, {"after=2&wait=", false}, {"after=2&epoch=" + id + "&wait=1&other=x", false},
 	} {
 		u := &url.URL{Path: "/api/mobile/cli/sessions/" + id, RawQuery: tc.query}
 		if got := allowed("GET", u); got != tc.want {
@@ -57,6 +60,29 @@ func TestSessionListMutations(t *testing.T) {
 		u.RawQuery = "after=1"
 		if allowed("POST", u) {
 			t.Fatal("mutation query accepted", operation)
+		}
+	}
+}
+
+func TestSessionListRevisionQuery(t *testing.T) {
+	const revision = "0123456789abcdef0123456789abcdef"
+	for _, tc := range []struct {
+		query string
+		want  bool
+	}{
+		{"after=" + revision, true}, {"after=" + revision + "&wait=25", true}, {"wait=25&after=" + revision, true},
+		{"archived=true&after=" + revision + "&wait=5", true}, {"after=" + revision + "&archived=true", true},
+		{"wait=25", false}, {"archived=true&wait=5", false}, {"after=" + strings.ToUpper(revision), false},
+		{"after=" + revision[:31], false}, {"after=" + revision + "0", false}, {"after=" + revision + "&after=" + revision, false},
+		{"after=" + revision + "&wait=0", false}, {"after=" + revision + "&wait=250", false},
+		{"after=" + revision + "&wait=5&other=1", false}, {"after=" + revision + "&wait=%35", false},
+	} {
+		u := &url.URL{Path: "/api/mobile/cli/sessions", RawQuery: tc.query}
+		if got := allowed("GET", u); got != tc.want {
+			t.Errorf("list query %q allowed=%v, want %v", tc.query, got, tc.want)
+		}
+		if allowed("POST", u) {
+			t.Errorf("list query %q allowed a POST", tc.query)
 		}
 	}
 }
