@@ -16,12 +16,14 @@ import {
   X,
 } from "lucide-react";
 import { tabName } from "./workspace-state.mjs";
-import { AgentIcon } from "./agent-icon";
+import { ProviderMark } from "./provider-mark";
 
-export function TabIcon({ kind, favicon, agent, accountNumber, size = 16 }) {
+const terminalProvider = (tab) => /^codex/.test(tab.terminalKind || "") ? "codex" : "claude";
+
+export function TabIcon({ kind, favicon, agent, provider = "claude", accountNumber, size = 16 }) {
   const [failed, setFailed] = useState("");
-  if (kind === "terminal" && agent) return <AgentIcon accountNumber={accountNumber} size={Math.max(20, size)} />;
-  if (kind === "terminal") return <TerminalSquare size={Math.max(20, size)} />;
+  if (kind === "terminal" && agent) return <ProviderMark provider={provider} accountNumber={accountNumber} />;
+  if (kind === "terminal") return <TerminalSquare size={16} />;
   if (kind === "editor") return <FileCode2 size={size} />;
   if (kind === "browser-settings") return <Settings size={size} />;
   if (typeof favicon === "string" && favicon.length <= 8192 &&
@@ -385,7 +387,7 @@ export function WorkspaceTabs({
               >
                 <TabIcon kind={tab.kind} favicon={tab.favicon} size={15}
                   agent={tab.terminalKind === "claude" || tab.terminalKind === "claude-login" || tab.terminalKind === "codex" || tab.terminalKind === "codex-login" || Boolean(tab.cli_session_id) || Boolean(tab.claude_account_id)}
-                  accountNumber={tab.claudeAccountNumber} />
+                  provider={terminalProvider(tab)} accountNumber={tab.claudeAccountNumber} />
                 <span>{title}</span>
                 {tab.claudeLabel && <small className="claude-tab-profile">{tab.claudeLabel}</small>}
                 {saved[tab.id]?.pinned && <Pin size={11} className="tab-pin" />}
@@ -466,7 +468,7 @@ export function WorkspaceTabs({
                     >
                       <TabIcon kind={tab.kind} favicon={tab.favicon}
                         agent={tab.terminalKind === "claude" || tab.terminalKind === "claude-login" || tab.terminalKind === "codex" || tab.terminalKind === "codex-login" || Boolean(tab.cli_session_id) || Boolean(tab.claude_account_id)}
-                        accountNumber={tab.claudeAccountNumber} />
+                        provider={terminalProvider(tab)} accountNumber={tab.claudeAccountNumber} />
                       <span>{tabName(tab, saved)}</span>
                       {tab.id === active && (
                         <span className="current-tab-marker">当前</span>

@@ -89,8 +89,9 @@ button.primary:hover:not(:disabled) {
   overflow: hidden;
   background: var(--paper);
 }
+/* Selection is ink, not the accent: clay stays for the one call to action. */
 .appearance-theme-card.current {
-  border-color: var(--focus);
+  border-color: var(--ink);
 }
 .theme-card-heading {
   display: flex;

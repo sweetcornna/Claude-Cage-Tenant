@@ -6,7 +6,6 @@ import {
   LoaderCircle,
   Power,
   RefreshCw,
-  SquareTerminal,
   TerminalSquare,
 } from "lucide-react";
 import { useAccount } from "./account";
@@ -15,6 +14,7 @@ import { EnvironmentShield } from "./environment-shield";
 import { GuestSystemPicker } from "./guest-system-picker";
 import { MacOSLogin } from "./macos-login";
 import { ProjectRecovery } from "./project-recovery";
+import { ProviderMark } from "./provider-mark";
 import { SafetyMessage } from "./safety-message";
 import { SetupProgress } from "./setup-progress";
 import { isCloudWorkbench, isRemoteClient } from "./client-context.mjs";
@@ -97,8 +97,8 @@ export function WorkbenchHome({
     <div className="welcome">
       <div className="welcome-content">
         <header className="home-hero">
-          <Drawing name={night ? "moon" : "sun"} className="home-daylight" />
           <p className="home-greeting">{greeting()}{account?.username ? "，" + account.username : ""}</p>
+          <Drawing name={night ? "moon" : "sun"} className="home-daylight" />
           <Drawing name="squiggle" className="home-underline" />
         </header>
 
@@ -228,7 +228,7 @@ export function WorkbenchHome({
                           disabled={busy || opening || elsewhere}
                           title={elsewhere ? "其他窗口占用中，退出原会话后可接续" : session.title}
                           onClick={() => onSessionOpen(session)}>
-                          <SquareTerminal size={16} className="home-row-icon" />
+                          <ProviderMark provider="claude" className="home-row-icon" />
                           <span className="list-row-text">
                             <span className="list-row-title">{session.title}</span>
                             <span className="list-row-meta">

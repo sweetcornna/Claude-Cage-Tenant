@@ -13,6 +13,15 @@
   line-height: 1.45;
 }
 
+/* History session rows (cli-sessions.css) match the live tab rows beside them. */
+:root .sidebar-tab > .sidebar-session {
+  gap: 8px;
+  min-height: 2.4286rem;
+  padding: 0 8px;
+  font-size: var(--fs-nav);
+  font-weight: 400;
+}
+
 :root .inline-select-trigger {
   justify-content: space-between;
   gap: 8px;

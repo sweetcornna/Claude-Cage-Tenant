@@ -55,7 +55,8 @@ export const superCage = {
       {
         background: "#faf9f5",
         foreground: "#1f1e1d",
-        cursor: "#d97757",
+        // A deeper clay so the cursor keeps 3:1 against the paper.
+        cursor: "#c96442",
         cursorAccent: "#faf9f5",
         selectionBackground: "#f0d5c7",
         black: "#1f1e1d",
@@ -111,7 +112,7 @@ export const superCage = {
         cursor: "#d97757",
         cursorAccent: "#1f1e1d",
         selectionBackground: "#5c3d30",
-        black: "#7e786c",
+        black: "#8f897d",
         red: "#f28b7d",
         green: "#7bc79a",
         yellow: "#e3b341",

@@ -327,9 +327,10 @@ test("Super Cage text, focus and terminal colours stay legible", () => {
     for (const group of terminalColorGroups)
       for (const [key] of group.entries) {
         if (["background", "selectionBackground", "cursorAccent", "cursor"].includes(key)) continue;
-        check(terminal[key], terminal.background, key === "black" && variant === "dark" ? 3 : 4.5, "terminal " + key);
+        check(terminal[key], terminal.background, 4.5, "terminal " + key);
       }
     check(terminal.foreground, terminal.selectionBackground, 4.5, "terminal selection");
+    check(terminal.cursor, terminal.background, 3, "terminal cursor");
   }
 });
 

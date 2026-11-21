@@ -1,6 +1,6 @@
 import React, { useLayoutEffect, useRef } from "react";
-import { Bot, TerminalSquare } from "lucide-react";
-import { AgentIcon } from "./agent-icon";
+import { TerminalSquare } from "lucide-react";
+import { ProviderMark } from "./provider-mark";
 
 export function TerminalMenu({ choice, busy, codex = false, onClose, onSelect }) {
   const menu = useRef(null);
@@ -56,10 +56,10 @@ export function TerminalMenu({ choice, busy, codex = false, onClose, onSelect })
         <TerminalSquare size={16} />普通终端
       </button>
       <button role="menuitem" disabled={busy} onClick={() => onSelect("claude")}>
-        <AgentIcon />Claude 终端
+        <ProviderMark provider="claude" decorative />Claude 终端
       </button>
       {codex && <button role="menuitem" disabled={busy} onClick={() => onSelect("codex")}>
-        <Bot size={16} />Codex 终端
+        <ProviderMark provider="codex" decorative />Codex 终端
       </button>}
     </div>
   );
