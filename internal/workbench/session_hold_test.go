@@ -115,7 +115,6 @@ func TestHeldSessionListLookInsideTheHoldEndsAtTheDeadline(t *testing.T) {
 
 func TestPlainSessionListAnswersWithinTheLookLimit(t *testing.T) {
 	previous := sessionLookLimit
-	sessionLookLimit = time.Second
 	t.Cleanup(func() { sessionLookLimit = previous })
 	s, id, project := metadataFixture(t)
 	home, _ := filepath.EvalSymlinks(t.TempDir())
@@ -128,7 +127,12 @@ func TestPlainSessionListAnswersWithinTheLookLimit(t *testing.T) {
 	observe := observedGuest(t, s, home)
 	observe([]terminalConversation{{CLIID: record.CLIID, Workspace: guestPath(project), Config: filepath.Join(home, ".claude"), Title: "guest", UpdatedAt: 1700000000}})
 	s.ready = true
+	// The first list sees the guest in full time; only the second is cut.
 	_, first := sessionList(t, s, "")
+	if len(first.Sessions) != 1 || first.Sessions[0].Title != "guest" {
+		t.Fatalf("the first list did not see the guest: %+v", first)
+	}
+	sessionLookLimit = time.Second
 	lockConversations(t, s, 4*time.Second)
 	started := time.Now()
 	code, answer := sessionList(t, s, "")
