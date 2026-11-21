@@ -618,3 +618,104 @@
 .settings-subpage .settings-fields > .text-button {
   margin-top: 40px;
 }
+
+/* 计算资源 with automatic allocation (internal/cage/resource-allocation.md §7):
+   the server's notice as a nudge card with one clay action, the two ways as
+   choice rows, the manual sliders under them, then advice and one quiet row
+   of live figures. An older server keeps the controls above. */
+.settings-subpage .resource-automatic .resource-notice {
+  margin: 4px 0 20px;
+  padding: 16px 18px;
+}
+.settings-page .settings-subpage .resource-automatic .resource-notice p {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-secondary);
+  line-height: 1.7;
+}
+.settings-subpage .resource-automatic .resource-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-top: 12px;
+}
+.settings-page .settings-subpage .resource-automatic .resource-notice-actions button {
+  min-height: var(--h-compact);
+  padding: 0 14px;
+  border-radius: var(--r-md);
+  font-size: var(--fs-secondary);
+}
+.settings-page .settings-subpage .resource-automatic .resource-notice-actions .text-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 500;
+}
+.settings-page .settings-subpage .resource-automatic .resource-notice-actions .text-button:hover:enabled { color: var(--ink); }
+.settings-page .settings-content .resource-automatic .resource-modes { margin: 0 0 16px; }
+.settings-subpage .resource-automatic .resource-mode-figure {
+  margin-left: 10px;
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.settings-subpage .resource-automatic .choice.checked .resource-mode-figure { color: var(--ink); }
+.settings-page .settings-content .resource-automatic .resource-sliders {
+  margin: 0 0 4px;
+  padding: 16px 18px;
+  border-radius: var(--r-lg);
+  background: var(--soft);
+}
+.settings-subpage .resource-automatic .resource-field { display: grid; gap: 8px; min-width: 0; }
+.settings-subpage .resource-automatic .resource-field > span:first-child { color: var(--ink); font-size: var(--fs-secondary); font-weight: 500; }
+.settings-subpage .resource-automatic .resource-slider-row { display: grid; grid-template-columns: minmax(0, 1fr) 7.5rem; align-items: center; gap: 12px; }
+.settings-subpage .resource-automatic .resource-slider-row input[type="range"] { width: 100%; margin: 0; accent-color: var(--ink); }
+.settings-page .settings-content .resource-automatic .resource-input input { height: var(--h-control); padding-right: 40px; font-size: var(--fs-body); }
+.settings-page .resource-automatic .resource-input > span { right: 28px; }
+.settings-subpage .resource-automatic .resource-actions { margin-top: 16px; }
+.settings-subpage .resource-automatic .resource-advice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 16px;
+  margin: 16px 0 0;
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--amber) 11%, var(--surface));
+}
+.settings-subpage .resource-automatic .resource-restart { background: var(--soft); }
+.settings-page .settings-subpage .resource-automatic .resource-advice p { flex: 1 1 20em; margin: 0; color: var(--ink); font-size: var(--fs-secondary); line-height: 1.65; }
+.settings-page .settings-subpage .resource-automatic .resource-advice .text-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--clay-ink);
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+}
+.settings-subpage .resource-automatic .resource-live {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 20px;
+  margin: 20px 0 0;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--line);
+  color: var(--ink);
+  font-size: var(--fs-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.settings-subpage .resource-automatic .resource-live-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  color: var(--muted);
+  font-weight: 500;
+}
+.settings-subpage .resource-automatic .resource-live-state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+.settings-subpage .resource-automatic .resource-live-state[data-tone="amber"] { color: var(--amber); }
+.settings-subpage .resource-automatic .resource-live-state[data-tone="amber"]::before { background: var(--amber); }
+.settings-subpage .resource-automatic .resource-live-figure small { margin-right: 6px; color: var(--muted); font-size: var(--fs-caption); }

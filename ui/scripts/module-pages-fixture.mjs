@@ -122,6 +122,35 @@ export const resources = (now) => ({
     guest: { total_bytes: 6 * 2 ** 30, available_bytes: 3.4 * 2 ** 30, oom_kills: 0 } },
 });
 
+// The automatic allocation answers (internal/cage/resource-allocation.md §7.10),
+// one per state of the 计算资源 section; "older" is a server without them.
+export function resourceAllocations(now) {
+  const GiB = 2 ** 30;
+  const sample = (extra = {}) => ({ observed_at: new Date(now).toISOString(), maximum_bytes: 6 * GiB, target_bytes: 4 * GiB, cpus: 5, cpu_percent: 23.4,
+    capacity_bytes: 5.2 * GiB, demand_bytes: 2.6 * GiB, possible_bytes: 6 * GiB, summary: "环境内存充足（分配 4 GB，需要 2.6 GB）。", next_action: "无需操作。",
+    guest: { total_bytes: 4 * GiB, available_bytes: 1.6 * GiB, oom_kills: 0 }, ...extra });
+  const base = { running: true, max_memory_gib: 6, max_cpus: 5, recommended_memory_bytes: 6 * GiB, recommended_cpus: 5,
+    automatic_memory_gib: 6, automatic_cpus: 5, possible_memory_bytes: 6 * GiB, resource_error: "" };
+  return {
+    automatic: { ...base, automatic: true, allocation_origin: "automatic", memory_gib: 6, cpus: 5, configured_memory_bytes: 6 * GiB, configured_cpus: 5,
+      restart_required: false, observation: sample() },
+    restart: { ...base, automatic: true, allocation_origin: "automatic", memory_gib: 6, cpus: 5, configured_memory_bytes: 3 * GiB, configured_cpus: 3,
+      restart_required: true, notice: "自动分配已按这台机器重新计算为内存 6 GB、CPU 5 核，重启环境后生效。",
+      observation: sample({ maximum_bytes: 3 * GiB, target_bytes: 3 * GiB }) },
+    legacy: { ...base, automatic: false, allocation_origin: "legacy_default", memory_gib: 3, cpus: 3, configured_memory_bytes: 3 * GiB, configured_cpus: 3,
+      restart_required: false, legacy_allocation: true,
+      notice: "内存 3 GB、CPU 3 核与旧版本的默认设置相同。改为自动（推荐）后，这台机器可以给到 6 GB、5 核，需要重启环境；如果这是你特意设的，可以保留。",
+      offer: { automatic: true, memory_gib: 6, cpus: 5, restart_required: true }, observation: sample({ maximum_bytes: 3 * GiB, target_bytes: 3 * GiB }) },
+    advice: { ...base, automatic: false, allocation_origin: "user", memory_gib: 3, cpus: 2, configured_memory_bytes: 3 * GiB, configured_cpus: 2,
+      restart_required: false,
+      advice: { message: "环境内存已用满手动设置的 3 GB。改为自动（推荐）后可以调到 6 GB，需要重启环境。", memory_bytes: 6 * GiB, restart_required: true },
+      observation: sample({ maximum_bytes: 3 * GiB, target_bytes: 3 * GiB, short: true, limited_by: "maximum", guest: { total_bytes: 3 * GiB, available_bytes: 0.2 * GiB, oom_kills: 0 },
+        summary: "环境内存紧张（分配 3 GB，需要 3.4 GB），已到上限。" }) },
+    manual: null,
+    older: { automatic: true, memory_gib: 12, cpus: 5, running: false, recommended_memory_bytes: 12 * GiB, recommended_cpus: 5, max_memory_gib: 12, max_cpus: 5 },
+  };
+}
+
 export const aboutBuild = { version: "0.1.15", commit: "b213406c0ffee5e1d9a0c4c2f5b7d81a90e3f2aa", modified: false };
 export const aboutCheck = (now) => ({
   build: aboutBuild,
@@ -195,7 +224,7 @@ export async function routeModulePages(page, state, options = {}) {
   await page.route("**/api/environment/cache/inventory", (route) => variant() === "error"
     ? failed(route, "测试：请重新盘点，已有资料保留。") : json(route, variant() === "empty" ? { ...cacheInventory(now), items: [], batches: [] } : cacheInventory(now)));
   await page.route("**/api/environment/resources", (route) => route.request().method() === "GET"
-    ? json(route, resources(now)) : json(route, { ok: true }));
+    ? json(route, (variant() === "manual" ? resourceAllocations(now).automatic : resourceAllocations(now)[variant()]) || resources(now)) : json(route, { ok: true }));
   await page.route("**/api/diagnostics", (route) => json(route, { bytes: 12.4 * 1024 * 1024, files: 37 }));
   await page.route("**/api/environment/storage", (route) => json(route, { directory: "/Volumes/Studio SSD/Super Cage/环境", has_environment: true, backup: "/Users/shihao/Library/Application Support/Super Cage/backup-2026-11-18" }));
   await page.route("**/api/client/about", (route) => {
