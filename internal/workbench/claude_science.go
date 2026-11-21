@@ -303,8 +303,8 @@ func (s *Server) claudeScienceOperation() string {
 }
 
 func (s *Server) claudeScienceStatus(w http.ResponseWriter, r *http.Request) {
-	unsupported, refused := s.claudeScienceUnsupported()
-	if refused && (s.windowsGuest != nil || s.macosGuest != nil || !s.vmRunning()) {
+	// A local guest has the host's architecture, so the guest is not asked.
+	if unsupported, refused := s.claudeScienceUnsupported(); refused {
 		jsonReply(w, unsupported)
 		return
 	}

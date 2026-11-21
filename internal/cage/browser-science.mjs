@@ -71,18 +71,22 @@ export function publicScienceURL(value, port) {
 // Hosts of the documented sign-in hop; the tab passes through them.
 const signInHosts = ["claude.ai", "claude.com", "console.anthropic.com", "platform.claude.com", "platform.anthropic.com"];
 
+// How long after a link was handed over its tab counts as signing in.
+export const scienceSignInWindow = 15 * 60 * 1000;
+
 // Whether the tab given the last link can simply be brought forward: it shows
-// the app, or is in the middle of signing in. A tab left on a link or on the
-// link's form needs a fresh link (single-use, ~3 minutes); a tab the user
-// took elsewhere is left alone.
-export function scienceTabReusable(value, port) {
+// the app, or is in the middle of signing in (signingIn: within the window).
+// A tab left on a link or on the link's form needs a fresh link (single-use,
+// ~3 minutes); a tab the user took elsewhere, including claude.ai after the
+// window, is left alone.
+export function scienceTabReusable(value, port, signingIn = false) {
   if (isScienceURL(value, port)) {
     const url = new URL(value);
     return !url.searchParams.has("nonce") && url.pathname !== "/api/auth/nonce";
   }
   try {
     const url = new URL(value);
-    return url.protocol === "https:" && !url.username && !url.password && signInHosts.includes(url.hostname);
+    return signingIn === true && url.protocol === "https:" && !url.username && !url.password && signInHosts.includes(url.hostname);
   } catch {
     return false;
   }

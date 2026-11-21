@@ -11,11 +11,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/sylvinus/agent-vm/internal/cage"
+	"github.com/sylvinus/agent-vm/internal/diagnostics"
 	"github.com/sylvinus/agent-vm/internal/guestos"
 )
 
@@ -556,5 +558,61 @@ func TestClaudeScienceOpenHandsTheLinkToTheAgent(t *testing.T) {
 		if _, status, err := s.openClaudeScienceLink(t.Context(), "agent-token", []byte(output), false); status != want || err == nil || strings.Contains(err.Error(), nonce) {
 			t.Fatalf("%q: %d %v", output, status, err)
 		}
+	}
+}
+
+// The installer downloads through the maintenance proxy, which only admits
+// listed software sources.
+func TestClaudeScienceDownloadIsAMaintenanceSource(t *testing.T) {
+	script := cage.ClaudeScienceInstallScript()
+	match := regexp.MustCompile(`https://([a-z0-9.-]+)/operon-dist-[0-9a-f-]+/operon-releases/`).FindStringSubmatch(script)
+	if match == nil {
+		t.Fatal("installer has no pinned download URL")
+	}
+	if !maintenanceDestination(match[1]+":443", true) || maintenanceDestination(match[1]+":80", false) || maintenanceDestination(match[1]+".evil.test:443", true) {
+		t.Fatalf("maintenance proxy policy for %s", match[1])
+	}
+}
+
+// The daemon prints its link into the guest journal; diagnostics keep none.
+func TestClaudeScienceLinkNeverReachesDiagnostics(t *testing.T) {
+	nonce := "0123456789abcdef0123456789abcdef"
+	for _, line := range []string{
+		"[claude-science] Web UI: http://localhost:47800/?nonce=" + nonce,
+		"open http://127.0.0.1:47800/?nonce=" + nonce + " in a browser",
+	} {
+		if got := diagnostics.Redact(line); strings.Contains(got, nonce) {
+			t.Fatalf("diagnostics keep the link: %s", got)
+		}
+	}
+}
+
+// Through the real middleware: native guests read the unsupported status and
+// never reach an action.
+func TestClaudeScienceNativeGuestsThroughTheWorkbench(t *testing.T) {
+	withScienceHostArch(t, "amd64")
+	for name, setup := range map[string]func(*Server){
+		"windows": func(s *Server) { s.windowsGuest = &guestos.WindowsProfile{} },
+		"macos":   func(s *Server) { s.macosGuest = &guestos.MacOSProfile{Instance: "test", User: "test"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := testServer(t)
+			setup(s)
+			w := windowsBrowserRequestForTest(s, "GET", "/api/claude-science", nil)
+			if w.Code != 200 {
+				t.Fatalf("status: %d %s", w.Code, w.Body)
+			}
+			if state := decodeScienceState(t, w.Body.Bytes()); state.Supported || state.UnsupportedCode != "guest_system" {
+				t.Fatalf("%+v", state)
+			}
+			for _, action := range []string{"install", "start", "open"} {
+				w := windowsBrowserRequestForTest(s, "POST", "/api/claude-science/"+action, []byte("{}"))
+				// The handler would answer with its own reason; the route
+				// allowlist stops the request before it.
+				if w.Code < 400 || strings.Contains(w.Body.String(), scienceReasonGuestSystem) {
+					t.Fatalf("%s reached on a %s guest: %d %s", action, name, w.Code, w.Body)
+				}
+			}
+		})
 	}
 }

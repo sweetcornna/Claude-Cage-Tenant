@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { isScienceURL, publicScienceURL, readScienceConfig, scienceLink, scienceTabReusable } from "./browser-science.mjs";
+import { isScienceURL, publicScienceURL, readScienceConfig, scienceLink, scienceSignInWindow, scienceTabReusable } from "./browser-science.mjs";
 
 const port = 47800;
 const nonce = "0123456789abcdef0123456789abcdef";
@@ -112,14 +112,20 @@ test("Science tabs are recognized by origin and lose their secrets in public sta
 });
 
 test("the tab given the last link is brought forward only while it shows the app or signs in", () => {
-  for (const value of [
-    `http://localhost:${port}/`,
-    `http://localhost:${port}/projects/1?view=plot`,
-    `http://localhost:${port}/oauth/code/callback?code=x&state=y`,
-    "https://claude.ai/oauth/authorize?client_id=x",
-    "https://claude.ai/login",
-    "https://platform.claude.com/v1/oauth/token",
-  ]) assert.equal(scienceTabReusable(value, port), true, value);
+  const app = [`http://localhost:${port}/`, `http://localhost:${port}/projects/1?view=plot`, `http://localhost:${port}/oauth/code/callback?code=x&state=y`];
+  const signIn = ["https://claude.ai/oauth/authorize?client_id=x", "https://claude.ai/login", "https://platform.claude.com/v1/oauth/token"];
+  for (const value of app) {
+    assert.equal(scienceTabReusable(value, port), true, value);
+    assert.equal(scienceTabReusable(value, port, true), true, value);
+  }
+  // Sign-in hosts count only right after a link was handed over: later the
+  // user may simply be using claude.ai in that tab.
+  for (const value of signIn) {
+    assert.equal(scienceTabReusable(value, port, true), true, value);
+    assert.equal(scienceTabReusable(value, port, false), false, value);
+    assert.equal(scienceTabReusable(value, port), false, value);
+  }
+  assert.equal(scienceSignInWindow, 15 * 60 * 1000);
   for (const value of [
     good,
     `http://localhost:${port}/?nonce=expired0123456789`,
@@ -132,5 +138,5 @@ test("the tab given the last link is brought forward only while it shows the app
     "chrome://newtab/",
     `http://localhost:47801/`,
     "not a url",
-  ]) assert.equal(scienceTabReusable(value, port), false, value);
+  ]) assert.equal(scienceTabReusable(value, port, true), false, value);
 });
