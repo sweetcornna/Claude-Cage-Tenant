@@ -1,6 +1,7 @@
-// The terminal on the WebGL renderer: chosen automatically in Chromium, same
-// grid metrics as the DOM renderer, IME commits, selection and copy, links,
-// and a lost WebGL context falling back to the DOM renderer with its text.
+// The terminal on the WebGL renderer: chosen automatically in Chromium, cells
+// within half a device pixel of the DOM renderer's and a grid fitted to the
+// pane again after the switch, IME commits, selection and copy, links, and a
+// lost WebGL context falling back to the DOM renderer with its text.
 import assert from "node:assert/strict";
 import { createWorkbench } from "./workbench-fixture.mjs";
 
@@ -35,13 +36,20 @@ async function open(renderer) {
 }
 
 const renderer = (page) => page.evaluate(() => window.__cagePerf.terminals.at(-1).renderer);
-let dom;
+// The drawn grid: screen width per column, and the room the pane offers.
+const grid = (page, cols) => page.evaluate((cols) => {
+  const view = document.querySelector(".terminal-view:not(.concealed)");
+  const screen = view.querySelector(".xterm-screen").getBoundingClientRect();
+  return { cell: screen.width / cols, width: screen.width, room: view.querySelector(".terminal-host").clientWidth, ratio: devicePixelRatio };
+}, cols);
+let dom, webglCell = 0, domCell = 0;
 try {
   dom = await open("dom");
   await dom.page.locator(".xterm-rows").getByText("COPY-THIS-LINE").waitFor();
   await dom.page.waitForTimeout(300);
   assert.equal(await renderer(dom.page), "dom");
   const domSize = dom.resizes.at(-1);
+  const domGrid = await grid(dom.page, domSize[0]);
   await dom.browser.close();
   dom = null;
 
@@ -51,7 +59,17 @@ try {
     assert.equal(await page.locator(".xterm-rows").count(), 0, "WebGL draws the grid instead of DOM rows");
     assert.ok(await page.locator(".terminal-view:not(.concealed) .xterm-screen canvas").count() >= 1);
     await page.waitForTimeout(300);
-    assert.deepEqual(resizes.at(-1), domSize, "the same font metrics give the same grid as the DOM renderer");
+    // WebGL floors the advance to device pixels; the letter spacing brings the
+    // cell back within half a device pixel, and the grid is fitted again.
+    const [webglCols, webglRows] = resizes.at(-1);
+    const webglGrid = await grid(page, webglCols);
+    webglCell = webglGrid.cell;
+    domCell = domGrid.cell;
+    assert.ok(Math.abs(webglGrid.cell - domGrid.cell) * webglGrid.ratio <= 0.5 + 1e-6,
+      `WebGL cell ${webglGrid.cell} px vs DOM ${domGrid.cell} px`);
+    assert.equal(webglRows, domSize[1], "rows keep the DOM renderer's height");
+    assert.ok(Math.abs(webglCols - domSize[0]) <= Math.max(1, Math.ceil(domSize[0] * 0.07)), `cols ${webglCols} vs ${domSize[0]}`);
+    assert.ok(webglGrid.room - webglGrid.width < webglGrid.cell * 2 + 20, `the grid leaves ${webglGrid.room - webglGrid.width} px unused`);
 
     // Selection and copy: drag over the second line and copy it.
     const screen = await page.locator(".terminal-view:not(.concealed) .xterm-screen").boundingBox();
@@ -108,7 +126,10 @@ try {
     await page.waitForFunction(() => window.__cagePerf.terminals.at(-1).renderer === "dom", null, { timeout: 10000 });
     await page.locator(".xterm-rows").getByText("INPUT_DONE").waitFor();
     assert.ok((await page.locator(".xterm-rows").textContent()).includes("COPY-THIS-LINE"));
+    // Back on DOM cells: the grid is fitted and sent to the server again.
+    for (let i = 0; i < 40 && resizes.at(-1)[0] === webglCols; i++) await page.waitForTimeout(25);
+    assert.deepEqual(resizes.at(-1), domSize, "after a lost context the grid is the DOM renderer's again");
     assert.deepEqual(errors, []);
-    console.log("PASS: WebGL chosen in Chromium, same grid as DOM, selection copy, links, IME commits, and DOM fallback after a lost context");
+    console.log(`PASS: WebGL chosen in Chromium, cells ${webglCell.toFixed(3)} px vs DOM ${domCell.toFixed(3)} px, grid refitted, selection copy, links, IME commits, and DOM fallback after a lost context`);
   } finally { await browser.close(); }
 } finally { await dom?.browser.close(); }

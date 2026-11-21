@@ -363,7 +363,8 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
     // WebGL draws the grid off the main thread's layout work; the DOM
     // renderer stays as the fallback. See terminal-renderer.mjs.
     const perf = cagePerf().terminal(session.id);
-    const draw = createTerminalRenderer(terminal, { onChange: (kind) => { perf.renderer = kind; } });
+    // A renderer change can change the cell width: fit and tell the server.
+    const draw = createTerminalRenderer(terminal, { onChange: (kind) => { perf.renderer = kind; resize(); } });
     renderer.current = draw;
     if (visibleRef.current) draw.show();
     // One xterm lives as long as the view; streams come and go beneath it.
@@ -747,6 +748,7 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
           10,
           Math.min(26, terminal.options.fontSize + (key === "-" ? -1 : 1)),
         );
+        draw.align();
         resize();
         return false;
       }
@@ -811,6 +813,7 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
     instance.current.options.theme = terminalTheme(theme, variant);
     instance.current.options.fontFamily = theme.fonts.code || systemCodeFont;
     instance.current.options.fontSize = appearance.codeFontSize;
+    renderer.current?.align();
     if (visibleRef.current) fit.current?.fit();
   }, [theme, variant, appearance.codeFontSize]);
   const ended = session.closed || link === "ended";

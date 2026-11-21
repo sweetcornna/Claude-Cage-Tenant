@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { browserEngine, createTerminalRenderer, readTerminalRendererChoice, terminalRendererKey, wantsWebgl } from "./terminal-renderer.mjs";
+import {
+  browserEngine, createTerminalRenderer, readTerminalRendererChoice, terminalRendererKey, wantsWebgl, webglLetterSpacing,
+} from "./terminal-renderer.mjs";
 
 const storage = (value) => ({ getItem: (key) => key === terminalRendererKey ? value : null });
 
@@ -29,7 +31,7 @@ test("auto uses WebGL only on Blink with WebGL2; the setting overrides", () => {
 });
 
 function fakeTerminal() {
-  return { loaded: [], loadAddon(addon) { this.loaded.push(addon); addon.activate?.(this); } };
+  return { loaded: [], options: {}, loadAddon(addon) { this.loaded.push(addon); addon.activate?.(this); } };
 }
 function fakeAddon(log = []) {
   return class {
@@ -54,6 +56,46 @@ test("a shown terminal gets WebGL; a lost context returns it to the DOM renderer
   await settle();
   assert.equal(made.length, 1, "no second attempt after a context loss");
   assert.deepEqual(changes, ["webgl", "dom"]);
+});
+
+test("WebGL cells stay within half a device pixel of the DOM renderer's", () => {
+  // The WebGL renderer uses floor(advance × ratio) device pixels plus the spacing.
+  for (const ratio of [1, 1.25, 1.5, 2]) {
+    for (const advance of [6.6, 7.2, 7.5, 7.8, 7.875, 8.4, 9.01]) {
+      const device = advance * ratio;
+      const cell = Math.floor(device) + webglLetterSpacing(advance, ratio);
+      assert.ok(Math.abs(cell - device) <= 0.5 + 1e-9, `${advance} px at ${ratio}x: ${cell} device px for ${device}`);
+    }
+  }
+  assert.equal(webglLetterSpacing(7.875, 1), 1);
+  assert.equal(webglLetterSpacing(7.2, 1), 0);
+  assert.equal(webglLetterSpacing(8, 2), 0);
+  assert.equal(webglLetterSpacing(undefined, 2), 0);
+  assert.equal(webglLetterSpacing(7.8, NaN), 0);
+});
+
+test("letter spacing follows the renderer, the font and the pixel ratio", async () => {
+  const made = [];
+  const terminal = fakeTerminal();
+  let advance = 7.875, ratio = 1, ratioChanged = null, unwatched = 0;
+  const renderer = createTerminalRenderer(terminal, {
+    load: async () => fakeAddon(made), enabled: () => true, live: new Set(),
+    measure: () => advance, pixelRatio: () => ratio,
+    watchRatio: (callback) => { ratioChanged = callback; return () => { unwatched++; }; },
+  });
+  assert.equal(terminal.options.letterSpacing, undefined, "the DOM renderer keeps xterm's default");
+  renderer.show();
+  await settle();
+  assert.equal(terminal.options.letterSpacing, 1, "7.875 px at 1x: an 8 px cell instead of 7");
+  advance = 7.2;
+  renderer.align();
+  assert.equal(terminal.options.letterSpacing, 0, "a font change measures again");
+  ratio = 1.5;
+  ratioChanged();
+  assert.equal(terminal.options.letterSpacing, 1, "7.2 px at 1.5x: an 11 px cell instead of 10");
+  made[0].lose();
+  assert.equal(terminal.options.letterSpacing, 0, "the DOM renderer gets no spacing back");
+  assert.equal(unwatched, 1, "the ratio watch ends with WebGL");
 });
 
 test("a renderer that cannot start stays on the DOM renderer", async () => {

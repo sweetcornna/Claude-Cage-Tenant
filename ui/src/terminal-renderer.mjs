@@ -54,6 +54,22 @@ export function webgl2Available(doc = globalThis.document) {
 
 const loadWebgl = () => import("@xterm/addon-webgl").then((module) => module.WebglAddon);
 
+// xterm's WebGL renderer floors the glyph advance to whole device pixels: a
+// 7.875 px advance becomes a 7 px cell at 1x and 15 device pixels at 2x,
+// which packs the text tighter than the DOM renderer and changes the grid.
+// Its letterSpacing is added in device pixels, so one pixel of spacing when
+// the advance is nearer the next pixel keeps every cell within half a device
+// pixel of the DOM renderer's.
+export function webglLetterSpacing(charWidth, pixelRatio) {
+  const device = charWidth * pixelRatio;
+  if (!Number.isFinite(device) || device <= 0) return 0;
+  return Math.round(device) - Math.floor(device);
+}
+
+// The DOM-measured advance xterm uses for both renderers (FitAddon reads the
+// same private services).
+const measuredCharWidth = (terminal) => terminal._core?._charSizeService?.width;
+
 // One controller per terminal. show() asks for WebGL, hide() lets the
 // context go to a terminal shown later; the DOM renderer draws meanwhile.
 function webglWanted() {
@@ -66,15 +82,27 @@ function webglWanted() {
 export function createTerminalRenderer(terminal, {
   load = loadWebgl, enabled = webglWanted,
   live = sharedContexts, budget = webglContextBudget, onChange = () => {},
+  measure = () => measuredCharWidth(terminal), pixelRatio = () => globalThis.devicePixelRatio || 1,
+  watchRatio = watchPixelRatio,
 } = {}) {
-  let addon = null, loading = false, failed = false, disposed = false, wanted = false;
+  let addon = null, loading = false, failed = false, disposed = false, wanted = false, unwatch = null;
+  // Letter spacing only while WebGL draws; the DOM renderer keeps none.
+  const align = () => {
+    const spacing = addon ? webglLetterSpacing(measure(), pixelRatio()) : 0;
+    if ((terminal.options.letterSpacing || 0) !== spacing) terminal.options.letterSpacing = spacing;
+  };
   const release = () => {
     if (!addon) return;
     const current = addon;
     addon = null;
+    unwatch?.();
+    unwatch = null;
     live.delete(controller);
     try { current.dispose(); } catch { /* The DOM renderer is back either way. */ }
-    if (!disposed) onChange("dom");
+    if (!disposed) {
+      align();
+      onChange("dom");
+    }
   };
   const controller = {
     get kind() { return addon ? "webgl" : "dom"; },
@@ -91,6 +119,8 @@ export function createTerminalRenderer(terminal, {
         next.onContextLoss(() => { failed = true; release(); });
         terminal.loadAddon(next);
         addon = next;
+        align();
+        unwatch = watchRatio(align);
         live.add(controller);
         // The terminals shown longest ago give their contexts back.
         for (const other of live) {
@@ -106,6 +136,8 @@ export function createTerminalRenderer(terminal, {
       });
     },
     hide() { wanted = false; },
+    // After a font change: the advance and so the spacing may differ.
+    align,
     evict() { release(); },
     dispose() { disposed = true; wanted = false; release(); },
   };
@@ -113,3 +145,17 @@ export function createTerminalRenderer(terminal, {
 }
 
 const sharedContexts = new Set();
+
+// Calls back when the device pixel ratio changes (another screen, zoom).
+function watchPixelRatio(callback) {
+  if (typeof globalThis.matchMedia !== "function") return () => {};
+  let query = null;
+  const arm = () => {
+    query?.removeEventListener("change", changed);
+    query = globalThis.matchMedia(`(resolution: ${globalThis.devicePixelRatio || 1}dppx)`);
+    query.addEventListener("change", changed);
+  };
+  function changed() { arm(); callback(); }
+  arm();
+  return () => query?.removeEventListener("change", changed);
+}
