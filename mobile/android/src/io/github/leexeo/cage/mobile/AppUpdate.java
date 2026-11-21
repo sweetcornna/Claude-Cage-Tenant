@@ -190,7 +190,7 @@ final class AppUpdate {
             activity.startActivityForResult(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                     Uri.parse("package:" + activity.getPackageName())), ALLOW_INSTALL);
         } catch (RuntimeException e) {
-            message("请在系统设置中允许 Cage 安装未知应用，再到「检查更新」继续。");
+            message("请在系统设置中允许 Super Cage 安装未知应用，再到「检查更新」继续。");
         }
     }
 

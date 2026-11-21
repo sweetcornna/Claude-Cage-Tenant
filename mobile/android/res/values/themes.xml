@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Ink of the hand-drawn logo and doodles; the light and dark themes set it. -->
+    <attr name="cageInk" format="color" />
+    <color name="cage_paper_light">#FFFAF9F5</color>
+    <color name="cage_paper_dark">#FF1F1E1D</color>
+    <color name="cage_icon_background">#FFF5F0E6</color>
+
+    <style name="CageLight" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="cageInk">#FF1F1E1D</item>
+        <item name="android:colorAccent">#FFA4482A</item>
+        <item name="android:colorPrimary">#FFFAF9F5</item>
+        <item name="android:colorPrimaryDark">#FFFAF9F5</item>
+        <item name="android:colorBackground">#FFFAF9F5</item>
+        <item name="android:windowBackground">@color/cage_paper_light</item>
+        <item name="android:textColorHighlight">#40D97757</item>
+        <item name="android:alertDialogTheme">@style/CageDialogLight</item>
+    </style>
+    <style name="CageDark" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="cageInk">#FFF3EFE5</item>
+        <item name="android:colorAccent">#FFE8936F</item>
+        <item name="android:colorPrimary">#FF1F1E1D</item>
+        <item name="android:colorPrimaryDark">#FF1F1E1D</item>
+        <item name="android:colorBackground">#FF1F1E1D</item>
+        <item name="android:windowBackground">@color/cage_paper_dark</item>
+        <item name="android:textColorHighlight">#55D97757</item>
+        <item name="android:alertDialogTheme">@style/CageDialogDark</item>
+    </style>
+    <style name="CageDialogLight" parent="@android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorAccent">#FFA4482A</item>
+        <item name="android:colorBackground">#FFFFFFFF</item>
+        <item name="android:textColorPrimary">#FF1F1E1D</item>
+        <item name="android:textColorSecondary">#FF6B655B</item>
+        <item name="android:dialogCornerRadius">20dp</item>
+    </style>
+    <style name="CageDialogDark" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">#FFE8936F</item>
+        <item name="android:colorBackground">#FF2A2926</item>
+        <item name="android:textColorPrimary">#FFF3EFE5</item>
+        <item name="android:textColorSecondary">#FFABA597</item>
+        <item name="android:dialogCornerRadius">20dp</item>
+    </style>
+    <!-- The starting window follows the system until MainActivity applies the saved theme. -->
+    <style name="CageLaunch" parent="CageLight" />
+</resources>

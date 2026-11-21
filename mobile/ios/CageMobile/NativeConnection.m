@@ -4,6 +4,7 @@
 #import <TargetConditionals.h>
 #import <sys/utsname.h>
 #import <UIKit/UIKit.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #if TARGET_OS_SIMULATOR && CAGE_SIMULATOR_DEBUG
 static const BOOL simulatorIdentity = YES;
@@ -214,4 +215,25 @@ static NSString *serverMessage(NSError *failure, NSString *fallback) {
     return [CMConnection workspaceWithClient:client assets:assets error:error];
 }
 - (void)close { [_tenant close]; }
+@end
+
+@implementation CMSharedFile
++ (NSURL *)writeName:(NSString *)name mime:(NSString *)mime data:(NSString *)data error:(NSError **)error {
+    NSError *failure = nil;
+    CagemobileSharedFile *file = CagemobileDecodeSharedFile(name, mime, data, &failure);
+    if (!file || failure) { setError(error, serverMessage(failure, @"无法分享这个文件。")); return nil; }
+    NSString *fileName = file.name;
+    // Share targets pick their handling from the extension.
+    NSString *extension = [UTType typeWithMIMEType:file.mime].preferredFilenameExtension;
+    if (!fileName.pathExtension.length && extension.length) fileName = [fileName stringByAppendingPathExtension:extension] ?: fileName;
+    NSURL *directory = [[NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES]
+        URLByAppendingPathComponent:[@"share/" stringByAppendingString:NSUUID.UUID.UUIDString] isDirectory:YES];
+    NSURL *url = [directory URLByAppendingPathComponent:fileName isDirectory:NO];
+    if (![NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:nil] ||
+        ![file.data ?: [NSData data] writeToURL:url options:NSDataWritingAtomic | NSDataWritingFileProtectionComplete error:nil]) {
+        [NSFileManager.defaultManager removeItemAtURL:directory error:nil];
+        setError(error, @"无法准备要分享的文件，请重试。"); return nil;
+    }
+    return url;
+}
 @end

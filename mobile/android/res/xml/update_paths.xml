@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="updates" path="updates/" />
+    <!-- Files the workbench shares, and camera photos for file inputs. -->
+    <cache-path name="shared" path="shared/" />
+    <cache-path name="captures" path="captures/" />
 </paths>
