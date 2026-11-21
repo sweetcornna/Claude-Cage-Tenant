@@ -163,6 +163,26 @@ export function resourceAllocations(now) {
   };
 }
 
+// Tailscale states for the panel (tailscale-smoke shapes), long names included.
+export function tailscaleState(variant) {
+  const base = { installed: true, version: "1.104.5", enabled: false, backend: "Stopped", ips: [], peers: [], keys: [], forwards: [], user: "cage", ssh_port: 22 };
+  const connected = { ...base, enabled: true, backend: "Running", tailnet: "林间私网", account: "studio@linjian.example", name: "cage-workbench.tail1234.ts.net",
+    hostname: "cage-workbench", os: "linux", ips: ["100.88.2.3", "fd7a:115c:a1e0::3"], proxy_url: "http://cage:fixture-credential@127.0.0.1:32100",
+    keys: ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM2b7y0k3dW4fV1x6mQp9rZ0xY8u7t6s5r4q3p2o1n0m studio@MacBook-Pro"],
+    forwards: [{ host: "100.88.2.4", port: 5173, address: "127.0.0.1:41873" }],
+    peers: [
+      { name: "studio-macbook-pro.tail1234.ts.net", hostname: "studio-macbook-pro", os: "macOS", ip: "100.88.2.4", online: true },
+      { name: "iphone-16-pro-max.tail1234.ts.net", hostname: "iphone-16-pro-max", os: "iOS", ip: "100.88.2.7", online: true },
+      { name: "render-farm-node-with-a-very-long-hostname-for-overnight-jobs.tail1234.ts.net", hostname: "render-farm-node-with-a-very-long-hostname-for-overnight-jobs", os: "linux", ip: "100.88.2.12", online: false },
+      { name: "nas.tail1234.ts.net", hostname: "nas", os: "linux", ip: "100.88.2.5", online: false },
+    ] };
+  if (variant === "connected") return connected;
+  if (variant === "login") return { ...base, enabled: true, backend: "NeedsLogin", auth_url: "https://login.tailscale.com/a/fixture-login" };
+  if (variant === "health") return { ...connected, peers: [], health: ["Tailscale 无法连接到协调服务器：DNS 解析超时。", "此设备的密钥将在 3 天后过期，请在管理台续期。"] };
+  if (variant === "missing") return { ...base, installed: false };
+  return base;
+}
+
 export const aboutBuild = { version: "0.1.15", commit: "b213406c0ffee5e1d9a0c4c2f5b7d81a90e3f2aa", modified: false };
 export const aboutCheck = (now) => ({
   build: aboutBuild,
@@ -245,6 +265,10 @@ export async function routeModulePages(page, state, options = {}) {
     return json(route, aboutCheck(now));
   });
   const seconds = Math.floor(now / 1000);
+  await page.route("**/api/tailscale**", (route) => {
+    const tail = ["connected", "login", "health", "stopped", "missing"].includes(variant()) ? variant() : "stopped";
+    return json(route, tailscaleState(tail));
+  });
   await page.route("**/api/claude-accounts*", (route) => {
     if (variant() === "error") return json(route, { accounts: claudeAccounts(seconds).slice(0, 2), detection_status: "signed_out",
       detection_error: "无法检测普通终端的登录：Claude Code 没有响应，请稍后重试", login_notice: "", usage_panel_running: false,

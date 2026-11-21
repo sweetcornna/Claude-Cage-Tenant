@@ -65,3 +65,24 @@
   .client-toolbar, .local-background { padding:6px 10px; }
   .local-background span { display:block; margin:0; }
 }
+
+/* SSH host list (brand/design-language.md §6): hosts as quiet sidebar rows,
+   the chosen host's actions as a small form under it. Scoped to the SSH
+   sidebar with one more class: this file loads before style.css. */
+.ssh-sidebar .ssh-list-heading { margin: 12px 0 4px; padding-left: 10px; color: var(--muted); font-size: var(--fs-caption); font-weight: 500; }
+.ssh-sidebar .ssh-host-row { min-height: 2.75rem; gap: 10px; padding: 6px 10px; border-radius: var(--r-md); transition: background-color var(--dur-fast) var(--ease-out); }
+.ssh-sidebar .ssh-host-row:hover { background: var(--soft); }
+.ssh-sidebar .ssh-host-row.selected { background: var(--selected); }
+.ssh-sidebar .ssh-host-row > svg { flex: none; color: var(--muted); }
+.ssh-sidebar .ssh-host-row strong { color: var(--ink); font-size: var(--fs-nav); font-weight: 500; }
+.ssh-sidebar .ssh-host-row small { color: var(--muted); font-family: var(--font-mono); font-size: var(--fs-caption); }
+.ssh-sidebar .ssh-host-actions, .ssh-sidebar .ssh-connection, .ssh-sidebar .ssh-empty { gap: 8px; margin: 12px 10px; }
+.ssh-sidebar .ssh-host-actions label { gap: 6px; color: var(--muted); font-size: var(--fs-caption); font-weight: 500; }
+.ssh-sidebar .ssh-host-actions input { height: var(--h-control); border-color: var(--line-strong); border-radius: var(--r-md); background: var(--surface); }
+.ssh-sidebar .ssh-host-actions button { min-height: var(--h-control); border-radius: var(--r-md); }
+.ssh-sidebar .ssh-host-actions .remote-button-row button:not(.primary) { border-color: transparent; background: transparent; color: var(--muted); font-weight: 500; }
+.ssh-sidebar .ssh-host-actions .remote-button-row button:not(.primary):hover:enabled { background: var(--soft); color: var(--ink); }
+.ssh-sidebar .ssh-empty p { color: var(--muted); font-size: var(--fs-secondary); }
+.ssh-sidebar .ssh-empty button { min-height: var(--h-control); border: 1px dashed var(--line-strong); border-radius: var(--r-md); background: transparent; color: var(--ink); }
+.ssh-sidebar .ssh-empty button:hover { background: var(--soft); }
+.ssh-sidebar .ssh-local-action, .ssh-sidebar .ssh-help { margin: 16px 10px 10px; padding-top: 12px; color: var(--muted); font-size: var(--fs-caption); }
