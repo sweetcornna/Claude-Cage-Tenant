@@ -356,3 +356,121 @@ size. POST accepts "apply": true (save, then restart a running environment).
   fail and the environment will not start under 0.1.15. Before rolling back a desktop install: set the
   allocation to automatic in settings (or delete <profile>/resource-limits.json), then install 0.1.15.
 - The "chosen" key is ignored by 0.1.15.
+
+### 7.6 Level C as built (supersedes section 4 where they differ)
+Built (declarative or fail-open), in guest-services.sh, guest-memory.sh, guest.go, resource-governor.py:
+- cage-browser.slice (CPUWeight=50, IOWeight=50); cage-browser.service: Slice=cage-browser.slice,
+  OOMScoreAdjust=200, OOMPolicy=continue (default stop would end the whole browser on one renderer's OOM
+  kill); cage-editor.service OOMScoreAdjust=100.
+- zram disksize min(MemTotal/2, 4 GiB) (was /4, 2 GiB), vm.swappiness=100 at runtime. cage-memory-start
+  exits early when its device exists, so the size applies from the next environment start.
+- cage-resource-governor.service (root, OOMScoreAdjust=-900, MemoryMin=32M, CPUWeight=200,
+  Restart=on-failure, ExecStopPost --reset), python3 -I /usr/local/lib/cage-resource-governor.py, 2 s loop:
+  limits from /run/cage-resources/in/limits (dir owned by cage, the probe's user; file fresh <= 10 s,
+  regular file, version 1, four keys), every value clamped (control_low <= MemTotal/4, sessions_low <=
+  MemTotal/2, browser_high >= max(768 MiB, MemTotal/4), browser_max >= high + 256 MiB, all <= 2^44);
+  without fresh limits the same rule (planGuestClasses, ported) on its own MemTotal. Applied with
+  systemctl set-property --runtime (MemoryHigh/MemoryMax on cage-browser.slice; MemoryLow on system.slice
+  and user.slice only when the cgroup2 mount has memory_recursiveprot), hysteresis 64 MiB. Reports
+  "governor 1 <uptime>" and "class <name> <current> <stall> <low> <high> <max>" to /run/cage-resources/state
+  (root-owned dir, 0644). Exits 0 (no restart) without the unified hierarchy. Skipped in containers.
+- The host agent sends the limits with every probe (they are ~200 bytes), so a stale file means the host
+  agent is gone or older.
+Not built (moved to the follow-up with the browser-agent endpoint): the chromium.d hook, Delegate= and
+agent/chromium leaves, adoption of sessions into cage-sessions.slice (no single spawn point owned here:
+terminals, claude and codex arrive by several SSH paths), memory.high on the sessions.
+Consequence, shown by the simulator: the host agent's probes are SSH sessions of the same user as the
+sessions and share user.slice; a runaway session at the guest's maximum silences the probes (the guest
+really is out of memory; the browser is reclaimed first). The control plane in system.slice is protected.
+
+### 7.7 Replay results (go test ./internal/tenant -run Replay -v)
+Model numbers: measured from the evidence: guest 3 GiB (MemTotal 2.84), tab growing to 1.7 GB, two claude
+sessions 513 MB, 48 MB available at the end, machine 8 GiB with ~4 GiB available. Fitted: the rest of the
+190 processes (system, display, editor, browser agent, SSH) as one 900 MiB "control" class - the evidence's
+0.4 GB control figure did not reproduce the outage, 900 MiB is what makes the 2.84 GiB guest end at 48 MB
+with zram full; zram 3:1; probes answer while the probing class stalls < 10 % and (without classes) 128 MiB
+is available. The model is a model: it shows the rules interact as intended, not kernel timings.
+
+| trace | old | new |
+|---|---|---|
+| outage, 3.5 h compressed to 30 min | 3 GiB, control silent 1048 s | 6 GiB max, target 4864 MiB, silent 0 s |
+| outage, new size, no governor | | silent 0 s |
+| outage, old 3 GiB size + governor | | silent 0 s, 1 browser process killed at memory.max |
+| runaway tab (8 MiB/s) | | 1 browser kill, sessions untouched, silent 0 s |
+| session runaway to 5.9 GiB in a 6 GiB guest | | target = maximum, probes silent from 742 s (sessions 4952 MiB) |
+| 4 GiB machine | | maximum 2 GiB, silent 0 s |
+| two machines growing on 20 GiB | | 8448/8448 MiB, equal, silent 0 s |
+| page cache hog vs quiet neighbour | | guest 2816 vs 2560 MiB: cache buys nothing |
+| machine shrinking under an idle guest | | 10 -> 4.75 GiB, neighbour grows to 8.5 GiB, no machine OOM |
+| 60 s of failed samples | | target never shrinks, resumes |
+| parked machine, +3 GiB over 30 s | | guest has it after 30 s, probes silent 6 s |
+| parked machine, +3 GiB in 1 s | | guest has it after 35 s, probes silent 34 s |
+Machine out of memory: 0 s in every trace.
+
+### 7.8 Open decisions
+- LegacyDefaultAction "offer" (default) vs "apply": a Go variable, not exposed; "apply" would move old
+  defaults to automatic silently. Needs the owner's call and, for production, the actual resource-limits.json.
+- Parked-machine burst: never growing a guest past what the machine backs costs up to two gateway rounds
+  (34 s of silent probes for an instantaneous 3 GiB burst). Alternatives: a short-triggered faster gateway
+  round (5 s while a nested guest is short), or a larger headroom for machines that host a guest.
+- short_bytes for pressure is the geometric step, not the demand: it can ask more than the guest settles
+  at; bounded by the ceiling, the max-min level and the 5-minute hold.
+- Session adoption into their own slice (separating probes from sessions) needs a spawn point owned by
+  the guest provisioning; see 7.6.
+- The governor's python tests are run by go test (TestResourceGovernorPython) when python3 exists; the
+  macOS CI workflow lists the other python tests explicitly and does not list this one yet.
+
+### 7.9 Risks
+- The kernel model in the simulator is coarse; real zram ratios, reclaim latency and PSI differ.
+- Incus balloon behaviour (deflate-on-oom, MemTotal under the balloon) is read from the driver's feature
+  bits and memory blocks, not verified on lab hardware here.
+- machine-memory.json freshness compares two clocks (gateway, workspace VM) within 45 s.
+- The limits file is writable by the agent's user: an agent can tighten the browser down to the clamps
+  (MemTotal/4) or relax it; it cannot protect more than 3/4 of the guest. Denial of service of the browser
+  by the agent is possible within those bounds; confidentiality is unaffected.
+- The governor uses systemctl set-property --runtime every change; drop-ins live in
+  /run/systemd/system.control and vanish at reboot.
+- 6 GiB guest maximum in an 8 GiB machine leaves ~0.75 GiB to the machine at the ceiling; the balloon
+  target (capacity K) keeps the guest below what the machine backs, the ceiling alone does not.
+
+### 7.10 What existing environments and guests see
+- Automatic (no settings file, or automatic saved): at the next environment start the new size applies
+  (production machine: 3 GiB / 3 vCPUs -> 6 GiB / 5 vCPUs). While running, /api/environment/resources
+  says restart_required with the notice "自动分配已按这台机器重新计算为内存 6 GB、CPU 5 核，重启环境后生效。".
+- Explicit values equal to the old default, saved by an older version: kept; the API adds
+  legacy_allocation, the notice "内存 3 GB、CPU 3 核与旧版本的默认设置相同。改为自动（推荐）后，这台机器可以给到
+  6 GB、5 核，需要重启环境；如果这是你特意设的，可以保留。" and offer {automatic, memory_gib, cpus}. One step:
+  POST /api/environment/resources {"allocation":{"automatic":true},"apply":true}.
+- Explicit values chosen in settings by this version ("chosen":"user"): never changed; the host agent's
+  advice says "环境内存已用满手动设置的 N GB。改为自动（推荐）后可以调到 M GB，需要重启环境。" when short.
+- Guests: the component revision changes, so every Linux guest asks for a component update; applying it
+  restarts the browser (needed to move it into its slice) and starts the governor. zram's new size needs an
+  environment restart. macOS and Windows guests and container mode: sizing unchanged (macOS LegacyLimits,
+  Windows code untouched); level C is skipped in containers (systemd-detect-virt) and not provisioned on
+  macOS/Windows guests; the browser slice unit is harmless there.
+
+### 7.11 Rollback state (complete)
+Gateway: only instance-local limits.memory (exact MiB, 1 GiB..ceiling) - accepted by 0.1.15. Nothing else.
+Workspace VM / desktop profile: machine-memory.json (ignored by 0.1.15, may be deleted),
+resource-limits.json unchanged unless saved in settings ("chosen" is ignored by 0.1.15; a manual value
+above the old share - possible now - makes 0.1.15 refuse to start: switch to automatic or delete the file
+first). lima.yaml is rewritten at every start by whichever version starts.
+Guest, persisted: /etc/systemd/system/cage-browser.slice, cage-resource-governor.service (enabled),
+/usr/local/lib/cage-resource-governor.py, changed cage-browser.service, cage-editor.service and
+/usr/local/bin/cage-memory-start. 0.1.15's component update rewrites the three changed files; it does not
+know the slice or the governor, which then keeps protecting system.slice/user.slice and limiting an empty
+cage-browser.slice (harmless). To remove them: sudo systemctl disable --now cage-resource-governor.service
+(its stop resets the limits); sudo rm -f /etc/systemd/system/cage-resource-governor.service
+/etc/systemd/system/cage-browser.slice /usr/local/lib/cage-resource-governor.py; sudo systemctl daemon-reload.
+Guest, runtime (gone at reboot): /run/cage-resources, /run/systemd/system.control/*.d drop-ins, zram size,
+vm.swappiness.
+
+### 7.12 Reading the status for "short of memory, N GB possible"
+cage-resources.json / ResourceStatus: short == true means the guest is under pressure and has all it can
+get; limited_by is "maximum" (raise the maximum) or "machine" (the machine has no more now). advice
+{message, memory_bytes, restart_required} is the sentence to show; possible_bytes > maximum_bytes is the
+condition for "可以调到 N GB" (N = possible_bytes) - both are set once when the host agent starts, so a
+caller can test them without advice. memoryNote in network_recovery.go should read Short/LimitedBy/Advice
+and Possible vs Maximum; status.Pressure now means the protected classes stall (a contained browser is
+BrowserPressure, not Pressure). Against an older host agent (no such fields) the workbench can compare
+cage.AutomaticLimits() with lima.yaml's memory.
