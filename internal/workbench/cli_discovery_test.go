@@ -638,3 +638,41 @@ func TestHeldSessionViewAnswersGuestReply(t *testing.T) {
 		t.Fatalf("a malformed wait answered %d", code)
 	}
 }
+
+func TestHeldRequestsEndWhenTheServerCloses(t *testing.T) {
+	s, _, project := metadataFixture(t)
+	hosted := uuid.NewString()
+	if _, err := s.mobileCLI.create(s.profile, project, hosted); err != nil {
+		t.Fatal(err)
+	}
+	_, list := sessionList(t, s, "")
+	w := request(s, "GET", "/api/mobile/cli/sessions/"+hosted, s.origin, "", true)
+	var view mobileSession
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &view) != nil {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	codes := make(chan int, 2)
+	go func() {
+		code, _ := sessionList(t, s, "?after="+list.Revision+"&wait=20")
+		codes <- code
+	}()
+	go func() {
+		codes <- request(s, "GET", fmt.Sprintf("/api/mobile/cli/sessions/%s?after=%d&wait=20", hosted, view.Revision), s.origin, "", true).Code
+	}()
+	time.Sleep(500 * time.Millisecond)
+	closed := time.Now()
+	s.beginClose()
+	for range 2 {
+		select {
+		case code := <-codes:
+			if code != http.StatusNoContent {
+				t.Fatalf("a held request answered %d when the server closed", code)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("a held request kept the closing server waiting")
+		}
+	}
+	if elapsed := time.Since(closed); elapsed > 2*time.Second {
+		t.Fatalf("held requests ended %v after the server closed", elapsed)
+	}
+}

@@ -343,6 +343,9 @@ func (s *Server) awaitSessionList(ctx context.Context, deadline time.Time, after
 			return sessionListAnswer{}, ctx.Err()
 		case <-end.C:
 			return s.sessionListAnswer(granted(), archived, phone, claudeErr, codexErr)
+		case <-s.lifetimeContext().Done():
+			// The server is closing; answer now instead of delaying it.
+			return s.sessionListAnswer(granted(), archived, phone, claudeErr, codexErr)
 		case <-changed:
 			claude, arrival = true, changedAt
 		case <-slow.C:
@@ -627,7 +630,11 @@ func (s *Server) mobileSessionView(w http.ResponseWriter, r *http.Request) {
 		unchanged := func() bool { return revision == view.Revision && (epoch == "" || epoch == view.Generation) }
 		// Hold the request while the session is unchanged; no lock is held
 		// while waiting, and every look is a full authorized read.
-		for deadline := time.Now().Add(wait); unchanged() && s.awaitSessionView(r.Context(), view, deadline); {
+		held, release := context.WithCancel(r.Context())
+		defer release()
+		// A closing server answers held reads at once instead of waiting.
+		defer context.AfterFunc(s.lifetimeContext(), release)()
+		for deadline := time.Now().Add(wait); unchanged() && s.awaitSessionView(held, view, deadline); {
 			if view, ok = s.authorizedMobileSession(w, r); !ok {
 				return
 			}
