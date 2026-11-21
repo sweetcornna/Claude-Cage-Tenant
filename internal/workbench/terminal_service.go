@@ -27,7 +27,10 @@ type terminalRequest struct {
 	ClaudeAccountID string `json:"claude_account_id"`
 	CodexAccountID  string `json:"codex_account_id"`
 	sharedID        string
-	requestContext  context.Context
+	// codexSession: the client knows Codex sessions, so a Codex terminal from
+	// the menu becomes one.
+	codexSession   bool
+	requestContext context.Context
 }
 
 // terminalManager owns host PTYs; subscriptions only borrow their output. The
@@ -162,6 +165,43 @@ func (m *terminalManager) get(id string) *terminalSession {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.sessions[id]
+}
+
+// boundCodex is the live Codex terminal of this server bound to a session.
+// While it runs, the desktop owns the session's thread.
+func (m *terminalManager) boundCodex(id string) *terminalSession {
+	if id == "" {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, session := range m.sessions {
+		session.mu.Lock()
+		bound := session.kind == "codex" && session.sharedID == id && !session.closed
+		session.mu.Unlock()
+		if bound {
+			return session
+		}
+	}
+	return nil
+}
+
+// removeEndedCodex removes ended Codex terminals of a session before a new
+// one opens, so they do not count toward the terminal limit.
+func (m *terminalManager) removeEndedCodex(id string) {
+	m.mu.Lock()
+	var ended []string
+	for key, session := range m.sessions {
+		session.mu.Lock()
+		if session.kind == "codex" && session.sharedID == id && session.closed {
+			ended = append(ended, key)
+		}
+		session.mu.Unlock()
+	}
+	m.mu.Unlock()
+	for _, key := range ended {
+		m.remove(key)
+	}
 }
 
 func (m *terminalManager) forConversation(connection string) *terminalSession {

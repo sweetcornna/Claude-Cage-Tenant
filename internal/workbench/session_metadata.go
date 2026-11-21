@@ -128,6 +128,14 @@ func (s *Server) setSessionArchived(id string, archived bool, requestContext con
 		done = run.done
 	}
 	terminalID := record.TerminalID
+	// A phone turn of a Codex session runs in the guest; archiving stops it.
+	// The guest is asked even when this server has not seen the turn (after
+	// a restart); it stops only a turn of its own.
+	s.mu.Lock()
+	ready := s.ready && !s.closing
+	s.mu.Unlock()
+	codexRun := archived && record.codex() && record.Connection != "" && ready
+	connection := record.Connection
 	m.mu.Unlock()
 	if requestContext != nil {
 		s.account.mu.Unlock()
@@ -135,6 +143,31 @@ func (s *Server) setSessionArchived(id string, archived bool, requestContext con
 	if terminal := s.terminals.get(terminalID); archived && terminal != nil {
 		if terminal.summary()["cli_session_id"] == id {
 			s.terminals.remove(terminalID)
+		}
+	}
+	for archived && record.codex() {
+		terminal := s.terminals.boundCodex(id)
+		if terminal == nil {
+			break
+		}
+		s.terminals.remove(terminal.id)
+	}
+	if codexRun {
+		ctx := requestContext
+		if ctx == nil {
+			ctx = s.lifetimeContext()
+		}
+		var result struct {
+			OK    bool   `json:"ok"`
+			Error string `json:"error"`
+		}
+		// The archive stands either way; a turn the guest could not stop
+		// finishes on its own and no new one can start.
+		if err := s.runCodexSessions(ctx, "stop", map[string]any{"connection": connection, "reason": "archive"}, &result); err == nil && result.OK {
+			m.mu.Lock()
+			delete(m.codexOwner, id)
+			delete(m.codexLive, id)
+			m.mu.Unlock()
 		}
 	}
 	if done != nil {
@@ -177,6 +210,11 @@ func (s *Server) changeSessionArchive(w http.ResponseWriter, r *http.Request, ar
 	if !readJSON(w, r, &input) {
 		return
 	}
+	// The phone may watch and stop a desktop Codex session, never close it.
+	if archived && view.Provider == codexProvider && strings.HasPrefix(r.URL.Path, "/api/mobile/") && s.terminals.boundCodex(view.ID) != nil {
+		http.Error(w, errCodexDesktopTerminal.Error(), http.StatusConflict)
+		return
+	}
 	if err := s.setSessionArchived(view.ID, archived, r.Context()); err != nil {
 		requestError(w, err)
 		return
@@ -193,7 +231,7 @@ func (s *Server) mobilePurgeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !input.Confirm {
-		http.Error(w, "需要确认永久删除该会话及 Claude Code 原始历史", 400)
+		http.Error(w, "需要确认永久删除该会话及其原始历史", 400)
 		return
 	}
 	if err := s.purgeSession(r.Context(), r.PathValue("id")); err != nil {
@@ -306,7 +344,7 @@ func (s *Server) terminalSessionMetadata(w http.ResponseWriter, r *http.Request)
 	}
 	id, _ := terminal.summary()["cli_session_id"].(string)
 	if id == "" {
-		http.Error(w, "此终端没有共享 Claude Code 会话", 409)
+		http.Error(w, "此终端没有绑定会话", 409)
 		return
 	}
 	var input sessionMetadataInput
