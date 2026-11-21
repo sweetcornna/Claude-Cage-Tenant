@@ -173,9 +173,11 @@ func (s *Server) workbench(w http.ResponseWriter, r *http.Request, id string) {
 		})
 		return
 	}
-	workspace.proxy(origin, func() { s.invalidateWorkspace(id, workspace) }, func() {
+	proxy := workspace.proxy(origin, func() { s.invalidateWorkspace(id, workspace) }, func() {
 		s.confirmWorkspaceFault(id, workspace)
-	}).ServeHTTP(writer, r.WithContext(ctx))
+	})
+	cacheAssets(proxy, r, w.Header())
+	proxy.ServeHTTP(writer, r.WithContext(ctx))
 }
 
 func (s *Server) validGrant(grant vmGrant, id string, now time.Time) bool {

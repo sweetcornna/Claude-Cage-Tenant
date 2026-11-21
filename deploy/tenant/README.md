@@ -117,6 +117,7 @@ map $http_upgrade $cage_connection {
 
 server {
     listen 443 ssl;
+    http2 on;
     server_name cage.example.org *.cage.example.org;
     ssl_certificate     /etc/nginx/tls/cage-fullchain.pem;
     ssl_certificate_key /etc/nginx/tls/cage-key.pem;
@@ -137,6 +138,21 @@ server {
         proxy_cache off;
     }
 
+    location ^~ /assets/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_cache off;
+        gzip on;
+        gzip_vary on;
+        gzip_min_length 1k;
+        gzip_comp_level 5;
+        gzip_types text/css text/javascript application/javascript image/svg+xml;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
@@ -153,6 +169,10 @@ server {
     }
 }
 ```
+
+**HTTP/2。** 示例里的 `http2 on;` 需要 nginx 1.25.1 或更新；更早的版本把它写进监听行：`listen 443 ssl http2;`（新版本里这种写法已弃用）。HTTP/1.1 下浏览器对每个主机只开 6 条连接，工作台的浏览器事件流（EventSource）会一直占着其中一条，其余请求在剩下的 5 条上排队；HTTP/2 把它们放进同一条连接的多个流。WebSocket（终端、画面）仍用 HTTP/1.1：nginx 不提供 RFC 8441 的 HTTP/2 WebSocket，浏览器会为它们另开 HTTP/1.1 连接。到网关的上游仍是 HTTP/1.1。验证：DevTools 的 Network 面板打开 Protocol 列，工作台请求应显示 `h2`；`curl -sI --http2 https://cage.example.org/ | head -1` 应以 `HTTP/2` 开头。
+
+**静态资源。** 网关只对 `/assets/` 下的 GET 和 HEAD 转发工作台的缓存头（`Cache-Control`、`ETag`、`Last-Modified`，并加上 `Vary: Accept-Encoding`）：`public` 改成 `private`，生存期最多一年，不认识的指令一律回到 `no-store`；其余所有响应仍是 `Cache-Control: no-store`。旧版工作台对资源也发 `no-store`，此时行为不变，缓存要等工作台给带哈希的资源发长期缓存头才生效。浏览器的 `Accept-Encoding` 会传给工作台，工作台预压缩的资源原样压缩传输；工作台自己不压缩时，由上面 `/assets/` 位置的 nginx `gzip` 压缩。该位置只压缩样式、脚本和 SVG，不压缩事件流和 API。
 
 终端、浏览器画面和事件流是长连接。工作台每 20 秒在终端连接上发送心跳，并在客户端 90 秒无应答后释放连接；客户端在约 50 秒收不到任何数据时自行重连并从断点续传。沿途每一跳的空闲期限都应明显长于心跳间隔，上面三个 1 小时的超时即为此设置；省略时 nginx 默认 60 秒，网络稍有阻塞就会断开写入中的连接。
 
