@@ -148,9 +148,22 @@ server {
         proxy_buffering off;
         proxy_cache off;
         proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+        send_timeout 1h;
     }
 }
 ```
+
+终端、浏览器画面和事件流是长连接。工作台每 20 秒在终端连接上发送心跳，并在客户端 90 秒无应答后释放连接；客户端在约 50 秒收不到任何数据时自行重连并从断点续传。沿途每一跳的空闲期限都应明显长于心跳间隔，上面三个 1 小时的超时即为此设置；省略时 nginx 默认 60 秒，网络稍有阻塞就会断开写入中的连接。
+
+如果公网入口是另一台机器上的 nginx `stream`（例如经 `proxy_protocol` 和 SSH 反向隧道转发到本机 nginx），在对应 `server` 中设置 `proxy_timeout 1h;`（默认 10 分钟），并为隧道开启保活，避免中间的 NAT 或防火墙静默丢弃连接：
+
+```sh
+ssh -N -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes \
+    -R 127.0.0.1:9443:127.0.0.1:443 relay.example.org
+```
+
+隧道断开时 `ssh` 会退出，应由 systemd 或 autossh 负责重启。
 
 工作台反代上限为 2050 MiB，给单文件 2 GiB 上限留出请求封装余量；更大的整个请求仍可能得到 `413`。`client_body_timeout` 限制两次读取之间的空闲时间，不限制正常持续上传的总时长。网关另外限制小 JSON 的整个读取时间；会话撤销会尝试中断网关与下游之间的读写，已提交到来宾的修改或反代已收下的数据无法撤回。
 
@@ -190,7 +203,7 @@ ps -C qemu-system-x86_64 -o pid,rss,%cpu,comm
 ps -C incus -o comm= | wc -l
 ```
 
-每台 VM 独立复用一个 Cage 会话和 HTTP 连接池，最多保留 8 条空闲 guest-agent 连接，空闲 15 秒后关闭。同一 VM 的 HTTP、流和 WebSocket 共享 64 条同时请求的上限，另保留两条连接用于握手和健康检查。长连接由正常的读写回压控制，登录撤销会关闭该会话正在使用的流和 WebSocket。
+每台 VM 独立复用一个 Cage 会话和 HTTP 连接池，最多保留 16 条空闲 guest-agent 连接，空闲 90 秒后关闭。同一 VM 的 HTTP、流和 WebSocket 共享 64 条同时请求的上限，另保留两条连接用于握手和健康检查。长连接由正常的读写回压控制，登录撤销会关闭该会话正在使用的流和 WebSocket。
 
 ## 7. 空闲冷却
 

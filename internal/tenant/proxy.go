@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode"
@@ -112,6 +113,11 @@ func (s *Server) workbench(w http.ResponseWriter, r *http.Request, id string) {
 	if available {
 		awake = workspace.awake
 		workspace.touch()
+	} else if workspace != nil && !s.store.blocked {
+		// A workspace marked unready is rechecked in the background, as when
+		// it is reopened from the portal, so the workbench's own retries
+		// recover it. Concurrent requests join the same check.
+		s.startVMLocked(s.store.VMs[id], s.now())
 	}
 	s.mu.Unlock()
 	if !available {
@@ -371,7 +377,7 @@ func (transport proxyTransport) RoundTrip(request *http.Request) (*http.Response
 	forward.Trailer = nil
 	if response.StatusCode == http.StatusSwitchingProtocols {
 		if stream, ok := response.Body.(io.ReadWriteCloser); ok {
-			forward.Body = guestSocket{ReadWriteCloser: stream, ctx: request.Context(), suspect: transport.suspect, touch: transport.touch}
+			forward.Body = guestSocket{ReadWriteCloser: stream, ctx: request.Context(), suspect: transport.suspect, touch: transport.touch, ended: new(atomic.Bool)}
 		}
 	} else {
 		forward.Body = guestBody{ReadCloser: response.Body, ctx: request.Context(), fault: transport.fault, touch: transport.touch}
@@ -419,6 +425,8 @@ type guestSocket struct {
 	ctx     context.Context
 	suspect func()
 	touch   func()
+	// ended records that the guest closed its side in order.
+	ended *atomic.Bool
 }
 
 func (socket guestSocket) Read(buffer []byte) (int, error) {
@@ -426,8 +434,12 @@ func (socket guestSocket) Read(buffer []byte) (int, error) {
 	if count > 0 && socket.touch != nil {
 		socket.touch()
 	}
-	if err != nil && socket.ctx.Err() == nil {
-		// EOF also occurs during an ordinary WebSocket close. Confirm through HTTP.
+	if errors.Is(err, io.EOF) {
+		// The guest closed the stream in order: an ordinary WebSocket close,
+		// a terminal that ended or a viewer the workbench released. A broken
+		// controller shows up on the next request, so this needs no probe.
+		socket.ended.Store(true)
+	} else if err != nil && socket.ctx.Err() == nil {
 		socket.suspect()
 	}
 	return count, err
@@ -438,7 +450,8 @@ func (socket guestSocket) Write(buffer []byte) (int, error) {
 	if count > 0 && socket.touch != nil {
 		socket.touch()
 	}
-	if err != nil && socket.ctx.Err() == nil {
+	// After an orderly guest close, the browser's last frames fail to write.
+	if err != nil && socket.ctx.Err() == nil && !socket.ended.Load() {
 		socket.suspect()
 	}
 	return count, err

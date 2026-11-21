@@ -50,8 +50,11 @@ func newWorkspace(port int, dial func(context.Context) (net.Conn, error)) *Works
 			}
 			return dial(ctx)
 		},
-		MaxConnsPerHost: 64, MaxIdleConns: 8, MaxIdleConnsPerHost: 8,
-		IdleConnTimeout: 15 * time.Second, ResponseHeaderTimeout: 90 * time.Second,
+		// Every new guest connection starts a transport process in the VM.
+		// Keep enough warm connections for the workbench's polling and its
+		// reconnecting streams instead of paying that start on each request.
+		MaxConnsPerHost: 64, MaxIdleConns: 16, MaxIdleConnsPerHost: 16,
+		IdleConnTimeout: 90 * time.Second, ResponseHeaderTimeout: 90 * time.Second,
 		ExpectContinueTimeout: time.Second, MaxResponseHeaderBytes: 64 << 10,
 	}
 	// Reserve one connection for rechecks and one for fault confirmation.

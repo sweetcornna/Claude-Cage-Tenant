@@ -21,6 +21,11 @@ const (
 	readinessTTL    = 30 * time.Second
 )
 
+// faultProbeTimeout bounds the check that confirms a suspected workspace
+// fault. A check that runs out of time is inconclusive: a busy guest or a
+// slow transport start is not proof that open streams are broken.
+var faultProbeTimeout = 3 * time.Second
+
 func validVMName(name string) bool {
 	length := utf8.RuneCountInString(name)
 	return length >= 1 && length <= 64 && strings.IndexFunc(name, unicode.IsControl) == -1
@@ -250,11 +255,11 @@ func (s *Server) confirmWorkspaceFault(id string, workspace *Workspace) {
 	faults := workspace.faults
 	s.workers.Go(func() {
 		defer workspace.checkingSession.Store(false)
-		ctx, cancel := context.WithTimeout(workspace.ctx, 3*time.Second)
+		ctx, cancel := context.WithTimeout(workspace.ctx, faultProbeTimeout)
 		defer cancel()
 		stop := context.AfterFunc(s.context, cancel)
 		defer stop()
-		if err := workspace.check(ctx); err == nil || workspace.ctx.Err() != nil {
+		if err := workspace.check(ctx); err == nil || workspace.ctx.Err() != nil || ctx.Err() != nil || isTimeout(err) {
 			return
 		}
 		s.mu.Lock()

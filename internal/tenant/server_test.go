@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -98,6 +99,8 @@ type fakeRuntime struct {
 	nextError    atomic.Bool
 	imageMissing atomic.Bool
 	guestHandler func(string) http.Handler
+	// wrapConn, when set, wraps every guest connection of new workspaces.
+	wrapConn func(net.Conn) net.Conn
 }
 
 func (runtime *fakeRuntime) Prepare(ctx context.Context, spec LaunchSpec) (*Workspace, error) {
@@ -135,7 +138,17 @@ func (runtime *fakeRuntime) Prepare(ctx context.Context, spec LaunchSpec) (*Work
 		runtime.provisions[id]++
 	}
 	runtime.mu.Unlock()
-	workspace := newWorkspace(45001, guest.dial)
+	dial := guest.dial
+	if runtime.wrapConn != nil {
+		dial = func(ctx context.Context) (net.Conn, error) {
+			conn, err := guest.dial(ctx)
+			if err == nil {
+				conn = runtime.wrapConn(conn)
+			}
+			return conn, err
+		}
+	}
+	workspace := newWorkspace(45001, dial)
 	if err := workspace.bootstrap(ctx, fixtureLauncher); err != nil {
 		workspace.close()
 		return nil, err
@@ -1060,10 +1073,25 @@ func TestTenantRecheckKeepsBusyWorkspace(t *testing.T) {
 	wantStatus(t, fixture.request("GET", vmOrigin(record.ID), "/", "", cookie), 200, "")
 }
 
+// resetConn reports a reset instead of an orderly end while reset is set.
+type resetConn struct {
+	net.Conn
+	reset *atomic.Bool
+}
+
+func (conn resetConn) Read(buffer []byte) (int, error) {
+	count, err := conn.Conn.Read(buffer)
+	if errors.Is(err, io.EOF) && conn.reset.Load() {
+		err = syscall.ECONNRESET
+	}
+	return count, err
+}
+
 func TestTenantSocketCloseConfirmsControllerHealth(t *testing.T) {
 	fixture := newFixture(t, false)
-	var controllerDown atomic.Bool
+	var controllerDown, resetStreams atomic.Bool
 	var healthChecks atomic.Int32
+	fixture.runtime.wrapConn = func(conn net.Conn) net.Conn { return resetConn{Conn: conn, reset: &resetStreams} }
 	fixture.runtime.guestHandler = func(id string) http.Handler {
 		guest := fixtureGuest(id)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1110,12 +1138,26 @@ func TestTenantSocketCloseConfirmsControllerHealth(t *testing.T) {
 	s.mu.Lock()
 	workspace := s.workspaces[record.ID]
 	s.mu.Unlock()
+	// An orderly guest close (a terminal that ended, a released viewer) is
+	// not a fault: it starts no health check even while one would fail.
+	controllerDown.Store(true)
 	before := healthChecks.Load()
+	dropSocket()
+	s.mu.Lock()
+	probed := !workspace.nextFaultProbe.IsZero()
+	s.mu.Unlock()
+	if probed || healthChecks.Load() != before || workspace.checkingSession.Load() {
+		t.Fatal("an orderly socket close started a fault probe")
+	}
+	fixture.state(alice, record.ID, ready)
+	controllerDown.Store(false)
+
+	// A stream that breaks is confirmed through the controller.
+	ticket := fixture.ticket(alice, record.ID)
+	resetStreams.Store(true)
 	dropSocket()
 	waitFixture(t, func() bool { return healthChecks.Load() > before && !workspace.checkingSession.Load() })
 	fixture.state(alice, record.ID, ready)
-
-	ticket := fixture.ticket(alice, record.ID)
 	s.mu.Lock()
 	workspace.nextFaultProbe = time.Time{}
 	s.mu.Unlock()
@@ -1123,6 +1165,77 @@ func TestTenantSocketCloseConfirmsControllerHealth(t *testing.T) {
 	dropSocket()
 	fixture.state(alice, record.ID, failed)
 	wantStatus(t, fixture.enter(record.ID, ticket), 401, "unauthenticated")
+}
+
+func TestTenantFaultProbeTimeoutKeepsWorkspaceReady(t *testing.T) {
+	timeout := faultProbeTimeout
+	faultProbeTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { faultProbeTimeout = timeout })
+	fixture := newFixture(t, false)
+	var stall atomic.Bool
+	var stalled atomic.Int32
+	fixture.runtime.guestHandler = func(id string) http.Handler {
+		guest := fixtureGuest(id)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/client/about" && stall.Load() {
+				stalled.Add(1)
+				select {
+				case <-r.Context().Done():
+				case <-time.After(5 * time.Second):
+				}
+				return
+			}
+			guest.ServeHTTP(w, r)
+		})
+	}
+	alice, _ := fixture.login("register", "alice")
+	record := fixture.create(alice, "workspace")
+	cookie := fixture.connect(alice, record.ID)
+	s := fixture.server
+	s.mu.Lock()
+	workspace := s.workspaces[record.ID]
+	s.mu.Unlock()
+	stall.Store(true)
+	s.confirmWorkspaceFault(record.ID, workspace)
+	waitFixture(t, func() bool { return stalled.Load() > 0 && !workspace.checkingSession.Load() })
+	s.mu.Lock()
+	ready := s.workspaces[record.ID] == workspace && !workspace.checkedAt.IsZero()
+	s.mu.Unlock()
+	if !ready {
+		t.Fatal("a fault probe that only timed out marked the workspace unready")
+	}
+	stall.Store(false)
+	wantStatus(t, fixture.request("GET", vmOrigin(record.ID), "/", "", cookie), 200, "")
+}
+
+func TestTenantUnreadyWorkspaceRecoversFromWorkbenchRequest(t *testing.T) {
+	fixture := newFixture(t, false)
+	alice, _ := fixture.login("register", "alice")
+	record := fixture.create(alice, "workspace")
+	cookie := fixture.connect(alice, record.ID)
+	s := fixture.server
+	s.mu.Lock()
+	workspace := s.workspaces[record.ID]
+	s.markWorkspaceUnready(record.ID, workspace)
+	s.mu.Unlock()
+	fixture.runtime.mu.Lock()
+	prepares := fixture.runtime.calls[record.ID]
+	fixture.runtime.mu.Unlock()
+	// The workbench's own request is refused but starts a recheck, so its
+	// retry succeeds without reopening the workspace from the portal.
+	wantStatus(t, fixture.request("GET", vmOrigin(record.ID), "/", "", cookie), 503, "runtime_unavailable")
+	waitFixture(t, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.workspaces[record.ID] == workspace && !workspace.checkedAt.IsZero() && !s.starting[record.ID]
+	})
+	wantStatus(t, fixture.request("GET", vmOrigin(record.ID), "/", "", cookie), 200, "")
+	fixture.runtime.mu.Lock()
+	calls := fixture.runtime.calls[record.ID]
+	fixture.runtime.mu.Unlock()
+	if calls != prepares {
+		t.Fatalf("a healthy workspace was prepared again: %d -> %d", prepares, calls)
+	}
 }
 
 func TestTenantStartupDoesNotWriteDurableState(t *testing.T) {
