@@ -276,6 +276,13 @@ func (s *Server) monitorEnvironmentRound(m *environmentMonitor) {
 	s.mu.Unlock()
 	switch {
 	case s.windowsGuest != nil:
+		if ready {
+			observed := s.observeWindowsGuest(s.lifetimeContext())
+			timing.stage("environment_health")
+			if observed == observedSteady {
+				return
+			}
+		}
 		s.lockedEnvironmentRound(m, timing, true, false)
 	case s.macosGuest != nil:
 		s.monitorMacOSRound(m, timing, ready)
