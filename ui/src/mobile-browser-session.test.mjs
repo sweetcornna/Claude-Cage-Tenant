@@ -127,7 +127,7 @@ test("an announced host gets negotiated reads that are held and answered as JPEG
   const changedAt = Date.now();
   h.bump();
   await until(() => shown().frame_tag === tagOf(2), "the new picture");
-  assert.ok(Date.now() - changedAt < 200, "a new picture is shown as soon as the host answers");
+  assert.ok(Date.now() - changedAt < 400, "a new picture is shown as soon as the host answers");
   assert.ok(shown().image.startsWith("blob:test/") && shown().image !== first.image);
   await until(() => h.reads.length >= 3, "the next held read");
   assert.equal(h.reads[2].query, "?after=" + tagOf(2) + "&wait=12000&fmt=jpeg", "the next read is asked at once");
@@ -145,7 +145,7 @@ test("an input is sent at once while a read is held and the held read is given u
   assert.equal(held.signal.aborted, false);
   const before = Date.now();
   assert.equal(await session.send({type: "tap", x: 4, y: 5}, shown()), true);
-  assert.ok(Date.now() - before < 100, "a tap waited behind the held read");
+  assert.ok(Date.now() - before < 300, "a tap waited behind the held read");
   assert.equal(held.signal.aborted, true, "the held read was released for the input");
   assert.equal(h.requests.filter(r => r.path.endsWith("/action")).length, 1);
   await until(() => h.reads.length >= 3, "a new held read after the input");

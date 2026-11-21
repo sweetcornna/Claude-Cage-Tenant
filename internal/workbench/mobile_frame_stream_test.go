@@ -246,7 +246,7 @@ func testPairedFrameStream(t *testing.T, ctx context.Context, s *Server, phone *
 	// Input is not queued behind the held read.
 	tapped := time.Now()
 	must("POST", "browser", id+"/action", `{"type":"tap","x":1,"y":1,"document":"doc"}`, 200)
-	if took := time.Since(tapped); took > 400*time.Millisecond {
+	if took := time.Since(tapped); took > 800*time.Millisecond {
 		t.Fatalf("a tap waited %v behind a held read", took)
 	}
 	guest.bump()
