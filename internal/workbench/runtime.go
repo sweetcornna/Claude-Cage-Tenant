@@ -179,7 +179,9 @@ func (s *Server) attach() error {
 	} else if !s.vmRunning() {
 		return errors.New("环境尚未启动")
 	}
-	b, err := s.guest(ctx, guestConnectionSnapshot)
+	// The shared control connection saves an SSH login per attach; it falls
+	// back to a connection of its own when none can be opened.
+	b, err := s.guestQuick(ctx, guestConnectionSnapshot)
 	if err != nil {
 		return errors.New("环境尚未准备好")
 	}
@@ -199,12 +201,11 @@ func (s *Server) attach() error {
 		}
 		return err
 	}
-	if _, err = s.guestAPI(ctx, credentials.Token, "GET", "/health", nil); err != nil {
-		return err
-	}
 	s.mu.Lock()
 	home := browserHomeURL(s.preferences)
 	s.mu.Unlock()
+	// An accepted homepage proves what a separate /health request would: the
+	// browser agent answers with these credentials. One round trip fewer.
 	if err = s.setBrowserHome(ctx, credentials.Token, home); err != nil {
 		return err
 	}
@@ -572,16 +573,42 @@ func (s *Server) startEnvironment(syncTimezone bool) error {
 	if err = s.runCage("up"); err != nil {
 		return err
 	}
-	for i := 0; i < 8; i++ {
-		if s.operationContext().Err() != nil {
-			return s.operationContext().Err()
+	if err = retryAttach(s.operationContext(), s.attach); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return err
 		}
-		if err = s.attach(); err == nil {
-			return s.checkNetworkIfWanted()
-		}
-		time.Sleep(time.Second)
+		return errors.New("环境已启动，但浏览器连接尚未就绪。请重试连接或查看操作详情。")
 	}
-	return errors.New("环境已启动，但浏览器连接尚未就绪。请重试连接或查看操作详情。")
+	return s.checkNetworkIfWanted()
+}
+
+// attachRetryBudget is the total wait between attach attempts after cage up,
+// as with the former eight one-second pauses.
+const attachRetryBudget = 8 * time.Second
+
+// retryAttach retries attach after cage up. cage up has already waited for
+// the guest services, so a retry usually succeeds at once: start at 100 ms
+// and double to 1 s, instead of pausing a full second every time.
+func retryAttach(ctx context.Context, attach func() error) error {
+	delay, waited := 100*time.Millisecond, time.Duration(0)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := attach()
+		if err == nil || waited >= attachRetryBudget {
+			return err
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+		waited += delay
+		delay = min(2*delay, time.Second)
+	}
 }
 func (s *Server) stopEnvironment() (returned error) {
 	s.desktopStatus.invalidate()
