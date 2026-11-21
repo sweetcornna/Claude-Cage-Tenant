@@ -292,3 +292,52 @@ export async function routeModulePages(page, state, options = {}) {
     candidates: [{ id: "p3", label: "设计评审" }, { id: "p2", label: "备用账号（周末与夜间自动化任务专用）" }] }));
   for (const extra of options.extraRoutes || []) await extra(page, state, { now, variant });
 }
+
+// Browser chrome: tabs with long titles, favourites, the password picker with a
+// save prompt and the cookie list. Opt-in like routeModulePages: pass it in
+// options.extraRoutes, and call browserTabs(now) for state.tabs.
+export function browserTabs() {
+  return [
+    { id: "tab-1", kind: "web", title: "林间工作室 · 品牌官网与小程序重构计划 - 设计评审记录与发布排期", url: "https://linjian.example/projects/brand-site/review" },
+    { id: "tab-2", kind: "web", title: "GitHub - sweetcornna/example: a very long repository description that keeps going", url: "https://github.com/example/example" },
+    { id: "tab-3", kind: "web", title: "Claude", url: "https://claude.ai/new" },
+    { id: "tab-4", kind: "web", title: "Super Cage 设计语言", url: "https://docs.linjian.example/super-cage/design-language" },
+    { id: "tab-5", kind: "web", title: "新标签页", url: "https://www.bing.com/" },
+  ];
+}
+
+export function favoritesData() {
+  return {
+    folders: [{ id: "f1", title: "设计参考" }, { id: "f2", title: "夜间批处理与发布脚本审阅（长名称收藏夹）" }],
+    items: [
+      { id: "b1", title: "林间工作室 · 品牌官网与小程序重构计划 - 设计评审记录与发布排期", url: "https://linjian.example/projects/brand-site/review", folder_id: "f1" },
+      { id: "b2", title: "Claude", url: "https://claude.ai/new", folder_id: "" },
+      { id: "b3", title: "Super Cage 设计语言", url: "https://docs.linjian.example/super-cage/design-language", folder_id: "f1" },
+      { id: "b4", title: "Netlify 部署面板", url: "https://app.netlify.com/sites/linjian-studio-brand-site-preview/deploys", folder_id: "f2" },
+      { id: "b5", title: "", url: "https://figma.com/file/abc", folder_id: "" },
+    ],
+  };
+}
+
+export async function routeBrowserChrome(page, state, { now, variant }) {
+  const json = (route, value) => route.fulfill({ json: value });
+  await page.route("**/api/favorites", (route) => route.request().method() === "GET"
+    ? json(route, variant() === "empty" ? { items: [], folders: [] } : favoritesData())
+    : json(route, favoritesData()));
+  await page.route("**/api/vault/browser", (route) => {
+    const tab = state.active || "tab-1";
+    if (variant() === "error") return route.fulfill(text(503, "密码保险箱已锁定，请先解锁 Super Cage"));
+    return json(route, { available: true, tab, origin: "https://linjian.example", document: "d1",
+      entries: variant() === "empty" ? [] : [{ id: "v1", username: "studio@linjian.example" }, { id: "v6", username: "night.shift.automation.long-address@example.test" }],
+      candidates: variant() === "empty" ? [] : [{ id: "c1", tab, origin: "https://linjian.example", username: "design@linjian.example", update: false }] });
+  });
+  await page.route("**/api/browser/cookies", (route) => {
+    if (variant() === "error") return route.fulfill(text(503, "浏览器暂时没有响应，Cookie 无法读取"));
+    const cookies = variant() === "empty" ? [] : [
+      { key: "k1", name: "session_id", domain: ".linjian.example", path: "/", size: 64, session: true, secure: true, httpOnly: true, sameSite: "Lax" },
+      { key: "k2", name: "preferences_theme_and_layout_for_the_brand_site_preview", domain: "linjian.example", path: "/projects", size: 212, session: false, expires: now / 1000 + 86400 * 30, secure: true, sameSite: "Strict" },
+      { key: "k3", name: "", domain: "cdn.linjian.example", path: "/", size: 12, session: true, partitionKey: { topLevelSite: "https://linjian.example" } },
+    ];
+    return json(route, { hostname: "linjian.example", cookies, total: cookies.length, page: 0 });
+  });
+}
