@@ -591,7 +591,7 @@ function Chat({ id, drafts, ready, visible, refresh, onOpenWeb, onDenied, onMiss
     {session && !codex && <SessionAccount id={id} request={request} onChanged={()=>setReload(n=>n+1)} compact />}
     {(sendProgress || connectionProgress || readProgress) && <p className="note" role="status">{sendProgress || connectionProgress || readProgress}</p>}
     {session?.connection_notice && <Notice>{session.connection_notice}</Notice>}
-    {session?.history_truncated && <p className="note">手机显示的历史已截断，完整内容保存在电脑 Claude Code 中。</p>}
+    {session?.history_truncated && <p className="note">手机显示的历史已截断，完整内容保存在电脑 {assistant} 中。</p>}
     {away && <button type="button" className="jump-latest" aria-label="回到最新消息" onClick={() => { follow.current = true; setAway(false); transcript.current?.scrollTo({ top: transcript.current.scrollHeight, behavior: "smooth" }); }}><ArrowDown size={18} /></button>}
     <section className="transcript" ref={transcript} aria-label="会话消息" onScroll={(e) => {
       const box = e.currentTarget; follow.current = box.scrollHeight - box.scrollTop - box.clientHeight < 64;
