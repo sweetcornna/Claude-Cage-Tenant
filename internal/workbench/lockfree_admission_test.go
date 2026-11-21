@@ -46,10 +46,11 @@ func TestClaudeSciencePollsWaitOutJobs(t *testing.T) {
 		data, _ := os.ReadFile(filepath.Join(home, "snapshot-runs"))
 		return strings.Count(string(data), "x")
 	}
+	var body string
 	poll := func(want int) claudeScienceState {
 		t.Helper()
 		w := request(s, "GET", "/api/claude-science", "", "", true)
-		if w.Code != want {
+		if body = w.Body.String(); w.Code != want {
 			t.Fatalf("status %d, want %d: %s", w.Code, want, w.Body)
 		}
 		if want != http.StatusOK {
@@ -59,7 +60,9 @@ func TestClaudeSciencePollsWaitOutJobs(t *testing.T) {
 	}
 	// Nothing was read yet: a poll during a job says so and waits.
 	s.setJobForTest(Job{ID: "job", Kind: "environment-tools", Running: true})
-	poll(http.StatusConflict)
+	if poll(http.StatusConflict); !strings.Contains(body, "其他操作") {
+		t.Fatalf("a poll during a job: %s", body)
+	}
 	if snapshots() != 0 {
 		t.Fatal("a poll during a job asked the guest")
 	}
@@ -88,6 +91,12 @@ func TestClaudeSciencePollsWaitOutJobs(t *testing.T) {
 	poll(http.StatusOK)
 	if snapshots() != 2 {
 		t.Fatal("a poll after the job did not read the guest")
+	}
+	// A guest that is not ready yet, with nothing read, is named as such.
+	s.scienceLast.set(nil)
+	setGuestReady(s, false)
+	if poll(http.StatusConflict); !strings.Contains(body, "尚未就绪") || snapshots() != 2 {
+		t.Fatalf("a poll before the guest was ready: %s", body)
 	}
 }
 

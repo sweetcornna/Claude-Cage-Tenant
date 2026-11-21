@@ -342,7 +342,11 @@ func (s *Server) claudeScienceStatus(w http.ResponseWriter, r *http.Request) {
 	if !s.guestAdmitsLockFreeCalls() {
 		state, ok := s.scienceLast.get()
 		if !ok {
-			http.Error(w, "环境正在处理其他操作，完成后再查看 Claude Science。", http.StatusConflict)
+			message := "环境尚未就绪，连接完成后再查看 Claude Science。"
+			if s.busy() {
+				message = "环境正在处理其他操作，完成后再查看 Claude Science。"
+			}
+			http.Error(w, message, http.StatusConflict)
 			return
 		}
 		state.Operation = s.claudeScienceOperation()
