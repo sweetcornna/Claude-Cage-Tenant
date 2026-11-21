@@ -84,18 +84,17 @@
   padding-bottom: 16px;
   border-bottom: 1px solid var(--line);
 }
-/* The two selects side by side; details does not lay out as a grid everywhere. */
+/* The two selects stacked at a readable width: an open list stays in the
+   flow and pushes what follows down (account-scheduling-smoke). */
 .claude-scheduling > label {
-  display: inline-grid;
-  width: calc(50% - 8px);
+  display: grid;
+  width: min(100%, 28rem);
   gap: 6px;
   margin: 4px 0 12px;
-  vertical-align: top;
   color: var(--ink);
   font-size: var(--fs-secondary);
   font-weight: 500;
 }
-.claude-scheduling > label + label { margin-left: 16px; }
 .claude-scheduling > .field-help { margin: 0; }
 .claude-account-order { max-height: 12rem; margin-top: 12px; overflow: auto; border-top: 1px solid var(--line); }
 .claude-account-order > div { display: flex; gap: 8px; align-items: center; min-height: var(--h-control); border-bottom: 1px solid var(--line); font-size: var(--fs-secondary); }
@@ -378,7 +377,6 @@
 @container (max-width: 560px) {
   .claude-profiles .section-title.claude-profiles-intro { flex-direction: column; gap: 12px; }
   .claude-scheduling > label { width: 100%; }
-  .claude-scheduling > label + label { margin-left: 0; }
 }
 @container (max-width: 860px) {
   .claude-profile-list { grid-template-columns: 2rem minmax(0, 1fr) auto; }
