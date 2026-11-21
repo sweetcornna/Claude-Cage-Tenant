@@ -589,6 +589,14 @@ func (s *Server) authorizedMobileSessionRecord(w http.ResponseWriter, r *http.Re
 	}
 	return view, record.Terminal, true
 }
+// Session read protocol (GET /api/[mobile/]cli/sessions/{id}):
+//
+//   - ?after=<revision>[&epoch=<generation>] answers 204 while the session's
+//     revision and generation are unchanged (as before).
+//   - Adding &wait=<1..25> holds the request while it is unchanged and
+//     answers as soon as it changes (200) or the time is up (204). The same
+//     pacing and fallback rules as for the session list apply: on 400 or 404
+//     the client drops wait and keeps its 1 s / 4 s polling.
 func (s *Server) mobileSessionView(w http.ResponseWriter, r *http.Request) {
 	view, ok := s.authorizedMobileSession(w, r)
 	if !ok {
