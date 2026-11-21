@@ -51,6 +51,8 @@ func monitorTimingRecords(t *testing.T, s *Server, kind string) []map[string]str
 func TestNetworkMonitorRecordsRepeatedLockSkips(t *testing.T) {
 	s := testServer(t)
 	s.ready = true
+	// A lost proxy network needs the locked round, without external reads.
+	s.proxyNetworkLost = true
 	s.safety.VerifiedAt = time.Now().Add(-85 * time.Second)
 	s.safety.Gate = &cage.GateStatus{Mode: cage.GateOpen, Until: time.Now().Add(5 * time.Second)}
 	s.op.Lock()

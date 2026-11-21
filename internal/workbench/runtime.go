@@ -771,6 +771,8 @@ func (s *Server) apply(v savedProfile, validate bool) error {
 
 // Interface recovery uses the ordinary cancellable job queue. Location changes
 // remain governed by the saved exit policy and never replace its baseline.
+// Runs with the operation lock held. A step added here that can act must
+// also make networkRoundWanted report true.
 func (s *Server) monitorNetworkTick() {
 	timing := s.startMonitorTiming()
 	defer s.recordMonitorTiming("network", timing)
@@ -795,51 +797,127 @@ func (s *Server) monitorNetworkTick() {
 }
 
 func (s *Server) monitorNetwork(ctx context.Context) {
-	s.runNetworkMonitor(ctx, s.monitorNetworkTick)
+	s.runNetworkMonitorWith(ctx, s.networkRoundWanted, s.monitorNetworkTick)
 }
 
 // Keep scheduling and lock ownership independent of the network probes so
 // concurrency tests can exercise the real loop without external I/O.
 func (s *Server) runNetworkMonitor(ctx context.Context, tick func()) {
+	s.runNetworkMonitorWith(ctx, nil, tick)
+}
+
+// runNetworkMonitorWith runs a round every 5 s. wanted, when set, first
+// reads the round's inputs without the operation lock and reports whether
+// the locked tick could act; a steady round then leaves the lock to user
+// actions, which are refused while it is held.
+func (s *Server) runNetworkMonitorWith(ctx context.Context, wanted func(*monitorTiming) bool, tick func()) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	skipped := 0
 	for ctx.Err() == nil {
-		s.mu.Lock()
-		// Publish ownership with acquisition and give project requests
-		// waiting on this round a chance before the next tick takes the lock.
-		yielded := s.projectOperationWaiters > 0
-		acquired := !yielded && s.op.TryLock()
-		if acquired {
-			s.networkMonitorDone = make(chan struct{})
-		}
-		s.mu.Unlock()
-		if acquired {
-			skipped = 0
-			tick()
-			s.mu.Lock()
-			s.op.Unlock()
-			close(s.networkMonitorDone)
-			s.networkMonitorDone = nil
-			s.mu.Unlock()
-		} else if yielded {
-			skipped = 0
-			timing := s.startMonitorTiming()
-			timing.result = "project_operations_waiting"
-			s.recordMonitorTiming("network", timing)
-		} else {
-			skipped++
-			timing := s.startMonitorTiming()
-			timing.result = "operation_lock_busy"
-			timing.stages = append(timing.stages, fmt.Sprintf("consecutive_lock_skips=%d", skipped))
-			s.recordMonitorTiming("network", timing)
-		}
+		s.networkMonitorRound(&skipped, wanted, tick)
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		}
 	}
+}
+
+func (s *Server) networkMonitorRound(skipped *int, wanted func(*monitorTiming) bool, tick func()) {
+	if wanted != nil {
+		timing := s.startMonitorTiming()
+		if !wanted(timing) {
+			*skipped = 0
+			s.recordMonitorTiming("network", timing)
+			return
+		}
+	}
+	s.mu.Lock()
+	// Publish ownership with acquisition and give project requests
+	// waiting on this round a chance before the next tick takes the lock.
+	yielded := s.projectOperationWaiters > 0
+	acquired := !yielded && s.op.TryLock()
+	if acquired {
+		s.networkMonitorDone = make(chan struct{})
+	}
+	s.mu.Unlock()
+	if acquired {
+		*skipped = 0
+		tick()
+		s.mu.Lock()
+		s.op.Unlock()
+		close(s.networkMonitorDone)
+		s.networkMonitorDone = nil
+		s.mu.Unlock()
+	} else if yielded {
+		*skipped = 0
+		timing := s.startMonitorTiming()
+		timing.result = "project_operations_waiting"
+		s.recordMonitorTiming("network", timing)
+	} else {
+		*skipped++
+		timing := s.startMonitorTiming()
+		timing.result = "operation_lock_busy"
+		timing.stages = append(timing.stages, fmt.Sprintf("consecutive_lock_skips=%d", *skipped))
+		s.recordMonitorTiming("network", timing)
+	}
+}
+
+// proxyCoreRunning is managedproxy.Running; tests replace it.
+var proxyCoreRunning = managedproxy.Running
+
+// networkRoundWanted reports whether the locked network round could act:
+// close the gate, mark the proxy network lost or submit a job. It reads the
+// same inputs as monitorNetworkTick without the operation lock, and any
+// error, unknown or change answers true so that the locked round decides on
+// its own fresh reading. Steady rounds record result=steady.
+//
+// Keep it in step with monitorNetworkTick: every step there that can act
+// must make this report true in that case. monitorSafety is not needed here:
+// it runs on its own without the operation lock.
+func (s *Server) networkRoundWanted(timing *monitorTiming) bool {
+	s.mu.Lock()
+	lost, recovering := s.proxyNetworkLost, s.recovery.RunID != ""
+	s.mu.Unlock()
+	// The locked round returns early for these; its record says why.
+	if lost || recovering || s.busy() || s.storageRecoveryStatus().Required || s.macSetupPending() {
+		return true
+	}
+	cfg, err := loadConfig(s.configPath)
+	if err != nil || cfg.RequireManagedProxy(s.profile) != nil {
+		return true
+	}
+	name, err := physicalProxyInterface(s.lifetimeContext())
+	timing.stage("physical_interface")
+	if err != nil {
+		return true
+	}
+	bound, err := managedproxy.BoundInterface(filepath.Join(managedproxy.Dir(s.profile), "config.yaml"))
+	if err != nil || bound != name {
+		return true
+	}
+	p, err := managedproxy.Load(s.profile)
+	if err != nil {
+		return true
+	}
+	if s.vmRunning() {
+		ctx, cancel := context.WithTimeout(s.lifetimeContext(), 2*time.Second)
+		running := proxyCoreRunning(ctx, s.profile, p)
+		cancel()
+		timing.stage("proxy_health")
+		if !running {
+			return true
+		}
+	}
+	// The condition refreshProxySubscriptions submits an update for.
+	for _, src := range p.Sources {
+		if src.URL != "" && src.Interval > 0 && time.Since(src.Updated) >= time.Duration(src.Interval)*time.Hour && time.Since(src.Attempted) > 15*time.Minute {
+			return true
+		}
+	}
+	timing.result = "steady"
+	return false
 }
 
 func vmAlive(profile, workspace string) bool {
