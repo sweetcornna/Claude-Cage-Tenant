@@ -9,39 +9,43 @@ import (
 	"strings"
 )
 
-// Hashed workbench assets under /assets/ never change under their name, so a
-// browser may keep them. Everything else the gateway serves stays
-// "Cache-Control: no-store", and a workbench that does not say otherwise (an
-// older one answers no-store here too) keeps the assets uncacheable as well.
-const (
-	assetPrefix = "/assets/"
-	// maxAssetAge caps the lifetime a workbench may grant, one year.
-	maxAssetAge = 365 * 24 * 60 * 60
-)
+// The workbench says how long a static file may be kept: content-hashed
+// assets for a year, the HTML pages until revalidated. The gateway forwards
+// that for successful GET and HEAD responses outside /api/; every other
+// response, and any workbench that says nothing usable (an older one answers
+// no-store), keeps the gateway's "Cache-Control: no-store".
+//
+// maxAssetAge caps the lifetime a workbench may grant, one year.
+const maxAssetAge = 365 * 24 * 60 * 60
 
 var (
-	assetEncodings = regexp.MustCompile(`^[A-Za-z0-9*;=.,\s-]{1,128}$`)
-	assetETag      = regexp.MustCompile(`^(?:W/)?"[\x21\x23-\x7e]{0,126}"$`)
+	assetETag = regexp.MustCompile(`^(?:W/)?"[\x21\x23-\x7e]{0,126}"$`)
+	assetVary = regexp.MustCompile(`^[A-Za-z0-9-]+(?:\s*,\s*[A-Za-z0-9-]+)*$`)
 )
 
-func assetRequest(r *http.Request) bool {
-	return (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.HasPrefix(r.URL.Path, assetPrefix) && len(r.Header.Values("Upgrade")) == 0
+// staticRequest reports whether the response to r may carry the workbench's
+// cache policy: a read of a file, not an API call and not a stream.
+func staticRequest(r *http.Request) bool {
+	return (r.Method == http.MethodGet || r.Method == http.MethodHead) && len(r.Header.Values("Upgrade")) == 0 &&
+		r.URL.Path != "/api" && !strings.HasPrefix(r.URL.Path, "/api/")
 }
 
-// cacheAssets changes how proxy treats a request for a hashed asset: the
-// browser's Accept-Encoding reaches the workbench, so a pre-compressed asset
-// travels compressed instead of being decoded by the gateway's own transport,
-// and the workbench's cache policy and validators reach the browser. reply is
-// the header of the response the gateway sends; it already holds no-store.
-func cacheAssets(proxy *httputil.ReverseProxy, r *http.Request, reply http.Header) {
-	if !assetRequest(r) {
+// cacheStatic changes how proxy treats a request for a file. The workbench
+// serves precompressed copies chosen by the browser's own Accept-Encoding, so
+// that header is what it sees, and a client that sent none gets the identity
+// bytes (the transport would otherwise ask for gzip itself and decode it, and
+// the ETag would belong to a copy the browser never saw). Its cache policy and
+// validators reach the browser. reply is the header of the response the
+// gateway sends; it already holds no-store.
+func cacheStatic(proxy *httputil.ReverseProxy, r *http.Request, reply http.Header) {
+	if !staticRequest(r) {
 		return
 	}
 	rewrite, modify := proxy.Rewrite, proxy.ModifyResponse
 	proxy.Rewrite = func(request *httputil.ProxyRequest) {
 		rewrite(request)
-		if encodings := strings.Join(request.In.Header.Values("Accept-Encoding"), ","); assetEncodings.MatchString(encodings) {
-			request.Out.Header.Set("Accept-Encoding", encodings)
+		if request.Out.Header.Get("Accept-Encoding") == "" {
+			request.Out.Header.Set("Accept-Encoding", "identity")
 		}
 	}
 	proxy.ModifyResponse = func(response *http.Response) error {
@@ -49,13 +53,13 @@ func cacheAssets(proxy *httputil.ReverseProxy, r *http.Request, reply http.Heade
 		if err := modify(response); err != nil {
 			return err
 		}
-		forwardAssetCaching(response, guest, reply)
+		forwardStaticCaching(response, guest, reply)
 		return nil
 	}
 }
 
-func forwardAssetCaching(response *http.Response, guest, reply http.Header) {
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusNotModified {
+func forwardStaticCaching(response *http.Response, guest, reply http.Header) {
+	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusPartialContent && response.StatusCode != http.StatusNotModified {
 		return
 	}
 	control, ok := assetCacheControl(guest.Values("Cache-Control"))
@@ -63,7 +67,8 @@ func forwardAssetCaching(response *http.Response, guest, reply http.Header) {
 		return
 	}
 	// ReverseProxy adds the headers of the response to the ones already set,
-	// so the gateway's no-store has to go.
+	// so the gateway's no-store has to go: both would be sent, and no-store
+	// would still win.
 	reply.Del("Cache-Control")
 	headers := response.Header
 	headers.Set("Cache-Control", control)
@@ -73,13 +78,24 @@ func forwardAssetCaching(response *http.Response, guest, reply http.Header) {
 	if modified, err := http.ParseTime(guest.Get("Last-Modified")); err == nil {
 		headers.Set("Last-Modified", modified.UTC().Format(http.TimeFormat))
 	}
-	headers.Set("Vary", "Accept-Encoding")
+	vary := strings.Join(guest.Values("Vary"), ", ")
+	if !assetVary.MatchString(vary) {
+		vary = ""
+	}
+	// A coded body must say that it depends on the browser's Accept-Encoding.
+	if guest.Get("Content-Encoding") != "" && !slices.ContainsFunc(strings.Split(vary, ","), func(name string) bool { return strings.EqualFold(strings.TrimSpace(name), "Accept-Encoding") }) {
+		vary = strings.TrimPrefix(vary+", Accept-Encoding", ", ")
+	}
+	if vary != "" {
+		headers.Set("Vary", vary)
+	}
 }
 
 // assetCacheControl turns the workbench's Cache-Control into one the gateway
 // forwards. Only a small set of directives is understood; anything else, and
-// any no-store, means the asset stays uncacheable. The browser may keep the
-// asset but a shared cache may not, so public becomes private.
+// any no-store, means the response stays uncacheable. The browser may keep the
+// response but a shared cache may not, so public becomes private: the gateway
+// authenticates with a cookie, which a shared cache would not know about.
 func assetCacheControl(values []string) (string, bool) {
 	var directives []string
 	for _, directive := range strings.Split(strings.Join(values, ","), ",") {

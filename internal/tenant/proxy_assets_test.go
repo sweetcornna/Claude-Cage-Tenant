@@ -6,64 +6,100 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
-const assetStamp = "Mon, 02 Jan 2006 15:04:05 GMT"
+// brotliBytes stands in for a precompressed brotli body: the gateway must pass
+// it on byte for byte, so it only needs to be recognizable.
+var brotliBytes = []byte{0x1b, 0x2a, 0x00, 0xf8, 0xff, 0x03, 0x80, 0x21, 0x5a, 0x7e}
 
-// assetGuest models the workbench's static handler: hashed assets with a
-// cache policy, a validator and an optional gzip variant.
-func assetGuest(id string) http.Handler {
+const (
+	scriptBody  = "console.log('workbench');\n"
+	immutable   = "public, max-age=31536000, immutable"
+	browserSide = "private, max-age=31536000, immutable"
+)
+
+func gzipped(body string) []byte {
+	var packed bytes.Buffer
+	compressor := gzip.NewWriter(&packed)
+	_, _ = compressor.Write([]byte(body))
+	_ = compressor.Close()
+	return packed.Bytes()
+}
+
+// staticGuest answers like the workbench's static handler: hashed assets with
+// a year-long immutable lifetime, other files revalidated with an ETag, one
+// strong ETag per representation, brotli and gzip chosen by Accept-Encoding,
+// Range answered from the identity bytes. Paths of an older workbench answer
+// no-store and nothing else.
+func staticGuest(id string) http.Handler {
 	base := fixtureGuest(id)
+	files := map[string]string{ // path -> cache policy
+		"/assets/app-abc12345.js":  immutable,
+		"/":                        "no-cache",
+		"/assets/odd-abc12345.js":  "max-age=60, s-maxage=1, foo",
+		"/assets/huge-abc12345.js": "public, max-age=99999999999",
+		"/old/app.js":              "no-store",
+		"/old/silent.js":           "",
+		"/api/static.js":           immutable,
+		"/missing/abort.js":        immutable,
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		policies := map[string]string{
-			"/assets/app-abc.js":    "public, max-age=31536000, immutable",
-			"/assets/old-abc.js":    "no-store",
-			"/assets/odd-abc.js":    "max-age=60, s-maxage=1, foo",
-			"/assets/huge-abc.js":   "public, max-age=99999999999",
-			"/assets/silent-abc.js": "",
-			"/assets/revalidate.js": "no-cache",
-			"/index.html":           "public, max-age=31536000",
-			"/api/assets/app.js":    "public, max-age=31536000",
-			"/assets/abort.js":      "public, max-age=31536000",
-		}
-		policy, known := policies[r.URL.Path]
+		policy, known := files[r.URL.Path]
 		if !known || r.Header.Get("Cookie") != guestCookie+"="+fixtureSession {
 			base.ServeHTTP(w, r)
 			return
 		}
-		if r.URL.Path == "/assets/abort.js" {
+		if r.URL.Path == "/missing/abort.js" {
 			panic(http.ErrAbortHandler)
 		}
+		body, etag, encoding := []byte(scriptBody), `"identity"`, ""
+		accept := r.Header.Get("Accept-Encoding")
+		if !strings.HasPrefix(r.URL.Path, "/old/") && r.Header.Get("Range") == "" {
+			switch {
+			case strings.Contains(accept, "br"):
+				body, etag, encoding = brotliBytes, `"br"`, "br"
+			case strings.Contains(accept, "gzip"):
+				body, etag, encoding = gzipped(scriptBody), `"gzip"`, "gzip"
+			}
+		}
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("X-Guest-Accept-Encoding", accept)
 		if policy != "" {
 			w.Header().Set("Cache-Control", policy)
 		}
-		w.Header().Set("ETag", `"abc"`)
-		w.Header().Set("Last-Modified", assetStamp)
-		w.Header().Set("Vary", "Accept-Encoding")
-		w.Header().Set("X-Guest-Accept-Encoding", r.Header.Get("Accept-Encoding"))
-		if r.Header.Get("If-None-Match") == `"abc"` {
-			w.WriteHeader(http.StatusNotModified)
-			return
+		if !strings.HasPrefix(r.URL.Path, "/old/") {
+			w.Header().Set("ETag", etag)
+			w.Header().Add("Vary", "Accept-Encoding")
 		}
-		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") && r.URL.Path == "/assets/app-abc.js" {
-			var packed bytes.Buffer
-			compressor := gzip.NewWriter(&packed)
-			_, _ = compressor.Write([]byte("console.log(1)"))
-			_ = compressor.Close()
-			w.Header().Set("Content-Encoding", "gzip")
-			_, _ = w.Write(packed.Bytes())
-			return
+		if encoding != "" {
+			w.Header().Set("Content-Encoding", encoding)
 		}
-		_, _ = io.WriteString(w, "console.log(1)")
+		http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(body))
 	})
 }
 
-func (f *portalFixture) asset(method, path string, cookie *http.Cookie, headers map[string]string) *httptest.ResponseRecorder {
+type staticFixture struct {
+	*portalFixture
+	cookie *http.Cookie
+	id     string
+}
+
+func newStaticFixture(t *testing.T) *staticFixture {
+	t.Helper()
+	fixture := newFixture(t, false)
+	fixture.runtime.guestHandler = staticGuest
+	alice, _ := fixture.login("register", "alice")
+	record := fixture.create(alice, "workspace")
+	return &staticFixture{portalFixture: fixture, cookie: fixture.connect(alice, record.ID), id: record.ID}
+}
+
+func (f *staticFixture) get(method, path string, cookie *http.Cookie, headers map[string]string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, path, nil)
-	request.Host = strings.TrimPrefix(vmOrigin(f.workspaceID()), "https://")
+	request.Host = strings.TrimPrefix(vmOrigin(f.id), "https://")
 	if cookie != nil {
 		request.AddCookie(cookie)
 	}
@@ -73,79 +109,107 @@ func (f *portalFixture) asset(method, path string, cookie *http.Cookie, headers 
 	return f.serve(request)
 }
 
-func (f *portalFixture) workspaceID() string {
-	f.server.mu.Lock()
-	defer f.server.mu.Unlock()
-	for id := range f.server.workspaces {
-		return id
+func cacheControl(response *httptest.ResponseRecorder) string {
+	values := response.Header().Values("Cache-Control")
+	if len(values) != 1 {
+		return "<" + strings.Join(values, " | ") + ">"
 	}
-	f.t.Fatal("no workspace")
-	return ""
+	return values[0]
 }
 
-func TestTenantForwardsCachingOfHashedAssetsOnly(t *testing.T) {
-	fixture := newFixture(t, false)
-	fixture.runtime.guestHandler = assetGuest
-	alice, _ := fixture.login("register", "alice")
-	record := fixture.create(alice, "workspace")
-	cookie := fixture.connect(alice, record.ID)
+func TestTenantPassesStaticCachingAndCompressionThrough(t *testing.T) {
+	f := newStaticFixture(t)
 
-	// A hashed asset keeps the workbench's policy, as one header, and becomes
-	// private to the browser: a shared cache in front must not store it.
-	response := fixture.asset("GET", "/assets/app-abc.js", cookie, map[string]string{"Accept-Encoding": "gzip, br"})
-	if response.Code != 200 || len(response.Header().Values("Cache-Control")) != 1 || response.Header().Get("Cache-Control") != "private, max-age=31536000, immutable" {
-		t.Fatalf("asset: HTTP %d, Cache-Control %q", response.Code, response.Header().Values("Cache-Control"))
+	// A brotli asset arrives byte for byte, with exactly one Cache-Control (the
+	// gateway's own no-store is gone), its ETag and Vary.
+	response := f.get("GET", "/assets/app-abc12345.js", f.cookie, map[string]string{"Accept-Encoding": "br, gzip"})
+	if response.Code != 200 || cacheControl(response) != browserSide {
+		t.Fatalf("asset: HTTP %d, Cache-Control %s", response.Code, cacheControl(response))
 	}
-	if response.Header().Get("ETag") != `"abc"` || response.Header().Get("Last-Modified") != assetStamp || response.Header().Get("Vary") != "Accept-Encoding" {
-		t.Fatalf("asset validators: %v", response.Header())
+	if response.Header().Get("Content-Encoding") != "br" || !bytes.Equal(response.Body.Bytes(), brotliBytes) {
+		t.Fatalf("brotli body changed: %q %x", response.Header().Get("Content-Encoding"), response.Body.Bytes())
+	}
+	if response.Header().Get("ETag") != `"br"` || response.Header().Values("Vary")[0] != "Accept-Encoding" || len(response.Header().Values("Vary")) != 1 {
+		t.Fatalf("validators: %v", response.Header())
 	}
 	if response.Header().Get("X-Content-Type-Options") != "nosniff" || response.Header().Get("X-Guest-Accept-Encoding") != "" {
 		t.Fatalf("gateway headers changed or a guest header leaked: %v", response.Header())
 	}
-	// The browser's own Accept-Encoding reaches the workbench and a compressed
-	// answer is passed on as it is.
-	if reader, err := gzip.NewReader(response.Body); response.Header().Get("Content-Encoding") != "gzip" || err != nil {
-		t.Fatalf("the asset was not passed on compressed: %q, %v", response.Header().Get("Content-Encoding"), err)
-	} else if plain, _ := io.ReadAll(reader); string(plain) != "console.log(1)" {
-		t.Fatalf("compressed asset decodes to %q", plain)
+	if response.Header().Get("Content-Length") != "10" {
+		t.Fatalf("Content-Length %q", response.Header().Get("Content-Length"))
 	}
 
-	// Revalidation: the validator reaches the workbench and its 304 keeps the
-	// policy.
-	response = fixture.asset("GET", "/assets/app-abc.js", cookie, map[string]string{"If-None-Match": `"abc"`})
-	if response.Code != 304 || response.Header().Get("Cache-Control") != "private, max-age=31536000, immutable" || response.Header().Get("ETag") != `"abc"` {
+	// Gzip is passed on as gzip, with its own ETag.
+	response = f.get("GET", "/assets/app-abc12345.js", f.cookie, map[string]string{"Accept-Encoding": "gzip"})
+	reader, err := gzip.NewReader(response.Body)
+	if err != nil || response.Header().Get("Content-Encoding") != "gzip" || response.Header().Get("ETag") != `"gzip"` {
+		t.Fatalf("gzip asset: %q %q %v", response.Header().Get("Content-Encoding"), response.Header().Get("ETag"), err)
+	}
+	if plain, _ := io.ReadAll(reader); string(plain) != scriptBody {
+		t.Fatalf("gzip asset decodes to %q", plain)
+	}
+
+	// A client without Accept-Encoding gets the identity bytes and the identity
+	// ETag, not the gateway's own gzip negotiation.
+	response = f.get("GET", "/assets/app-abc12345.js", f.cookie, nil)
+	if response.Header().Get("Content-Encoding") != "" || response.Body.String() != scriptBody || response.Header().Get("ETag") != `"identity"` {
+		t.Fatalf("plain asset: %q %q %q", response.Header().Get("Content-Encoding"), response.Body.String(), response.Header().Get("ETag"))
+	}
+
+	// Revalidation: the validator reaches the workbench; its 304 keeps the policy.
+	response = f.get("GET", "/assets/app-abc12345.js", f.cookie, map[string]string{"Accept-Encoding": "br", "If-None-Match": `"br"`})
+	if response.Code != 304 || cacheControl(response) != browserSide || response.Header().Get("ETag") != `"br"` || response.Body.Len() != 0 {
 		t.Fatalf("revalidation: HTTP %d %v", response.Code, response.Header())
 	}
 
-	// A client that does not accept compression gets the plain asset: the
-	// gateway's own transport asks for gzip and decodes it, as before.
-	response = fixture.asset("GET", "/assets/app-abc.js", cookie, nil)
-	if response.Header().Get("Content-Encoding") != "" || response.Body.String() != "console.log(1)" {
-		t.Fatalf("plain asset: %q %q", response.Header().Get("Content-Encoding"), response.Body.String())
+	// Range is answered from the identity bytes.
+	response = f.get("GET", "/assets/app-abc12345.js", f.cookie, map[string]string{"Accept-Encoding": "br", "Range": "bytes=0-6"})
+	if response.Code != 206 || response.Body.String() != scriptBody[:7] || response.Header().Get("Content-Range") != "bytes 0-6/"+strconv.Itoa(len(scriptBody)) || response.Header().Get("Content-Encoding") != "" {
+		t.Fatalf("range: HTTP %d %q %v", response.Code, response.Body.String(), response.Header())
+	}
+	if cacheControl(response) != browserSide || response.Header().Get("Accept-Ranges") != "bytes" || response.Header().Get("ETag") != `"identity"` {
+		t.Fatalf("range headers: %v", response.Header())
 	}
 
-	if response = fixture.asset("HEAD", "/assets/app-abc.js", cookie, nil); response.Header().Get("Cache-Control") != "private, max-age=31536000, immutable" {
+	// HTML is revalidated: no-cache with its ETag, and a 304 for the browser.
+	response = f.get("GET", "/", f.cookie, map[string]string{"Accept-Encoding": "gzip"})
+	if response.Code != 200 || cacheControl(response) != "no-cache" || response.Header().Get("ETag") != `"gzip"` {
+		t.Fatalf("html: HTTP %d, Cache-Control %s, ETag %q", response.Code, cacheControl(response), response.Header().Get("ETag"))
+	}
+	if response = f.get("GET", "/", f.cookie, map[string]string{"Accept-Encoding": "gzip", "If-None-Match": `"gzip"`}); response.Code != 304 || cacheControl(response) != "no-cache" {
+		t.Fatalf("html revalidation: HTTP %d %s", response.Code, cacheControl(response))
+	}
+
+	if response = f.get("HEAD", "/assets/app-abc12345.js", f.cookie, nil); cacheControl(response) != browserSide || response.Body.Len() != 0 {
 		t.Fatalf("HEAD: %v", response.Header())
 	}
-	if response = fixture.asset("GET", "/assets/huge-abc.js", cookie, nil); response.Header().Get("Cache-Control") != "private, max-age=31536000" {
-		t.Fatalf("a very long lifetime must be capped: %q", response.Header().Get("Cache-Control"))
+	if response = f.get("GET", "/assets/huge-abc12345.js", f.cookie, nil); cacheControl(response) != "private, max-age=31536000" {
+		t.Fatalf("a very long lifetime must be capped: %s", cacheControl(response))
 	}
-	if response = fixture.asset("GET", "/assets/revalidate.js", cookie, nil); response.Header().Get("Cache-Control") != "no-cache" {
-		t.Fatalf("no-cache: %q", response.Header().Get("Cache-Control"))
-	}
+}
 
-	// Everything else stays uncacheable: an older workbench, an unknown policy,
-	// no policy, other paths, other methods, and the gateway's own failures.
-	for _, path := range []string{"/assets/old-abc.js", "/assets/odd-abc.js", "/assets/silent-abc.js", "/index.html", "/api/assets/app.js"} {
-		if response = fixture.asset("GET", path, cookie, nil); response.Code != 200 || response.Header().Values("Cache-Control")[0] != "no-store" || len(response.Header().Values("Cache-Control")) != 1 || response.Header().Get("ETag") != "" {
-			t.Fatalf("%s: HTTP %d, Cache-Control %q, ETag %q", path, response.Code, response.Header().Values("Cache-Control"), response.Header().Get("ETag"))
+func TestTenantKeepsEverythingElseUncacheable(t *testing.T) {
+	f := newStaticFixture(t)
+	// An older workbench (identity, no-store, no validators), an unknown policy,
+	// no policy, an API path that claims to be public, and other methods.
+	for _, path := range []string{"/old/app.js", "/old/silent.js", "/assets/odd-abc12345.js", "/api/static.js"} {
+		response := f.get("GET", path, f.cookie, map[string]string{"Accept-Encoding": "br"})
+		if response.Code != 200 || cacheControl(response) != "no-store" || response.Header().Get("ETag") != "" || response.Header().Get("Vary") != "" {
+			t.Fatalf("%s: HTTP %d, Cache-Control %s, ETag %q, Vary %q", path, response.Code, cacheControl(response), response.Header().Get("ETag"), response.Header().Get("Vary"))
 		}
 	}
-	if response = fixture.asset("POST", "/assets/app-abc.js", cookie, nil); len(response.Header().Values("Cache-Control")) != 1 || response.Header().Get("Cache-Control") != "no-store" {
-		t.Fatalf("POST: %q", response.Header().Values("Cache-Control"))
+	if response := f.get("GET", "/old/app.js", f.cookie, nil); response.Body.String() != scriptBody || response.Header().Get("Content-Encoding") != "" {
+		t.Fatalf("an older workbench's asset changed: %q", response.Body.String())
 	}
-	wantStatus(t, fixture.asset("GET", "/assets/abort.js", cookie, nil), 503, "runtime_unavailable")
-	wantStatus(t, fixture.asset("GET", "/assets/app-abc.js", nil, nil), 401, "unauthenticated")
+	if response := f.get("POST", "/assets/app-abc12345.js", f.cookie, nil); cacheControl(response) != "no-store" {
+		t.Fatalf("POST: %s", cacheControl(response))
+	}
+	// The gateway's own failures and answers keep no-store too.
+	wantStatus(t, f.get("GET", "/missing/abort.js", f.cookie, nil), 503, "runtime_unavailable")
+	wantStatus(t, f.get("GET", "/assets/app-abc12345.js", nil, nil), 401, "unauthenticated")
+	if response := f.get("GET", "/missing/nothing.js", f.cookie, nil); response.Code != 200 && cacheControl(response) != "no-store" {
+		t.Fatalf("a guest answer without a policy: HTTP %d %s", response.Code, cacheControl(response))
+	}
 }
 
 func TestAssetCacheControlAcceptsOnlyWhatItUnderstands(t *testing.T) {

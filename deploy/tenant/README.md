@@ -172,7 +172,7 @@ server {
 
 **HTTP/2。** 示例里的 `http2 on;` 需要 nginx 1.25.1 或更新；更早的版本把它写进监听行：`listen 443 ssl http2;`（新版本里这种写法已弃用）。HTTP/1.1 下浏览器对每个主机只开 6 条连接，工作台的浏览器事件流（EventSource）会一直占着其中一条，其余请求在剩下的 5 条上排队；HTTP/2 把它们放进同一条连接的多个流。WebSocket（终端、画面）仍用 HTTP/1.1：nginx 不提供 RFC 8441 的 HTTP/2 WebSocket，浏览器会为它们另开 HTTP/1.1 连接。到网关的上游仍是 HTTP/1.1。验证：DevTools 的 Network 面板打开 Protocol 列，工作台请求应显示 `h2`；`curl -sI --http2 https://cage.example.org/ | head -1` 应以 `HTTP/2` 开头。
 
-**静态资源。** 网关只对 `/assets/` 下的 GET 和 HEAD 转发工作台的缓存头（`Cache-Control`、`ETag`、`Last-Modified`，并加上 `Vary: Accept-Encoding`）：`public` 改成 `private`，生存期最多一年，不认识的指令一律回到 `no-store`；其余所有响应仍是 `Cache-Control: no-store`。旧版工作台对资源也发 `no-store`，此时行为不变，缓存要等工作台给带哈希的资源发长期缓存头才生效。浏览器的 `Accept-Encoding` 会传给工作台，工作台预压缩的资源原样压缩传输；工作台自己不压缩时，由上面 `/assets/` 位置的 nginx `gzip` 压缩。该位置只压缩样式、脚本和 SVG，不压缩事件流和 API。
+**静态资源。** 对 `/api/` 之外的 GET 和 HEAD，状态为 200、206 或 304 的响应，网关转发工作台自己的缓存头：`Cache-Control`、`ETag`、`Last-Modified`、`Vary`，`Content-Encoding`、`Accept-Ranges` 和 `Content-Range` 本来就转发。网关预先设置的 `no-store` 会先去掉，否则两个值都会发出，`no-store` 仍然生效。带哈希的资源因此可以被浏览器缓存一年，HTML 用 `ETag` 校验、未变时只花一个 `304`。`public` 被改成 `private`：门户用 Cookie 鉴权，共享缓存不认识它，不能存这些响应。生存期最多一年，不认识的指令和 `no-store` 一律保持 `no-store`；API、错误和网关自己的页面始终是 `no-store`。旧版工作台只发 `no-store`，此时行为不变，缓存要等工作台给资源发缓存头才生效。浏览器的 `Accept-Encoding` 原样传给工作台，所以工作台预压缩的 br 或 gzip 资源按原字节传到浏览器；浏览器没发 `Accept-Encoding` 时网关向工作台要不压缩的内容。工作台自己不压缩时，由上面 `/assets/` 位置的 nginx `gzip` 压缩；该位置只压缩样式、脚本和 SVG，已带 `Content-Encoding` 的响应 nginx 不再处理，其余头（`Cache-Control`、`ETag`、`Vary`、`Accept-Ranges`）nginx 默认原样转发，对压缩后的响应它把强 `ETag` 改成弱 `ETag`，浏览器的校验仍然有效。
 
 终端、浏览器画面和事件流是长连接。工作台每 20 秒在终端连接上发送心跳，并在客户端 90 秒无应答后释放连接；客户端在约 50 秒收不到任何数据时自行重连并从断点续传。沿途每一跳的空闲期限都应明显长于心跳间隔，上面三个 1 小时的超时即为此设置；省略时 nginx 默认 60 秒，网络稍有阻塞就会断开写入中的连接。
 

@@ -176,7 +176,7 @@ func (s *Server) workbench(w http.ResponseWriter, r *http.Request, id string) {
 	proxy := workspace.proxy(origin, func() { s.invalidateWorkspace(id, workspace) }, func() {
 		s.confirmWorkspaceFault(id, workspace)
 	})
-	cacheAssets(proxy, r, w.Header())
+	cacheStatic(proxy, r, w.Header())
 	proxy.ServeHTTP(writer, r.WithContext(ctx))
 }
 
@@ -259,7 +259,7 @@ func (w *revocableWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 var requestHeaders = []string{
-	"Accept", "Accept-Language", "Content-Type", "Content-Encoding", "Range", "If-Match", "If-None-Match", "If-Range",
+	"Accept", "Accept-Encoding", "Accept-Language", "Content-Type", "Content-Encoding", "Range", "If-Match", "If-None-Match", "If-Range",
 	"If-Modified-Since", "If-Unmodified-Since", "Last-Event-ID", "Connection", "Upgrade",
 	"Sec-WebSocket-Extensions", "Sec-WebSocket-Key", "Sec-WebSocket-Protocol", "Sec-WebSocket-Version",
 }
