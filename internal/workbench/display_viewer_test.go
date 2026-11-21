@@ -204,14 +204,18 @@ func TestHiddenViewerReleasesTheDisplayAndShowingRestoresIt(t *testing.T) {
 	if show := receive(t, changes, 3*time.Second, "the show on return"); !show {
 		t.Fatal("returning did not show the guest")
 	}
-	// Closing a hidden stream changes nothing for the guest.
+	// Closing a hidden stream leaves the guest hidden; it only repeats the
+	// hide, with one fewer held stream (see heldClosed).
 	viewer.setVisible(false)
 	receive(t, changes, 3*time.Second, "the second hide")
 	viewer.close()
 	viewer.setVisible(true) // a closed viewer ignores it
+	if show := receive(t, changes, time.Second, "the hide with the lower held count"); show {
+		t.Fatal("closing a hidden stream showed the guest")
+	}
 	select {
 	case show := <-changes:
-		t.Fatalf("closing a hidden stream changed the guest to %t", show)
+		t.Fatalf("closing a hidden stream changed the guest again, to %t", show)
 	case <-time.After(700 * time.Millisecond):
 	}
 	if demand.heldCount() != 0 {

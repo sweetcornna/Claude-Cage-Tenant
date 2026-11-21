@@ -245,7 +245,28 @@ func (v *displayViewer) close() {
 	d.mu.Unlock()
 	if visible {
 		d.background(v.update)
+	} else {
+		d.heldClosed(v.update)
 	}
+}
+
+// heldClosed tells the guest that one fewer hidden stream is held. While the
+// window is hidden the guest agent counts held streams against the viewers it
+// sees connected, so a stale count makes it take a legacy viewer for the
+// closed stream and hide the window under it. The agent checks every second,
+// so a hidden window learns the lower count at once; otherwise the usual
+// short delay applies.
+func (d *displayViewDemand) heldClosed(update func(bool) error) {
+	go func() {
+		d.op.Lock()
+		hidden := d.known && !d.shown
+		d.op.Unlock()
+		if hidden {
+			_ = d.apply(update)
+			return
+		}
+		d.background(update)
+	}()
 }
 
 func (d *displayViewDemand) reset() {
