@@ -347,7 +347,7 @@ VM 模式下，profile 的 `limits.memory` 是每台 VM 的内存上限，不是
 - **需要量**：工作集加余量（1 GiB 与工作集四分之一中的较大者），再加来宾内核占用，向上取整到 256 MiB，且不低于 `-memory-min`。
 - **立即增长**：VM 少于需要量时，下一轮直接增长到需要量，宿主紧张时也一样，因为来宾内 OOM 比宿主换页更糟。增长不超过 profile 上限，也不超过「宿主内存 − 预留」。
 - **宿主紧张时回收**：宿主 `MemAvailable` 低于预留的两倍，或 PSI `some avg10` 达到 10% 时，每台 VM 每轮最多缩小 512 MiB，直到需要量为止。回收的主要是来宾页缓存。
-- **公平份额**：份额 = (宿主内存 − 预留 − 冻结及本轮不调整的 VM 内存) / 可调整的运行中 VM 数。超过份额的 VM 每轮最多缩小 512 MiB，但不低于需要量。最近 1 分钟内有使用的工作区（经网关的请求和流数据、门户「打开」，以及开着空闲冷却时来宾 CPU 超过 `-idle-cpu-percent`）在宿主不紧张时不参与公平份额缩小，只有空闲的 VM 让出；宿主紧张时（上一条）所有 VM 照常缩小。例如第二台 VM 启动后，空闲的那台逐步让出内存；两台都在使用时，要等宿主可用内存低于预留的两倍才开始缩小。
+- **公平份额**：份额 = (宿主内存 − 预留 − 冻结及本轮不调整的 VM 内存) / 可调整的运行中 VM 数。超过份额的 VM 每轮最多缩小 512 MiB，但不低于需要量。最近 1 分钟内有使用的工作区（经网关的请求和流数据、门户「打开」，以及开着空闲冷却时来宾 CPU 超过 `-idle-cpu-percent`）在宿主不紧张时不参与公平份额缩小，只有空闲的 VM 让出；宿主紧张时（上一条）所有 VM 照常缩小。例如第二台 VM 启动后，空闲的那台逐步让出内存；两台都在使用时，要等宿主可用内存低于预留的两倍才开始缩小。「在使用」按第 7 节的活动判断：工作台页面开着时会定期轮询，所以开着页面的 VM 都算在使用，公平份额缩小实际只作用于没有页面开着、也没有来宾 CPU 活动的 VM；来宾 CPU 活动由空闲冷却的扫描记录，最长每分钟更新一次，与 1 分钟的窗口相当，边缘上可能差一轮。这样更安全：宿主一旦紧张，所有 VM 仍照常缩小，工作集和余量不受影响，被回收的只是页缓存。
 - **其余情况保持不变**：宿主有空闲内存本身不会让 VM 增长，所以缩小后不会自己弹回。差距不到 512 MiB 时不调整。
 - **不调整的 VM**：冻结、停机、正在准备或正在冷却的 VM 不调整；网关调整某台 VM 时，空闲冷却先等它完成。
 - **来宾不应答**：读取来宾 `/proc/meminfo` 失败的 VM 本轮不调整。连续两轮失败时，它可能正因内存不足而卡顿，网关把它恢复到上限（宿主紧张时每轮增长 512 MiB）。
@@ -387,16 +387,18 @@ VM 内嵌套运行的 Super Cage 客机（QEMU 5.1 及以上；仅 Linux 宿主�
 
 **回退。** 直连只是优化，失败时用回今天的路径：
 
-- 桥接监听起来后，网关先经 vsock 发一个普通 HTTP 请求，确认到达工作台的 HTTP 服务；随后工作区握手（`/api/launch`、`/api/session`、`/api/client/about`）也走 vsock。探测失败时本次直接用 exec，握手失败时这次配备尝试作废、重试改用 exec；两种情况下该实例 5 分钟内不再尝试 vsock，没用的桥接进程立即结束。
-- 某次 vsock 连接失败时，在同一次拨号里改用 exec，请求和流看不到失败；该工作区此后不再试 vsock，该实例 5 分钟内不再尝试。
-- 来宾的 `socat` 不支持 vsock、内核没有 vsock、网关进程的 systemd 限制了 `AF_VSOCK`、`volatile.vsock_id` 缺失，都只是回退，不影响工作区可用。
+- 桥接监听起来后，网关先经 vsock 发一个普通 HTTP 请求，确认到达工作台的 HTTP 服务；随后工作区握手（`/api/launch`、`/api/session`、`/api/client/about`）也走 vsock。
+- 来宾侧的监听早于工作台启动。桥接已在监听、但工作台还没有应答（连接被立刻关闭）时，这次配备用 exec，不记为 vsock 的失败；桥接进程随之结束，下一个工作区再试 vsock。
+- 握手经 vsock 失败时，网关用同一个启动令牌改经 exec 再握手一次；只有 exec 成功、vsock 不成功，才认定是 vsock 的问题，该实例 5 分钟内不再尝试 vsock。
+- 某次 vsock 连接失败时，在同一次拨号里改用 exec，请求和流看不到失败；单次失败不影响后面的连接（页面加载时一次性开很多连接可能撑满监听队列，桥接监听设了 `backlog=128`）。连续 3 次失败后该工作区不再试 vsock，该实例 5 分钟内不再尝试。
+- 来宾的 `socat` 不支持 vsock 或不认 `backlog` 选项（桥接进程立刻退出）、监听 5 秒内没有出现、`volatile.vsock_id` 缺失，该实例 5 分钟内不再尝试。网关进程的 systemd 限制了 `AF_VSOCK` 时，每次拨号失败并改用 exec，连续 3 次后放弃。以上都只是回退，不影响工作区可用。
 
 日志每个工作区一行：`dials its workbench through vsock (CID …, port …)` 表示在用直连；`uses incus exec; the vsock path is unavailable: …` 给出回退原因；`the vsock path ended (…)` 表示运行中退回 exec。回退不会让工作区报错，所以要靠这些日志确认直连真的在用。
 
 **在 KVM 宿主上逐项验证**（这一轮没有在真实宿主上跑过）：
 
 1. `incus --force-local --project cage-tenant config get cage-<id> volatile.vsock_id` 有数字（≥ 3）。
-2. 来宾的 `socat` 支持 vsock：`incus --force-local --project cage-tenant exec cage-<id> -- /usr/bin/socat -V | grep -i vsock` 有输出（需要 socat 1.7.4 以上）。
+2. 来宾的 `socat` 支持 vsock：`incus --force-local --project cage-tenant exec cage-<id> -- /usr/bin/socat -V | grep -i vsock` 有输出（需要 socat 1.7.4 以上）；并确认它接受网关用的参数：`incus --force-local --project cage-tenant exec cage-<id> -- /usr/bin/socat VSOCK-LISTEN:50999,fork,reuseaddr,backlog=128 TCP4:127.0.0.1:1` 不报参数错误（Ctrl-C 结束）。
 3. 加 `-incus-vsock` 重启网关，打开一个工作区，日志出现 `dials its workbench through vsock`。宿主上 `ps -eo args | grep -c 'exec .* socat VSOCK-LISTEN'` 对每个工作区为 1。
 4. 反复打开和关闭终端标签、刷新页面：`ps -eo args | grep -c 'socat STDIO'` 保持不变。默认路径下每个新连接都会让它加 1。
 5. 延迟：浏览器 Network 面板里，WebSocket 升级的「等待服务器响应」时间应比默认路径少约一次 `time incus --force-local --project cage-tenant exec cage-<id> -- true` 的耗时。再对比宿主 incusd 的 CPU：浏览器画面流动时应下降。

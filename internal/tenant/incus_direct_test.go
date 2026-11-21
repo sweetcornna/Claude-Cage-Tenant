@@ -1,9 +1,13 @@
 package tenant
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
+	"log"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +31,13 @@ type directFixture struct {
 	vsockFail atomic.Bool
 	// listening makes the vsock dial succeed even before any bridge runs.
 	listening atomic.Bool
+	// notReady makes the bridge accept a connection and drop it, as socat does
+	// while nothing listens on the workbench's port yet.
+	notReady atomic.Bool
+	// brokenRelay makes vsock connections reach a server that answers HTTP but
+	// is not the workbench, so the probe passes and the handshake fails.
+	brokenRelay atomic.Bool
+	relay       *pipeListener
 }
 
 func newDirectFixture(t *testing.T, vsock bool) *directFixture {
@@ -34,13 +45,14 @@ func newDirectFixture(t *testing.T, vsock bool) *directFixture {
 	id := strings.Repeat("7", 32)
 	f := &directFixture{t: t, instance: "local:cage-" + id}
 	guest := serveFixture(t, fixtureGuest(id))
+	f.relay = serveFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "{}") }))
 	control := filepath.Join(t.TempDir(), "control.json")
 	f.dir = t.TempDir()
 	started := filepath.Join(f.dir, "started")
 	stopped := filepath.Join(f.dir, "stopped")
 	f.runtime, f.calls = fakeIncus(t, `"--force-local --project cage-tenant exec local:cage-`+id+` --mode=non-interactive -- /usr/bin/head -c 8193 -- `+control+`") echo '{"port":45001,"token":"`+fixtureLauncher+`"}' ;;
 "--force-local query local:/1.0/instances/cage-`+id+`?project=cage-tenant") echo '{"name":"cage-`+id+`","type":"virtual-machine","config":{"user.cage-tenant.id":"`+id+`","volatile.vsock_id":"42"}}' ;;
-*"exec local:cage-`+id+` --mode=non-interactive -- /usr/bin/socat VSOCK-LISTEN:45001,fork,reuseaddr TCP4:127.0.0.1:45001,connect-timeout=5") echo started >> '`+started+`'; trap "echo stopped >> '`+stopped+`'; exit 0" TERM; sleep 30 & wait ;;`)
+*"exec local:cage-`+id+` --mode=non-interactive -- /usr/bin/socat VSOCK-LISTEN:45001,fork,reuseaddr,backlog=128 TCP4:127.0.0.1:45001,connect-timeout=5") echo started >> '`+started+`'; trap "echo stopped >> '`+stopped+`'; exit 0" TERM; sleep 30 & wait ;;`)
 	f.runtime.cfg.ControlPath = control
 	f.runtime.cfg.Vsock = vsock
 	f.runtime.vsockDial = func(ctx context.Context, cid, port uint32) (net.Conn, error) {
@@ -53,6 +65,14 @@ func newDirectFixture(t *testing.T, vsock bool) *directFixture {
 		}
 		if _, err := os.Stat(started); err != nil && !f.listening.Load() {
 			return nil, errors.New("connection refused")
+		}
+		if f.notReady.Load() {
+			client, server := net.Pipe()
+			server.Close()
+			return client, nil
+		}
+		if f.brokenRelay.Load() {
+			return f.relay.dial(ctx)
 		}
 		return guest.dial(ctx)
 	}
@@ -169,24 +189,86 @@ func TestIncusDirectPathFallsBackToExecWhenTheBridgeNeverListens(t *testing.T) {
 	}
 }
 
-func TestIncusDirectPathLatchesOffAfterADialFailure(t *testing.T) {
+func TestIncusDirectPathSurvivesAStrayDialFailure(t *testing.T) {
+	f := newDirectFixture(t, true)
+	workspace := f.connect()
+	requests(t, workspace, 1)
+	// A burst of connections can overrun the listener once: that dial is served
+	// over exec and the path stays.
+	f.vsockFail.Store(true)
+	requests(t, workspace, 1)
+	f.vsockFail.Store(false)
+	before := f.vsock.Load()
+	requests(t, workspace, 3)
+	if f.execs.Load() != 1 || f.vsock.Load() != before+3 {
+		t.Fatalf("exec dials %d, vsock dials %d -> %d: want one fallback and vsock again afterwards", f.execs.Load(), before, f.vsock.Load())
+	}
+	if !f.runtime.directAllowed(f.instance) {
+		t.Fatal("one failed dial put the instance on exec")
+	}
+}
+
+func TestIncusDirectPathLatchesOffAfterSeveralDialFailures(t *testing.T) {
+	var output bytes.Buffer
+	log.SetOutput(&output)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 	f := newDirectFixture(t, true)
 	workspace := f.connect()
 	requests(t, workspace, 1)
 	if f.execs.Load() != 0 {
 		t.Fatalf("exec dials %d before any failure", f.execs.Load())
 	}
-	// The guest side goes away: the next dial falls back inside the same dial,
-	// so the request still succeeds, and later dials do not try vsock again.
+	// The guest side goes away: every failed dial falls back inside the same
+	// dial, so the requests still succeed, and after a few in a row the path is
+	// dropped without further vsock attempts.
 	f.vsockFail.Store(true)
-	requests(t, workspace, 1)
+	requests(t, workspace, directDialFailures)
 	dials := f.vsock.Load()
 	requests(t, workspace, 3)
-	if f.execs.Load() < 4 || f.vsock.Load() != dials {
+	if f.execs.Load() != directDialFailures+3 || f.vsock.Load() != dials {
 		t.Fatalf("exec dials %d, vsock dials %d -> %d: want exec from now on and no further vsock attempts", f.execs.Load(), dials, f.vsock.Load())
 	}
 	if f.runtime.directAllowed(f.instance) {
 		t.Fatal("an instance whose path died may be tried again at once")
+	}
+	if !strings.Contains(output.String(), "the vsock path ended") {
+		t.Fatalf("dropping the path was not logged: %q", output.String())
+	}
+}
+
+func TestIncusDirectPathWaitsForAWorkbenchThatIsNotUpYet(t *testing.T) {
+	f := newDirectFixture(t, true)
+	// During boot the guest side listens before the workbench does: the bridge
+	// accepts and drops. That is not held against the path.
+	f.notReady.Store(true)
+	first := f.connect()
+	requests(t, first, 2)
+	if f.execs.Load() == 0 {
+		t.Fatal("a workbench that does not answer over vsock must be reached over exec meanwhile")
+	}
+	if !f.runtime.directAllowed(f.instance) {
+		t.Fatal("a workbench that was not up yet put the instance on exec for good")
+	}
+	first.close()
+	// The workbench is up: the next workspace of the instance uses vsock.
+	f.notReady.Store(false)
+	execs := f.execs.Load()
+	second := f.connect()
+	requests(t, second, 3)
+	if f.execs.Load() != execs {
+		t.Fatalf("the workspace used exec %d more times although vsock works", f.execs.Load()-execs)
+	}
+}
+
+func TestIncusDirectPathBlamesVsockOnlyWhenExecAnswersWhereItDoesNot(t *testing.T) {
+	f := newDirectFixture(t, true)
+	// The relay answers HTTP but is not the workbench: the probe passes, the
+	// handshake fails over vsock and works over exec, which proves the path wrong.
+	f.brokenRelay.Store(true)
+	workspace := f.connect()
+	requests(t, workspace, 2)
+	if f.execs.Load() == 0 || f.runtime.directAllowed(f.instance) {
+		t.Fatalf("exec dials %d, direct allowed %v: want the workspace on exec and the instance skipped", f.execs.Load(), f.runtime.directAllowed(f.instance))
 	}
 }
 

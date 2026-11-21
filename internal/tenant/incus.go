@@ -332,18 +332,27 @@ func (r *IncusRuntime) connect(ctx context.Context, instance string) (*Workspace
 	workspace := newWorkspace(control.Port, dialer.dial)
 	if r.directAllowed(instance) {
 		if path, err := r.openDirect(ctx, workspace, instance, control.Port); err != nil {
-			r.skipDirect(instance)
-			log.Printf("cage-tenant: workspace %s uses incus exec; the vsock path is unavailable: %v", instance, err)
+			if errors.Is(err, errDirectUnsupported) {
+				r.skipDirect(instance)
+			}
+			log.Printf("cage-tenant: workspace %s uses incus exec for now; the vsock path is unavailable: %v", instance, err)
 		} else {
 			dialer.direct.Store(path)
 			log.Printf("cage-tenant: workspace %s dials its workbench through vsock (CID %d, port %d)", instance, path.cid, path.port)
 		}
 	}
-	if err := workspace.bootstrap(ctx, control.Token); err != nil {
-		if dialer.direct.Load() != nil {
-			// The handshake over the new path failed: keep the instance on exec.
+	err = workspace.bootstrap(ctx, control.Token)
+	if path := dialer.direct.Load(); err != nil && path != nil {
+		// The handshake failed over vsock. The launcher token can be used again,
+		// so repeat it over exec: only if that works was it the path.
+		dialer.direct.Store(nil)
+		workspace.control.CloseIdleConnections()
+		if err = workspace.bootstrap(ctx, control.Token); err == nil {
 			r.skipDirect(instance)
+			path.fail(errors.New("the workspace handshake worked over exec but not over vsock"))
 		}
+	}
+	if err != nil {
 		workspace.close()
 		return nil, err
 	}

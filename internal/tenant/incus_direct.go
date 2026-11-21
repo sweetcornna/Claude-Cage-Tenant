@@ -30,12 +30,16 @@ import (
 // The path is an optimisation with three safeguards:
 //
 //   - the workspace's handshake runs over it, so it only stays in use after it
-//     carried a real workbench exchange;
+//     carried a real workbench exchange; a handshake that fails over vsock is
+//     repeated over exec, and only if that works is the path blamed;
 //   - a failed direct dial falls back to exec inside the same dial, so no
 //     request or stream sees the failure;
-//   - a path that failed once is never used again by that workspace, and the
-//     instance is not tried again for directRetry, so a guest that cannot do
-//     vsock costs one failed attempt rather than one per connection.
+//   - a path that cannot work (the guest's socat has no vsock, nothing ever
+//     listens, several dials in a row fail) is dropped, and the instance is
+//     not tried again for directRetry, so a guest that cannot do vsock costs
+//     one failed attempt rather than one per connection. A workbench that is
+//     merely not answering yet is not a reason to drop it: the guest side
+//     comes up before the workbench does.
 //
 // Containers share the host's kernel and its vsock namespace, so a vsock
 // listener in a container would be reachable from every other container:
@@ -46,6 +50,19 @@ const directRetry = 5 * time.Minute
 
 // directWait bounds how long a fresh bridge may take to start listening.
 var directWait = 5 * time.Second
+
+// directDialFailures is how many dials in a row may fail before a workspace
+// drops the vsock path. Each failed dial still falls back to exec.
+const directDialFailures = 3
+
+var (
+	// errDirectUnsupported marks a failure that will repeat: the instance stays
+	// on exec for directRetry.
+	errDirectUnsupported = errors.New("vsock cannot be used with this instance")
+	// errDirectNotReady means the listener answered but the workbench behind it
+	// did not, as happens while the guest boots. Nothing is held against the path.
+	errDirectNotReady = errors.New("the workbench does not answer on the vsock bridge yet")
+)
 
 // vsockStream opens a connection to a port of a VM's vsock address.
 type vsockStream func(ctx context.Context, cid, port uint32) (net.Conn, error)
@@ -91,13 +108,18 @@ func (g *guestDialer) dial(ctx context.Context) (net.Conn, error) {
 	if path := g.direct.Load(); path != nil && !path.dead.Load() {
 		conn, err := path.dial(ctx)
 		if err == nil {
+			path.failures.Store(0)
 			return conn, nil
 		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		g.runtime.skipDirect(g.instance)
-		path.fail(fmt.Errorf("dial: %w", err))
+		// One failed dial proves little (a burst of connections can overrun the
+		// listener's backlog); this one is served over exec.
+		if path.failures.Add(1) >= directDialFailures {
+			g.runtime.skipDirect(g.instance)
+			path.fail(fmt.Errorf("%d dials in a row failed, the last with: %w", directDialFailures, err))
+		}
 	}
 	return g.runtime.dialExec(ctx, g.instance, g.port)
 }
@@ -108,7 +130,9 @@ type directPath struct {
 	instance  string
 	cid, port uint32
 	dead      atomic.Bool
-	reported  sync.Once
+	// failures counts the dials that failed since the last one that worked.
+	failures atomic.Int32
+	reported sync.Once
 }
 
 func (p *directPath) dial(ctx context.Context) (net.Conn, error) {
@@ -126,7 +150,9 @@ func (p *directPath) fail(reason error) {
 // openDirect prepares the vsock path of a workspace: it finds the VM's vsock
 // address, reuses a listener that is already there or starts the bridge, and
 // proves with a plain HTTP exchange that the listener reaches the workbench.
-// The bridge ends with the workspace.
+// The bridge ends with the workspace. The error says whether the path may be
+// tried again: errDirectUnsupported does not, errDirectNotReady and any other
+// error do not count against it.
 func (r *IncusRuntime) openDirect(ctx context.Context, workspace *Workspace, instance string, port int) (path *directPath, err error) {
 	id := strings.TrimPrefix(instance, "local:cage-")
 	cid, err := r.vsockID(ctx, id)
@@ -134,9 +160,12 @@ func (r *IncusRuntime) openDirect(ctx context.Context, workspace *Workspace, ins
 		return nil, err
 	}
 	path = &directPath{runtime: r, instance: instance, cid: cid, port: uint32(port)}
-	if path.probe(ctx, port) == nil {
+	switch connected, err := path.probe(ctx, port); {
+	case err == nil:
 		// A bridge from an earlier gateway process is still listening.
 		return path, nil
+	case connected:
+		return nil, errDirectNotReady
 	}
 	// A bridge that did not become usable ends at once, not with the workspace.
 	bridge, stopBridge := context.WithCancel(workspace.ctx)
@@ -152,29 +181,42 @@ func (r *IncusRuntime) openDirect(ctx context.Context, workspace *Workspace, ins
 	wait, cancel := context.WithTimeout(ctx, directWait)
 	defer cancel()
 	for {
-		if path.probe(wait, port) == nil {
+		connected, probeErr := path.probe(wait, port)
+		if probeErr == nil {
 			go func() {
 				<-exited
-				path.fail(errors.New("the bridge process ended"))
+				if workspace.ctx.Err() == nil {
+					path.fail(errors.New("the bridge process ended"))
+				} else {
+					path.dead.Store(true)
+				}
 			}()
 			return path, nil
 		}
+		if connected {
+			return nil, errDirectNotReady
+		}
 		select {
 		case <-exited:
-			return nil, errors.New("the vsock bridge in the guest ended at once; its socat may lack vsock support")
+			return nil, fmt.Errorf("%w: the bridge in the guest ended at once, its socat may lack vsock support", errDirectUnsupported)
 		case <-wait.Done():
-			return nil, errors.New("the vsock bridge in the guest did not start listening")
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return nil, fmt.Errorf("%w: nothing listened on the vsock port within %s", errDirectUnsupported, directWait)
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
 }
 
 // probe sends one request through the path and accepts any HTTP answer: that
-// proves the bytes reach an HTTP server on the workbench's port.
-func (p *directPath) probe(ctx context.Context, port int) error {
+// proves the bytes reach an HTTP server on the workbench's port. connected
+// tells whether a connection was made at all, which separates a missing
+// listener from a workbench that does not answer.
+func (p *directPath) probe(ctx context.Context, port int) (connected bool, err error) {
 	conn, err := p.dial(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer conn.Close()
 	deadline := time.Now().Add(3 * time.Second)
@@ -186,24 +228,24 @@ func (p *directPath) probe(ctx context.Context, port int) error {
 	defer stop()
 	request, err := http.NewRequest(http.MethodGet, "http://localhost:"+strconv.Itoa(port)+"/api/client/about", nil)
 	if err != nil {
-		return err
+		return true, err
 	}
 	request.Close = true
 	if err := request.Write(conn); err != nil {
-		return err
+		return true, err
 	}
 	response, err := http.ReadResponse(bufio.NewReader(conn), request)
 	if err != nil {
-		return err
+		return true, err
 	}
-	return response.Body.Close()
+	return true, response.Body.Close()
 }
 
 // startBridge runs the guest's vsock-to-loopback relay through exec. The
 // returned channel closes when the process ends; cancelling ctx stops it.
 func (r *IncusRuntime) startBridge(ctx context.Context, instance string, port int) (<-chan struct{}, error) {
 	command := r.command(ctx, "exec", instance, "--mode=non-interactive", "--", "/usr/bin/socat",
-		fmt.Sprintf("VSOCK-LISTEN:%d,fork,reuseaddr", port), fmt.Sprintf("TCP4:127.0.0.1:%d,connect-timeout=5", port))
+		fmt.Sprintf("VSOCK-LISTEN:%d,fork,reuseaddr,backlog=128", port), fmt.Sprintf("TCP4:127.0.0.1:%d,connect-timeout=5", port))
 	// The incus client forwards SIGTERM to the process in the guest, which ends
 	// the listener; the client is killed if it does not leave in time.
 	command.Cancel = func() error { return command.Process.Signal(syscall.SIGTERM) }
@@ -232,7 +274,7 @@ func (r *IncusRuntime) vsockID(ctx context.Context, id string) (uint32, error) {
 	// 0 to 2 are the hypervisor, local and host addresses.
 	cid, err := strconv.ParseUint(record.Config["volatile.vsock_id"], 10, 32)
 	if err != nil || cid < 3 {
-		return 0, errors.New("the VM has no vsock address")
+		return 0, fmt.Errorf("%w: the VM has no vsock address", errDirectUnsupported)
 	}
 	return uint32(cid), nil
 }
