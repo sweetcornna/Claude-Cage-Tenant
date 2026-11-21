@@ -275,3 +275,26 @@ func TestEnvironmentMonitorOverlapsUserActions(t *testing.T) {
 		t.Fatalf("%d user actions were refused while only the monitor ran", refused.Load())
 	}
 }
+
+// A lock-free round after a busy one reports no lock skips.
+func TestEnvironmentMonitorLockSkipsResetOnLockFreeRounds(t *testing.T) {
+	s := readyLinuxServer(t)
+	installHealthGuest(t, s, &healthGuest{fail: func(n int32, _ *http.Request) error {
+		if n <= 2 {
+			return errors.New("synthetic guest down")
+		}
+		return nil
+	}})
+	m := &environmentMonitor{}
+	s.op.Lock()
+	s.monitorEnvironmentRound(m)
+	s.monitorEnvironmentRound(m)
+	s.op.Unlock()
+	if record := lastEnvironmentRound(t, s); record["consecutive_lock_skips"] != "1" {
+		t.Fatalf("busy round = %v", record)
+	}
+	s.monitorEnvironmentRound(m)
+	if record := lastEnvironmentRound(t, s); record["result"] != "completed" || record["consecutive_lock_skips"] != "0" {
+		t.Fatalf("healthy round after a busy one = %v", record)
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/sylvinus/agent-vm/internal/cage"
+	"github.com/sylvinus/agent-vm/internal/guestprofile"
 	"github.com/sylvinus/agent-vm/internal/managedproxy"
 )
 
@@ -159,5 +160,27 @@ func TestMacOSMonitorClosesTheGateInTheSameRound(t *testing.T) {
 	s.monitorEnvironmentRound(&environmentMonitor{})
 	if gate.Status().Mode != cage.GateClosed {
 		t.Fatalf("paused network left the gate %s", gate.Status().Mode)
+	}
+}
+
+// A job that begins while the lock-free round probes the guest owns the
+// guest from then on: the round sends it no browser profile.
+func TestMacOSMonitorSendsNoProfileAfterAJobBegins(t *testing.T) {
+	var s *Server
+	s, _, _ = readyMacMonitorGuest(t, func(int32) uint32 {
+		s.setJobForTest(Job{ID: "update", Kind: "environment-update", Running: true})
+		return 0
+	})
+	if _, err := guestprofile.Create(s.profile, guestprofile.Options{Username: "alex", AudioName: "speakers"}); err != nil {
+		t.Fatal(err)
+	}
+	if observed := s.observeMacOSGuest(t.Context()); observed != observedChange {
+		t.Fatalf("observation = %v, want a change", observed)
+	}
+	s.mu.Lock()
+	client := s.windowsBrowserControl
+	s.mu.Unlock()
+	if client != nil {
+		t.Fatal("the round opened the guest browser controller after a job began")
 	}
 }

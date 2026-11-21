@@ -188,6 +188,9 @@ func (s *Server) observeWindowsGuest(parent context.Context) monitorObservation 
 		if !s.windowsEnvironmentShareAlive() {
 			return observedChange
 		}
+		if !s.guestAdmitsLockFreeCalls() {
+			return observedChange
+		}
 		profile := guestProfileStamp(s.profile)
 		if s.syncNativeBrowserProfile(ctx) != nil || guestProfileStamp(s.profile) != profile {
 			return observedChange

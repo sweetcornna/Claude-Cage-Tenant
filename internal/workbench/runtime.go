@@ -280,6 +280,7 @@ func (s *Server) monitorEnvironmentRound(m *environmentMonitor) {
 			observed := s.observeWindowsGuest(s.lifetimeContext())
 			timing.stage("environment_health")
 			if observed == observedSteady {
+				m.skipped = 0
 				return
 			}
 		}
@@ -354,7 +355,11 @@ func (s *Server) monitorMacOSRound(m *environmentMonitor, timing *monitorTiming,
 	if !network {
 		s.recordMonitorTiming("network", networkTiming)
 	}
-	if (attach || network) && s.lockedEnvironmentRound(m, timing, attach, network) && attach {
+	if !attach && !network {
+		m.skipped = 0
+		return
+	}
+	if s.lockedEnvironmentRound(m, timing, attach, network) && attach {
 		m.failures = 0
 	}
 }
@@ -377,11 +382,12 @@ func (s *Server) monitorLinuxHealth(m *environmentMonitor, timing *monitorTiming
 	cancel()
 	timing.stage("environment_health")
 	if err == nil {
-		m.failures = 0
+		m.failures, m.skipped = 0, 0
 		return
 	}
 	m.failures++
 	if m.failures < 2 {
+		m.skipped = 0
 		timing.result = "health_failed_once"
 		return
 	}

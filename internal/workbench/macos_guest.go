@@ -173,6 +173,10 @@ func (s *Server) observeMacOSGuest(ctx context.Context) monitorObservation {
 	if _, err := s.guest(ctx, s.macOSIdentityProbe()); err != nil {
 		return observedUnreachable
 	}
+	if !s.guestAdmitsLockFreeCalls() {
+		// A job began meanwhile; it owns the guest now.
+		return observedChange
+	}
 	profile := guestProfileStamp(s.profile)
 	if err := s.syncNativeBrowserProfile(ctx); err != nil {
 		return observedUnreachable
@@ -182,6 +186,16 @@ func (s *Server) observeMacOSGuest(ctx context.Context) monitorObservation {
 		return observedChange
 	}
 	return observedSteady
+}
+
+// guestAdmitsLockFreeCalls applies the admission rule of lock-free guest
+// requests: jobs that disturb the guest are running or have marked it not
+// ready first.
+func (s *Server) guestAdmitsLockFreeCalls() bool {
+	s.mu.Lock()
+	ready := s.ready && !s.closing
+	s.mu.Unlock()
+	return ready && !s.busy()
 }
 
 func guestProfileStamp(directory string) string {

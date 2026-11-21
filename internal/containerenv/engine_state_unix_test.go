@@ -91,7 +91,9 @@ func TestStateSharesOneReadBetweenConcurrentCallers(t *testing.T) {
 	}
 	// A caller whose own deadline passes stops waiting for the shared read.
 	expireStateReuse(r)
-	go func() { _, _ = r.State(context.Background()) }()
+	background := make(chan struct{})
+	go func() { defer close(background); _, _ = r.State(context.Background()) }()
+	defer func() { <-background }()
 	time.Sleep(50 * time.Millisecond)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
