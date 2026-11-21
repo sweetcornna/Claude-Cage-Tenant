@@ -215,6 +215,35 @@ class DiscoveryTests(unittest.TestCase):
         server.stdin.flush()
         self.assertEqual(server.wait(5), 0)
 
+    def test_retires_after_its_lifetime(self):
+        code = self.home / ".local/share/cage/cli-channel-code"
+        code.mkdir(parents=True)
+        name = "c" * 64
+        shutil.copy(here / "cli_channel.py", code / (name + ".py"))
+        digest = hashlib.sha256((code / (name + ".py")).read_bytes()).hexdigest()
+        server = subprocess.Popen([sys.executable, "-I", str(here / "cli_discovery.py"), name, digest, "1"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=os.environ)
+        def stop():
+            server.kill()
+            server.wait()
+            server.stdin.close()
+            server.stdout.close()
+        self.addCleanup(stop)
+        self.assertEqual(server.stdout.readline(), b"CAGE-GUEST-SESSION 1\n")
+        payload = json.dumps({"mode": "discover", "input": self.request}).encode()
+        server.stdin.write(b"R 1 %d\n" % len(payload) + payload)
+        server.stdin.flush()
+        _, ident, exit, out, err = server.stdout.readline().split()
+        self.assertEqual((ident, exit), (b"1", b"0"))
+        server.stdout.read(int(out) + int(err))
+        time.sleep(1.1)
+        server.stdin.write(b"R 2 %d\n" % len(payload) + payload)
+        server.stdin.flush()
+        line = server.stdout.readline()
+        self.assertTrue(line.startswith(b"D"), line)
+        self.assertEqual(line, b"D 2 4 0 0\n")
+        server.stdin.close()
+        self.assertEqual(server.wait(5), 0)
+
     def test_refuses_to_start_without_the_intact_channel_helper(self):
         code = self.home / ".local/share/cage/cli-channel-code"
         code.mkdir(parents=True)

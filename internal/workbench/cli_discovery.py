@@ -26,8 +26,10 @@ AGENTS_MAX_AGE = 30.0
 WATCH_INTERVAL = 1.0
 VIEW_INTERVAL = 0.25
 WAIT_LIMIT = 25.0
-# Exit between requests after this, so changes to the login environment apply.
-LIFETIME = 600.0
+# After its lifetime (seconds, from the workbench) the helper answers 4 without
+# reading a request, and the workbench starts a successor through a new login
+# shell, so changes to the login environment apply.
+RETIRED = 4
 OUTPUT_LIMIT = 1 << 20
 REQUEST_LIMIT = 1 << 20
 SUMMARY_LIMIT = 20000
@@ -196,10 +198,10 @@ def handle(mode, request):
     raise ValueError("unsupported operation")
 
 
-def serve(requests, replies):
+def serve(requests, replies, lifetime=600.0):
     writing = threading.Lock()
     pending = {}
-    started = time.monotonic()
+    retire = time.monotonic() + lifetime
 
     def answer(ident, payload, cancelled):
         code, output, error = 0, b"", b""
@@ -216,8 +218,6 @@ def serve(requests, replies):
             pending.pop(ident, None)
             replies.write(b"D %d %d %d %d\n" % (ident, code, len(output), len(error)) + output + error)
             replies.flush()
-            if not pending and time.monotonic() - started > LIFETIME:
-                os._exit(0)
 
     replies.write(b"CAGE-GUEST-SESSION 1\n")
     replies.flush()
@@ -230,6 +230,10 @@ def serve(requests, replies):
                     return
                 ident, cancelled = int(fields[1]), threading.Event()
                 with writing:
+                    if time.monotonic() >= retire:
+                        replies.write(b"D %d %d 0 0\n" % (ident, RETIRED))
+                        replies.flush()
+                        continue
                     pending[ident] = cancelled
                 threading.Thread(target=answer, args=(ident, payload, cancelled), daemon=True).start()
             elif len(fields) == 2 and fields[0] == b"C":
@@ -245,7 +249,8 @@ def serve(requests, replies):
 
 def main():
     os.umask(0o077)
-    name, expected = (sys.argv[1:3] + ["", ""])[:2]
+    arguments = sys.argv[1:4]
+    name, expected, lifetime = arguments + ["", "", "600"][len(arguments):]
     path = Path.home() / ".local/share/cage/cli-channel-code" / (name + ".py")
     # The workbench's ordinary bootstrap installs the channel helper. Load
     # only that exact file; anything else answers through the helper itself.
@@ -259,7 +264,7 @@ def main():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     install(module)
-    serve(sys.stdin.buffer, sys.stdout.buffer)
+    serve(sys.stdin.buffer, sys.stdout.buffer, float(lifetime))
     return 0
 
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -125,7 +126,7 @@ func sessionList(t *testing.T, s *Server, query string) (int, sessionListAnswer)
 }
 
 func TestSessionListRevisionAnswersNoContentWhenUnchanged(t *testing.T) {
-	s, id, _ := metadataFixture(t)
+	s, id, project := metadataFixture(t)
 	code, first := sessionList(t, s, "")
 	if code != http.StatusOK || len(first.Sessions) != 1 || len(first.Revision) != 32 {
 		t.Fatalf("list = %d %+v", code, first)
@@ -142,6 +143,24 @@ func TestSessionListRevisionAnswersNoContentWhenUnchanged(t *testing.T) {
 	code, renamed := sessionList(t, s, "?after="+first.Revision)
 	if code != http.StatusOK || renamed.Revision == first.Revision || renamed.Sessions[0].Title != "改名" {
 		t.Fatalf("a rename did not reach the conditional answer: %d %+v", code, renamed)
+	}
+	created := uuid.NewString()
+	if _, err := s.mobileCLI.create(s.profile, project, created); err != nil {
+		t.Fatal(err)
+	}
+	code, grown := sessionList(t, s, "?after="+renamed.Revision)
+	if code != http.StatusOK || len(grown.Sessions) != 2 {
+		t.Fatalf("a created session did not reach the conditional answer: %d %+v", code, grown)
+	}
+	if w := request(s, "POST", "/api/cli/sessions/"+id+"/archive", s.origin, "{}", true); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	code, shrunk := sessionList(t, s, "?after="+grown.Revision)
+	if code != http.StatusOK || len(shrunk.Sessions) != 1 || shrunk.Sessions[0].ID != created {
+		t.Fatalf("an archived session stayed in the conditional answer: %d %+v", code, shrunk)
+	}
+	if _, archived := sessionList(t, s, "?archived=true"); len(archived.Sessions) != 1 || archived.Sessions[0].ID != id {
+		t.Fatalf("archived list = %+v", archived)
 	}
 	for _, query := range []string{"?after=xyz", "?after=" + strings.ToUpper(first.Revision), "?wait=5", "?after=" + first.Revision + "&wait=-1"} {
 		if code, _ := sessionList(t, s, query); code != http.StatusBadRequest {
@@ -322,18 +341,156 @@ func TestSessionListsUseOneResidentGuestHelper(t *testing.T) {
 	if s.cliDiscovery.viewKeys[id].key == "" {
 		t.Fatal("the resident view left no watch key")
 	}
-	// A resident helper that ended is started again with one login.
-	if err := exec.Command("pkill", "-f", cliChannelVersion+" "+fmt.Sprintf("%x", sha256.Sum256([]byte(cliChannelInstalled)))).Run(); err != nil {
-		t.Fatal("no resident helper to stop:", err)
+	// A resident helper that ends while a list is held is replaced with one
+	// login, without backing off to a login per request.
+	_, current := sessionList(t, s, "")
+	held := make(chan sessionListAnswer, 1)
+	go func() {
+		_, answer := sessionList(t, s, "?after="+current.Revision+"&wait=20")
+		held <- answer
+	}()
+	time.Sleep(500 * time.Millisecond)
+	stopResidentHelper(t)
+	time.Sleep(500 * time.Millisecond)
+	writeTranscript(t, history, map[string]any{"type": "custom-title", "customTitle": "after the helper ended"})
+	select {
+	case answer := <-held:
+		if len(answer.Sessions) != 1 || answer.Sessions[0].Title != "after the helper ended" {
+			t.Fatalf("held list = %+v", answer)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("a held list missed a change after the helper ended")
 	}
-	time.Sleep(200 * time.Millisecond)
-	if got := title(); got != "renamed in the guest" || logins() != 3 {
+	if got := title(); got != "after the helper ended" || logins() != 3 {
 		t.Fatalf("after the helper ended: title %q, %d logins", got, logins())
 	}
 }
 
+// stopResidentHelper ends this test's resident helper process, found as a
+// child of the test whose command line carries the helper digest.
+func stopResidentHelper(t *testing.T) {
+	t.Helper()
+	output, err := exec.Command("ps", "-axo", "pid=,ppid=,command=").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(cliChannelInstalled)))
+	stopped := 0
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || fields[1] != fmt.Sprint(os.Getpid()) || !strings.Contains(line, digest) || filepath.Base(fields[2]) == "ssh" {
+			continue
+		}
+		pid, _ := strconv.Atoi(fields[0])
+		if process, err := os.FindProcess(pid); err == nil && process.Kill() == nil {
+			stopped++
+		}
+	}
+	if stopped != 1 {
+		t.Fatalf("stopped %d resident helpers", stopped)
+	}
+}
+
+func TestResidentHelperRetiresWithoutBackingOff(t *testing.T) {
+	previous := residentLifetime
+	residentLifetime = 2 * time.Second
+	t.Cleanup(func() { residentLifetime = previous })
+	s, id, project := metadataFixture(t)
+	home, logins, _ := residentGuest(t, s)
+	record, err := s.mobileCLI.record(s.profile, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTranscript(t, filepath.Join(home, ".claude", "projects", "fixture", record.CLIID+".jsonl"), map[string]any{"cwd": guestPath(project), "type": "user", "uuid": uuid.NewString(), "message": map[string]string{"content": "guest title"}})
+	s.ready = true
+	sessionList(t, s, "")
+	sessionList(t, s, "")
+	if logins() != 2 {
+		t.Fatalf("%d logins before retiring", logins())
+	}
+	time.Sleep(2200 * time.Millisecond)
+	for range 2 {
+		if _, answer := sessionList(t, s, ""); len(answer.Sessions) != 1 || answer.Sessions[0].Title != "guest title" {
+			t.Fatalf("list = %+v", answer)
+		}
+	}
+	if logins() != 3 {
+		t.Fatalf("a retired helper cost %d logins instead of one", logins()-2)
+	}
+}
+
+func TestHeldSessionListWithoutResidentHelper(t *testing.T) {
+	s, id, project := metadataFixture(t)
+	home, _ := filepath.EvalSymlinks(t.TempDir())
+	mobileTestSSH(t, s, home, []string{"HOME=" + home, "PATH=/usr/bin:/bin:/usr/local/bin"})
+	t.Cleanup(s.cliDiscovery.resident.close)
+	record, err := s.mobileCLI.record(s.profile, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The substituted helper does not match its digest, so no resident
+	// helper starts and the held list looks at the guest itself.
+	observe := observedGuest(t, s, home)
+	item := terminalConversation{CLIID: record.CLIID, Workspace: guestPath(project), Config: filepath.Join(home, ".claude"), Title: "before", UpdatedAt: 1700000000}
+	observe([]terminalConversation{item})
+	s.ready = true
+	sessionList(t, s, "")
+	_, current := sessionList(t, s, "")
+	held := make(chan sessionListAnswer, 1)
+	go func() {
+		_, answer := sessionList(t, s, "?after="+current.Revision+"&wait=20")
+		held <- answer
+	}()
+	time.Sleep(300 * time.Millisecond)
+	item.Title = "after"
+	observe([]terminalConversation{item})
+	changed := time.Now()
+	select {
+	case answer := <-held:
+		if len(answer.Sessions) != 1 || answer.Sessions[0].Title != "after" || time.Since(changed) > 8*time.Second {
+			t.Fatalf("held list = %+v after %v", answer, time.Since(changed))
+		}
+		t.Logf("without the resident helper the change arrived after %v", time.Since(changed))
+	case <-time.After(15 * time.Second):
+		t.Fatal("a held list without the resident helper missed a guest change")
+	}
+}
+
+func TestSessionReadKeepsTheDiscoveredTitle(t *testing.T) {
+	s, id, project := metadataFixture(t)
+	home, _, _ := residentGuest(t, s)
+	record, err := s.mobileCLI.record(s.profile, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := "<command-message>model</command-message>\n<command-name>/model</command-name>\n<command-args>opus</command-args>"
+	writeTranscript(t, filepath.Join(home, ".claude", "projects", "fixture", record.CLIID+".jsonl"),
+		map[string]any{"cwd": guestPath(project), "type": "user", "uuid": uuid.NewString(), "message": map[string]string{"content": command}},
+		map[string]any{"cwd": guestPath(project), "type": "user", "uuid": uuid.NewString(), "message": map[string]string{"content": "继续"}})
+	s.ready = true
+	_, listed := sessionList(t, s, "")
+	if len(listed.Sessions) != 1 || listed.Sessions[0].Title != "/model" {
+		t.Fatalf("list = %+v", listed)
+	}
+	read := func() {
+		t.Helper()
+		w := request(s, "GET", "/api/mobile/cli/sessions/"+id, s.origin, "", true)
+		var view mobileSession
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &view) != nil || view.Title != "/model" {
+			t.Fatalf("read = %d %s", w.Code, w.Body.String())
+		}
+	}
+	// The first read loads the history, a new session revision.
+	read()
+	_, listed = sessionList(t, s, "")
+	read()
+	if code, answer := sessionList(t, s, "?after="+listed.Revision); code != http.StatusNoContent {
+		t.Fatalf("reading an unchanged session changed the list: %d %+v", code, answer.Sessions)
+	}
+}
+
 func TestHeldSessionListAnswersHostChanges(t *testing.T) {
-	s, id, _ := metadataFixture(t)
+	s, id, project := metadataFixture(t)
 	_, first := sessionList(t, s, "")
 	started := time.Now()
 	if code, _ := sessionList(t, s, "?after="+first.Revision+"&wait=1"); code != http.StatusNoContent || time.Since(started) < time.Second {
@@ -356,6 +513,24 @@ func TestHeldSessionListAnswersHostChanges(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("a held list missed a rename")
+	}
+	_, current := sessionList(t, s, "")
+	go func() {
+		_, answer := sessionList(t, s, "?after="+current.Revision+"&wait=20")
+		held <- answer
+	}()
+	time.Sleep(300 * time.Millisecond)
+	created := time.Now()
+	if _, err := s.mobileCLI.create(s.profile, project, uuid.NewString()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case answer := <-held:
+		if len(answer.Sessions) != 2 || time.Since(created) > 3*time.Second {
+			t.Fatalf("held list = %+v after %v", answer, time.Since(created))
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a held list missed a new session")
 	}
 	s.cliDiscovery.mu.Lock()
 	watchers := s.cliDiscovery.watchers

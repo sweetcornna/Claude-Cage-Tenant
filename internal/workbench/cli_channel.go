@@ -284,6 +284,7 @@ func (s *Server) discoverTerminalConversations(ctx context.Context, paths []stri
 		record.Workspace = workspace
 		record.Active = item.Active
 		record.Title, record.GuestConfig, record.Connection = item.Title, item.Config, item.Connection
+		s.cliDiscovery.named(record.ID, item.Title)
 		record.GuestWorkspace = item.Workspace
 		if item.Connection != "" {
 			if terminal := s.terminals.forConversation(item.Connection); terminal != nil {
@@ -379,7 +380,10 @@ func (s *Server) terminalConversationView(ctx context.Context, id string) (mobil
 	if record.Turns == nil {
 		record.Turns = []mobileTurn{}
 	}
-	record.Title, record.ConnectionNotice = current.Title, current.ConnectionNotice
+	if !s.cliDiscovery.discoveredTitle(id, record.Title) {
+		record.Title = current.Title
+	}
+	record.ConnectionNotice = current.ConnectionNotice
 	if s.macOSLegacyWorkspace(record) != "" {
 		record.ConnectionNotice = strings.TrimSpace(record.ConnectionNotice + "\n" + macOSLegacyWorkspaceNotice)
 	}

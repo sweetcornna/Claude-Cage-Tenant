@@ -247,11 +247,13 @@ func (s *Server) mobileProjects(w http.ResponseWriter, r *http.Request) {
 //   - ?after=<revision>&wait=<1..25> holds the request for up to that many
 //     seconds while the list is unchanged and answers as soon as it changes
 //     (200) or the time is up (204). Larger values are treated as 25. The
-//     server may answer earlier; a client issues its next request at once
+//     server may answer earlier. A client issues its next request at once
 //     after an answer, but never sooner than 1 s after the previous request
-//     started, and keeps its usual 5 s polling when an answer has no
-//     "revision" (an older server) or a request with these parameters fails
-//     with 400 or 404 (an older server or an older relay filter).
+//     started. It keeps its usual 5 s polling when an answer has no
+//     "revision" (an older server), when a request with these parameters
+//     fails with 400 or 404 (an older server or an older phone link filter),
+//     and treats a 204 that arrives more than 1 s before its wait elapsed as
+//     "not held" (wait its usual interval before the next request).
 //   - A client that sends neither parameter gets today's behaviour: a fresh
 //     guest observation and the full list on every request.
 //
@@ -595,9 +597,12 @@ func (s *Server) authorizedMobileSessionRecord(w http.ResponseWriter, r *http.Re
 //   - ?after=<revision>[&epoch=<generation>] answers 204 while the session's
 //     revision and generation are unchanged (as before).
 //   - Adding &wait=<1..25> holds the request while it is unchanged and
-//     answers as soon as it changes (200) or the time is up (204). The same
-//     pacing and fallback rules as for the session list apply: on 400 or 404
-//     the client drops wait and keeps its 1 s / 4 s polling.
+//     answers as soon as it changes (200) or the time is up (204). An older
+//     server ignores wait and answers 204 at once, so a client sends wait
+//     only to a server whose session list answers carry "revision", and the
+//     session list's pacing and fallback rules apply: at most one request
+//     per second, and on 400, 404 or an early 204 it keeps its 1 s / 4 s
+//     polling.
 func (s *Server) mobileSessionView(w http.ResponseWriter, r *http.Request) {
 	view, ok := s.authorizedMobileSession(w, r)
 	if !ok {

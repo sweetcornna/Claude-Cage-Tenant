@@ -32,6 +32,22 @@ var cliDiscoveryEncoded = func() string {
 // resident helper failed a request.
 const residentRetry = time.Minute
 
+// residentLifetime bounds one resident helper. After it, the helper answers
+// residentRetired without reading the request, and a new one, started through
+// a fresh login shell, takes over; changes to the login environment apply.
+var residentLifetime = 10 * time.Minute
+
+const residentRetired = 4
+
+type residentOutcome int
+
+const (
+	residentUnavailable residentOutcome = iota // not sent: no helper or backing off
+	residentAnswered
+	residentLost   // the helper or its connection ended; the next request starts another
+	residentFailed // the helper failed the request; backing off
+)
+
 // cliDiscovery keeps the session lists cheap. A list answer is always built
 // from the host catalog, which create, archive, restore, rename and purge
 // change in place; only the guest's observation of transcripts and processes
@@ -46,6 +62,7 @@ type cliDiscovery struct {
 	installed bool      // the channel helper it loads is in the guest
 	retryAt   time.Time // after a failure, no resident requests until then
 	viewKeys  map[string]residentView
+	titles    map[string]string // the title discovery last gave each session
 	// Held list requests share one guest watch, which runs only while at
 	// least one of them waits.
 	watchers  int
@@ -122,7 +139,7 @@ func (s *Server) discoveryContext(parent context.Context) (context.Context, cont
 // that the ordinary bootstrap installed, and only if that file is intact.
 func cliDiscoveryCommand() string {
 	bootstrap := fmt.Sprintf(`import base64,gzip;exec(compile(gzip.decompress(base64.b85decode("%s")),"cli_discovery.py","exec"))`, cliDiscoveryEncoded)
-	return shellescape.QuoteCommand([]string{"python3", "-I", "-u", "-c", bootstrap, cliChannelVersion, fmt.Sprintf("%x", sha256.Sum256([]byte(cliChannelInstalled)))})
+	return shellescape.QuoteCommand([]string{"python3", "-I", "-u", "-c", bootstrap, cliChannelVersion, fmt.Sprintf("%x", sha256.Sum256([]byte(cliChannelInstalled))), fmt.Sprint(int(residentLifetime.Seconds()))})
 }
 
 func (s *Server) cliDiscoveryProcess(ctx context.Context) *exec.Cmd {
@@ -153,32 +170,40 @@ func (d *cliDiscovery) failed() {
 	d.resident.close()
 }
 
-// residentRequest sends one request to the resident helper. It reports false
-// when the caller should answer with the channel helper instead: the request
-// may have been sent, so only idempotent reads may use it.
-func (s *Server) residentRequest(ctx context.Context, mode string, input any) (json.RawMessage, bool) {
+// residentRequest sends one request to the resident helper. Anything but
+// residentAnswered means the caller answers with the channel helper instead;
+// the request may have reached the guest, so only idempotent reads use it.
+func (s *Server) residentRequest(ctx context.Context, mode string, input any) (json.RawMessage, residentOutcome) {
 	if s.windowsGuest != nil || s.macosGuest != nil || !s.cliDiscovery.usable() {
-		return nil, false
+		return nil, residentUnavailable
 	}
 	payload, err := json.Marshal(map[string]any{"mode": mode, "input": input})
 	if err != nil {
-		return nil, false
+		return nil, residentUnavailable
 	}
 	started := time.Now()
-	reply, sent, err := s.cliDiscovery.resident.run(ctx, s.lifetimeContext(), s.cliDiscoveryProcess, string(payload))
-	if !sent {
-		return nil, false
+	for attempt := 0; attempt < 2; attempt++ {
+		reply, sent, err := s.cliDiscovery.resident.run(ctx, s.lifetimeContext(), s.cliDiscoveryProcess, string(payload))
+		switch {
+		case !sent:
+			return nil, residentUnavailable
+		case err == nil && reply.code == residentRetired:
+			// It read nothing; the next attempt starts its successor.
+			s.cliDiscovery.resident.close()
+			continue
+		case err == nil && reply.code == 0 && json.Valid(reply.stdout):
+			return reply.stdout, residentAnswered
+		case ctx.Err() != nil && errors.Is(err, context.Canceled):
+			return nil, residentLost // the caller left
+		case errors.Is(err, errGuestSessionEnded):
+			return nil, residentLost
+		}
+		// A stalled or failing helper must not delay the next requests.
+		s.cliDiscovery.failed()
+		_ = diagnostics.New(s.profile).Record("warn", "cli-discovery", fmt.Sprintf("operation=%s exit=%d elapsed_ms=%d error=%v output_bytes=%d", mode, reply.code, time.Since(started).Milliseconds(), err, len(reply.stdout)))
+		return nil, residentFailed
 	}
-	if err == nil && reply.code == 0 && json.Valid(reply.stdout) {
-		return reply.stdout, true
-	}
-	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
-		return nil, false
-	}
-	// A stalled or failing helper must not delay the next requests.
-	s.cliDiscovery.failed()
-	_ = diagnostics.New(s.profile).Record("warn", "cli-discovery", fmt.Sprintf("operation=%s exit=%d elapsed_ms=%d error=%v output_bytes=%d", mode, reply.code, time.Since(started).Milliseconds(), err, len(reply.stdout)))
-	return nil, false
+	return nil, residentLost
 }
 
 // residentCLIChannel answers discover and view from the resident helper. The
@@ -189,12 +214,12 @@ func (s *Server) residentCLIChannel(ctx context.Context, mode string, input any,
 		if mode != "discover" {
 			return false
 		}
-		reply, ok := s.residentRequest(ctx, mode, input)
+		reply, outcome := s.residentRequest(ctx, mode, input)
 		var answer struct {
 			Hash     string                 `json:"hash"`
 			Sessions []terminalConversation `json:"sessions"`
 		}
-		if !ok || json.Unmarshal(reply, &answer) != nil || answer.Hash == "" {
+		if outcome != residentAnswered || json.Unmarshal(reply, &answer) != nil || answer.Hash == "" {
 			return false
 		}
 		*output = answer.Sessions
@@ -204,9 +229,9 @@ func (s *Server) residentCLIChannel(ctx context.Context, mode string, input any,
 		if mode != "view" {
 			return false
 		}
-		reply, ok := s.residentRequest(ctx, mode, input)
+		reply, outcome := s.residentRequest(ctx, mode, input)
 		var current terminalConversation
-		if !ok || json.Unmarshal(reply, &current) != nil || current.WatchKey == "" {
+		if outcome != residentAnswered || json.Unmarshal(reply, &current) != nil || current.WatchKey == "" {
 			return false
 		}
 		*output = current
@@ -294,7 +319,7 @@ func (s *Server) watchGuestSessions(ctx context.Context) {
 		d.mu.Unlock()
 		epoch, unlocked := s.account.access()
 		var reply json.RawMessage
-		ok := false
+		outcome := residentUnavailable
 		if input != nil && unlocked {
 			request := make(map[string]any, len(input)+2)
 			for key, value := range input {
@@ -304,7 +329,7 @@ func (s *Server) watchGuestSessions(ctx context.Context) {
 			d.setWatching(true)
 			watchCtx, cancel := context.WithTimeout(ctx, guestWatchTimeout+5*time.Second)
 			stop := context.AfterFunc(epoch, cancel)
-			reply, ok = s.residentRequest(watchCtx, "watch", request)
+			reply, outcome = s.residentRequest(watchCtx, "watch", request)
 			stop()
 			cancel()
 		}
@@ -312,11 +337,16 @@ func (s *Server) watchGuestSessions(ctx context.Context) {
 			Hash    string `json:"hash"`
 			Changed bool   `json:"changed"`
 		}
-		if !ok || json.Unmarshal(reply, &answer) != nil || answer.Hash == "" {
-			d.setWatching(false)
+		if outcome != residentAnswered || json.Unmarshal(reply, &answer) != nil || answer.Hash == "" {
+			pause := guestWatchRetry
+			if outcome == residentLost {
+				pause = 250 * time.Millisecond // a successor starts on the next request
+			} else {
+				d.setWatching(false)
+			}
 			select {
 			case <-ctx.Done():
-			case <-time.After(guestWatchRetry):
+			case <-time.After(pause):
 			}
 			continue
 		}
@@ -366,10 +396,10 @@ func (s *Server) awaitSessionView(ctx context.Context, view mobileSession, deadl
 			request["key"], request["timeout"] = last.key, remaining.Seconds()
 			waitCtx, cancel := context.WithTimeout(ctx, remaining+5*time.Second)
 			stop := context.AfterFunc(epoch, cancel)
-			_, answered := s.residentRequest(waitCtx, "view-wait", request)
+			_, outcome := s.residentRequest(waitCtx, "view-wait", request)
 			stop()
 			cancel()
-			if answered || ctx.Err() != nil {
+			if outcome == residentAnswered || ctx.Err() != nil {
 				return ctx.Err() == nil
 			}
 		}
@@ -382,4 +412,24 @@ func (s *Server) awaitSessionView(ctx context.Context, view mobileSession, deadl
 	case <-timer.C:
 		return true
 	}
+}
+
+// named records the title discovery gave a session. The session read derives
+// its own title from the same transcript differently (slash commands, long
+// histories); keeping discovery's avoids the two rewriting each other and
+// waking every held list and read in turn.
+func (d *cliDiscovery) named(id, title string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.titles == nil {
+		d.titles = map[string]string{}
+	}
+	d.titles[id] = title
+}
+
+func (d *cliDiscovery) discoveredTitle(id, title string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	named, ok := d.titles[id]
+	return ok && named == title
 }
