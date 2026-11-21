@@ -503,30 +503,39 @@ func (s *Server) openClaudeScience(w http.ResponseWriter, r *http.Request, fresh
 		http.Error(w, usererror.Wrap("打开 Claude Science", err, "请确认环境仍在运行；重新连接后再打开。").Error(), http.StatusBadGateway)
 		return
 	}
-	link, err := parseClaudeScienceLink(output)
-	clear(output)
-	if errors.Is(err, errScienceNotInstalled) || errors.Is(err, errScienceNotRunning) {
-		http.Error(w, err.Error(), http.StatusConflict)
+	tab, status, err := s.openClaudeScienceLink(ctx, token, output, fresh)
+	if err != nil {
+		http.Error(w, err.Error(), status)
 		return
 	}
+	jsonReply(w, tab)
+}
+
+type claudeScienceTab struct {
+	ID     string `json:"id"`
+	Kind   string `json:"kind"`
+	Title  string `json:"title"`
+	Reused bool   `json:"reused"`
+}
+
+// Hands what claudeScienceLinkScript printed to the browser agent, which
+// checks the link again against its own provisioned port.
+func (s *Server) openClaudeScienceLink(ctx context.Context, token string, output []byte, fresh bool) (claudeScienceTab, int, error) {
+	link, err := parseClaudeScienceLink(output)
+	if errors.Is(err, errScienceNotInstalled) || errors.Is(err, errScienceNotRunning) {
+		return claudeScienceTab{}, http.StatusConflict, err
+	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
+		return claudeScienceTab{}, http.StatusBadGateway, err
 	}
 	body, _ := json.Marshal(map[string]any{"url": link.url, "started_at": link.startedAt, "fresh": fresh})
 	data, err := s.guestAPI(ctx, token, http.MethodPost, "/science", body)
-	clear(body)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
+		return claudeScienceTab{}, http.StatusBadGateway, err
 	}
-	var tab struct {
-		ID     string `json:"id"`
-		Reused bool   `json:"reused"`
-	}
+	var tab claudeScienceTab
 	if json.Unmarshal(data, &tab) != nil || tab.ID == "" {
-		http.Error(w, "浏览器没有返回 Claude Science 标签页。请更新环境组件后再试。", http.StatusBadGateway)
-		return
+		return claudeScienceTab{}, http.StatusBadGateway, errors.New("浏览器没有返回 Claude Science 标签页。请更新环境组件后再试。")
 	}
-	jsonReply(w, map[string]any{"id": tab.ID, "kind": "science", "title": "Claude Science", "reused": tab.Reused})
+	return claudeScienceTab{ID: tab.ID, Kind: "science", Title: "Claude Science", Reused: tab.Reused}, http.StatusOK, nil
 }

@@ -60,7 +60,7 @@ cage_install_claude_science() (
   if [ -d "$HOME/.claude-science/conda" ]; then required_mb=1024; fi
   free_mb="$(df -Pk "$HOME" | awk 'NR == 2 { print int($4 / 1024) }')"
   if ! [ "${free_mb:-0}" -ge "$required_mb" ] 2>/dev/null; then
-    printf '客机磁盘空间不足：安装 Claude Science 需要至少 %s MB 可用空间（首次启动还会准备约 10 GB 的 Python 与 R 环境），当前只有 %s MB。请清理客机中的文件或扩大环境磁盘后重试。\n' "$required_mb" "${free_mb:-0}" >&2
+    printf '客机磁盘空间不足：安装 Claude Science 需要至少 %s MB 可用空间（首次启动还会准备约 10 GB 的 Python 与 R 环境），当前只有 %s MB。请先删除客机中不再需要的文件后重试。\n' "$required_mb" "${free_mb:-0}" >&2
     exit 1
   fi
   # Known-old bubblewrap from the package lists: refuse before installing anything.

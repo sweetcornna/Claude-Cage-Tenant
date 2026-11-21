@@ -2,7 +2,11 @@ package workbench
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -481,5 +485,76 @@ func TestClaudeScienceJobNames(t *testing.T) {
 	s.setJobForTest(Job{ID: "job", Kind: "claude-science-install", Running: false})
 	if got := s.claudeScienceOperation(); got != "" {
 		t.Fatalf("finished job reported: %q", got)
+	}
+}
+
+// The agent gets the link, the start time and fresh; the caller gets the tab.
+// Agent refusals arrive in Chinese and never carry the link.
+func TestClaudeScienceOpenHandsTheLinkToTheAgent(t *testing.T) {
+	nonce := "0123456789abcdef0123456789abcdef"
+	output := []byte("http://localhost:47800/?nonce=" + nonce + "\n" + `{"running":true,"port":47800,"started_at":"t1"}`)
+	for _, tc := range []struct {
+		name   string
+		status int
+		reply  string
+		fresh  bool
+		want   int
+		text   string
+	}{
+		{"opened", 200, `{"id":"T1","kind":"science","title":"Claude Science","reused":false}`, true, 200, ""},
+		{"reused", 200, `{"id":"T1","kind":"science","title":"Claude Science","reused":true}`, false, 200, ""},
+		{"no-tab", 200, `{}`, false, 502, "没有返回 Claude Science 标签页"},
+		{"agent-refused-link", 400, `{"error":"Claude Science 登录链接无效"}`, false, 502, "打开 Claude Science失败：Claude Science 返回的登录链接无效"},
+		{"agent-not-provisioned", 400, `{"error":"Claude Science 尚未安装或配置"}`, false, 502, "请重新启动 Claude Science"},
+		{"old-agent", 400, `{"error":"Unknown browser action"}`, false, 502, "请更新环境组件"},
+		{"browser-starting", 503, `{"error":"Browser is starting"}`, false, 502, "浏览器仍在启动"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := testServer(t)
+			var got map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "POST" || r.URL.Path != "/science" || r.Header.Get("Authorization") != "Bearer agent-token" {
+					t.Errorf("unexpected browser request: %s %s %q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+				}
+				_ = json.NewDecoder(r.Body).Decode(&got)
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.reply))
+			}))
+			defer server.Close()
+			s.browserControl = newBrowserClient(t.Context())
+			t.Cleanup(s.browserControl.close)
+			s.browserControl.http.Transport.(*http.Transport).DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, strings.TrimPrefix(server.URL, "http://"))
+			}
+			tab, status, err := s.openClaudeScienceLink(t.Context(), "agent-token", output, tc.fresh)
+			if got["url"] != "http://localhost:47800/?nonce="+nonce || got["started_at"] != "t1" || got["fresh"] != tc.fresh || len(got) != 3 {
+				t.Fatalf("agent request %v", got)
+			}
+			if status != tc.want {
+				t.Fatalf("status %d, %v", status, err)
+			}
+			if tc.want != 200 {
+				if err == nil || !strings.Contains(err.Error(), tc.text) || strings.Contains(err.Error(), nonce) {
+					t.Fatalf("error %v", err)
+				}
+				return
+			}
+			if err != nil || tab.ID != "T1" || tab.Kind != "science" || tab.Title != "Claude Science" || tab.Reused != (tc.name == "reused") {
+				t.Fatalf("%+v %v", tab, err)
+			}
+		})
+	}
+	// Nothing reaches the agent when the guest has no usable link.
+	s := testServer(t)
+	s.browserControl = newBrowserClient(t.Context())
+	t.Cleanup(s.browserControl.close)
+	s.browserControl.http.Transport.(*http.Transport).DialContext = func(context.Context, string, string) (net.Conn, error) {
+		t.Error("browser agent contacted")
+		return nil, errors.New("unexpected")
+	}
+	for output, want := range map[string]int{"not-installed\n": 409, "not-running\n": 409, "http://localhost:8000/?nonce=" + nonce + "\n{}": 502} {
+		if _, status, err := s.openClaudeScienceLink(t.Context(), "agent-token", []byte(output), false); status != want || err == nil || strings.Contains(err.Error(), nonce) {
+			t.Fatalf("%q: %d %v", output, status, err)
+		}
 	}
 }
