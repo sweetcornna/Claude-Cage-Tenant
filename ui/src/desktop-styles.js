@@ -5,4 +5,5 @@ import "./base.css";
 import "./components.css";
 import "./shell.css";
 import "./style.css";
+import "./browser-chrome.css";
 import "./desktop-overrides.css";

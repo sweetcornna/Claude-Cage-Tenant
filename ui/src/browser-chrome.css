@@ -1,0 +1,39 @@
+/* Browser downloads and uploads (moved from style.css, tokens only;
+   brand/design-language.md §6). The panel floats under the toolbar; files are
+   hairline rows with quiet text actions. Loads right after style.css. */
+.browser-download-panel {
+  position: fixed; z-index: 36; top: 56px; right: 12px;
+  display: flex; flex-direction: column; width: min(380px, calc(100vw - 24px));
+  border: 1px solid var(--line); border-radius: var(--r-xl);
+  background: var(--surface); color: var(--ink); box-shadow: var(--shadow-float);
+  overflow: hidden;
+}
+.browser-download-heading { display: flex; align-items: center; justify-content: space-between; flex: none; padding: 10px 10px 10px 18px; border-bottom: 1px solid var(--line); }
+.browser-download-heading h2 { margin: 0; color: var(--ink); font-family: var(--font-serif); font-size: var(--fs-lead); font-weight: 500; letter-spacing: var(--track-cjk); }
+.browser-download-list { max-height: 520px; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 8px; }
+.browser-download-item { position: relative; display: flex; gap: 12px; padding: 12px 10px; border-bottom: 1px solid var(--line); }
+.browser-download-item:last-child { border-bottom: 0; }
+.browser-download-file-icon { flex: none; margin-top: 2px; color: var(--muted); }
+.browser-download-content { flex: 1; min-width: 0; }
+.browser-download-content > strong { display: block; overflow: hidden; color: var(--ink); font-size: var(--fs-secondary); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.browser-download-item p { margin: 4px 0; color: var(--muted); font-size: var(--fs-caption); overflow-wrap: anywhere; }
+.download-status { display: flex; align-items: baseline; gap: 8px; }
+.download-state { flex: none; }
+.browser-download-item .download-path { overflow: hidden; font-family: var(--font-mono); font-size: var(--fs-caption); text-overflow: ellipsis; white-space: nowrap; user-select: text; }
+.browser-download-item progress { display: block; width: 100%; height: 4px; margin: 8px 0; accent-color: var(--clay); }
+.browser-download-item [role="status"] { color: var(--error); }
+.download-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; }
+.browser-download-item .download-text-action { display: inline-flex; align-items: center; gap: 4px; padding: 3px 0; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--clay-ink); font-size: var(--fs-caption); font-weight: 500; }
+.browser-download-item .download-text-action:hover { text-decoration: underline; text-underline-offset: 3px; }
+.download-actions .download-reveal { width: 26px; height: 26px; margin-left: auto; }
+.browser-download-empty { display: grid; justify-items: center; gap: 8px; padding: 36px 16px 40px; color: var(--faint); }
+.browser-download-empty strong { color: var(--ink); font-family: var(--font-serif); font-size: var(--fs-body); font-weight: 500; }
+.browser-download-empty p { margin: 0; color: var(--muted); font-size: var(--fs-caption); }
+.browser-download-button { flex: none; }
+.browser-download-button.icon-button { position: relative; }
+.browser-download-warning { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--error); }
+.browser-download-button[aria-expanded="true"] { background: var(--selected); }
+.browser-upload-body { display: flex; flex-direction: column; gap: 14px; }
+.browser-upload-body label { display: flex; flex-direction: column; gap: 8px; }
+.browser-upload-body input, .browser-upload-body progress { width: 100%; }
+.browser-upload-body progress { accent-color: var(--clay); }
