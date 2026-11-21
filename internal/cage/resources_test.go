@@ -2,6 +2,7 @@ package cage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -319,5 +320,68 @@ func TestMemoryPolicyHostPressureAndQuietGuestReclaimSooner(t *testing.T) {
 	}
 	if steps["short host"] >= steps["busy guest on a roomy host"] || steps["quiet guest"] >= steps["busy guest on a roomy host"] || steps["short host"] > 6 {
 		t.Fatalf("reclamation steps %v", steps)
+	}
+}
+
+func TestResourceManagerSendsLimitsAndTellsTheGateway(t *testing.T) {
+	profile := t.TempDir()
+	t.Setenv(ConfigEnv, filepath.Join(profile, "config.json"))
+	oldMachine, oldContext := readMachine, allocationContext
+	t.Cleanup(func() { readMachine, allocationContext = oldMachine, oldContext })
+	// A workspace VM with 512 MiB available: it cannot back the guest's demand.
+	readMachine = func() MachineMemory {
+		return MachineMemory{Total: 6 << 30, Boot: 6 << 30, Available: 512 << 20, Measured: true, Role: RoleDedicated}
+	}
+	allocationContext = func(string) (uint64, bool) { return 4 << 30, false }
+	sample := func(uptime float64) string {
+		return fmt.Sprintf("MemTotal: %d kB\nMemFree: 65536 kB\nMemAvailable: 131072 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\noom_kill 0\npswpin 0\nsome avg10=20.00 avg60=0 total=1\ncpu 10 0 5 20 2 0 0 0 0 0\nboot 12345678-1234-1234-1234-123456789012\nuptime %.1f 1.0\ngovernor 1 %.1f\nclass control 400000000 0 500000000 0 0\nclass sessions 900000000 12 1100000000 0 0\nclass browser 1500000000 30 0 1600000000 1800000000\n", (3<<30)>>10, uptime, uptime)
+	}
+	probes := make(chan string, 16)
+	uptime := 100.0
+	var targets []uint64
+	agentDir := t.TempDir()
+	stop := StartResourceManager(context.Background(), agentDir, 4<<30, 2, func(_ context.Context, command string) ([]byte, error) {
+		probes <- command
+		uptime += 2
+		return []byte(sample(uptime)), nil
+	}, func(_ context.Context, target uint64) error { targets = append(targets, target); return nil })
+	var commands []string
+	for len(commands) < 3 {
+		select {
+		case command := <-probes:
+			commands = append(commands, command)
+		case <-time.After(10 * time.Second):
+			t.Fatal("no probes")
+		}
+	}
+	stop()
+	if strings.Contains(commands[0], "/run/cage-resources/limits") || !strings.Contains(commands[1], "/run/cage-resources/limits") || !strings.Contains(commands[1], "browser_high ") {
+		t.Fatalf("class limits not sent with the next probe: %q", commands[:2])
+	}
+	data, err := os.ReadFile(filepath.Join(profile, "machine-memory.json"))
+	var report machineMemoryReport
+	if err != nil || json.Unmarshal(data, &report) != nil || report.Version != 1 || report.Short == 0 || time.Since(report.UpdatedAt) > time.Minute {
+		t.Fatalf("machine-memory.json %s %v", data, err)
+	}
+	// The probe reported a governor: the sessions' stall is the pressure, the
+	// machine limits the guest, and the status says so.
+	status, err := ReadResourceStatus(agentDir)
+	if err != nil || !status.Pressure || !status.BrowserPressure || len(status.Classes) != 3 || status.Machine == nil || status.Capacity == 0 || status.Summary == "" || status.NextAction == "" {
+		t.Fatalf("status %+v %v", status, err)
+	}
+	for _, target := range targets {
+		if target > 4<<30 {
+			t.Fatalf("target above the maximum %v", targets)
+		}
+	}
+}
+
+func TestAgentProfileFromTheInstanceLayout(t *testing.T) {
+	t.Setenv(ConfigEnv, "")
+	if got := agentProfile("/p/state/lima/cage-1"); got != "/p" {
+		t.Fatalf("profile %q", got)
+	}
+	if got := agentProfile("/elsewhere/cage-1"); got != "" {
+		t.Fatalf("profile %q", got)
 	}
 }

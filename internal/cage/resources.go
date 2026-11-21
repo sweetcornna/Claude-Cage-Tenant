@@ -297,15 +297,28 @@ type machineMemoryReport struct {
 // allocationContext is what the host agent learns once at start from the
 // environment's settings: the automatic maximum and whether the user chose
 // the allocation.
-var allocationContext = func() (possible uint64, manual bool) {
+var allocationContext = func(profile string) (possible uint64, manual bool) {
 	memory, _ := AutomaticLimits()
 	possible = uint64(memory) << 30
-	if path := os.Getenv(ConfigEnv); path != "" {
-		if allocation, err := LoadResourceAllocation(path); err == nil {
-			manual = !allocation.Automatic
+	if profile != "" {
+		if allocation, err := LoadResourceAllocation(filepath.Join(profile, "config.json")); err == nil {
+			manual = !allocation.Effective().Automatic
 		}
 	}
 	return possible, manual
+}
+
+// agentProfile is the profile directory of the environment whose instance
+// directory is dir: from the environment variable the host agent inherits,
+// or from the layout <profile>/state/lima/<instance>.
+func agentProfile(dir string) string {
+	if path := os.Getenv(ConfigEnv); path != "" {
+		return filepath.Dir(path)
+	}
+	if lima := filepath.Dir(dir); filepath.Base(lima) == "lima" && filepath.Base(filepath.Dir(lima)) == "state" {
+		return filepath.Dir(filepath.Dir(lima))
+	}
+	return ""
 }
 
 // StartResourceManager belongs to the VM hostagent, so closing a window cannot
@@ -314,14 +327,14 @@ func StartResourceManager(parent context.Context, dir string, maximum uint64, cp
 	ctx, cancel := context.WithCancel(parent)
 	done := make(chan struct{})
 	reportPath := ""
-	if path := os.Getenv(ConfigEnv); path != "" {
-		reportPath = filepath.Join(filepath.Dir(path), "machine-memory.json")
+	if profile := agentProfile(dir); profile != "" {
+		reportPath = filepath.Join(profile, "machine-memory.json")
 	}
 	go func() {
 		defer close(done)
 		p := memoryPolicy{maximum: maximum, target: maximum}
 		status := ResourceStatus{Version: 1, PID: os.Getpid(), Maximum: maximum, Target: maximum, CPUs: cpus}
-		possible, manual := allocationContext()
+		possible, manual := allocationContext(agentProfile(dir))
 		status.Possible = possible
 		var previous ResourceSample
 		var bootTotal uint64
