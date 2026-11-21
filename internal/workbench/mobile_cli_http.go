@@ -589,6 +589,7 @@ func (s *Server) authorizedMobileSessionRecord(w http.ResponseWriter, r *http.Re
 	}
 	return view, record.Terminal, true
 }
+
 // Session read protocol (GET /api/[mobile/]cli/sessions/{id}):
 //
 //   - ?after=<revision>[&epoch=<generation>] answers 204 while the session's
