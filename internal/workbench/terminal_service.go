@@ -506,7 +506,9 @@ func (s *Server) readClaudeGuestSnapshot(ctx context.Context, id string) (claude
 	if s.windowsGuest != nil {
 		return s.readWindowsClaudeAccount(ctx, "snapshot", id, "")
 	}
-	return s.readClaudeGuestReport(ctx, id, claudeSnapshotCommand(id))
+	// A snapshot only reads, and the accounts pages and every launch ask for
+	// it, so it shares the guest's control connection.
+	return s.readClaudeGuestReportVia(ctx, id, claudeSnapshotCommand(id), s.guestQuick)
 }
 
 func (s *Server) readClaudeGuestUsage(ctx context.Context, id, subject string) (claudeGuestSnapshot, error) {
@@ -519,12 +521,19 @@ func (s *Server) readClaudeGuestUsage(ctx context.Context, id, subject string) (
 	return s.readClaudeGuestReport(ctx, id, claudeGuestReportCommand(id, subject))
 }
 
+// readClaudeGuestReport runs command over a connection of its own. Usage and
+// login recovery use it: they can run long or change the account, which a
+// shared connection is not for.
 func (s *Server) readClaudeGuestReport(ctx context.Context, id, command string) (claudeGuestSnapshot, error) {
+	return s.readClaudeGuestReportVia(ctx, id, command, s.guest)
+}
+
+func (s *Server) readClaudeGuestReportVia(ctx context.Context, id, command string, run func(context.Context, string) ([]byte, error)) (claudeGuestSnapshot, error) {
 	var snapshot claudeGuestSnapshot
 	if !validClaudeGuestID(id) {
 		return snapshot, errors.New("Claude 账号 ID 无效")
 	}
-	data, err := s.guest(ctx, command)
+	data, err := run(ctx, command)
 	if err != nil || json.Unmarshal(data, &snapshot) != nil {
 		return snapshot, errors.New("无法读取账号状态，请确认环境已启动并同步环境组件")
 	}

@@ -278,7 +278,7 @@ func (s *Server) ensureProjectShare(path string) (returned error) {
 		return err
 	}
 	for {
-		if _, err = s.guest(ctx, "mountpoint -q "+quoted+" && test \"$(cat "+shellescape.Quote(guestPath(probe.Name()))+")\" = "+shellescape.Quote(challenge)); err == nil {
+		if err = s.projectMountReady(ctx, quoted, guestPath(probe.Name()), challenge); err == nil {
 			break
 		}
 		select {
@@ -298,6 +298,15 @@ func (s *Server) ensureProjectShare(path string) (returned error) {
 	s.projectShares[path] = share
 	s.mu.Unlock()
 	return nil
+}
+
+// projectMountReady succeeds once the guest's mount shows the probe file this
+// host just wrote, which proves it is this host's share. It is polled until the
+// mount appears, so it shares the guest's control connection instead of
+// opening an SSH connection per attempt.
+func (s *Server) projectMountReady(ctx context.Context, quotedMount, probeGuestPath, challenge string) error {
+	_, err := s.guestQuick(ctx, "mountpoint -q "+quotedMount+" && test \"$(cat "+shellescape.Quote(probeGuestPath)+")\" = "+shellescape.Quote(challenge))
+	return err
 }
 
 // projectFileCacheSeconds is how long the guest may answer from what it

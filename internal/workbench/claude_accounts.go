@@ -389,8 +389,10 @@ func (s *Server) readClaudeGuestQuotas(ctx context.Context, ids []string) (map[s
 			return nil, errors.New("Claude 账号 ID 无效")
 		}
 	}
-	// s.guest bounds its output to 64 KiB. Even a large pool uses one
-	// server-controlled deadline; keep completed chunks when a later one fails.
+	// The read is idempotent and runs on every launch, so it shares the
+	// guest's control connection. That bounds its output to 64 KiB. Even a
+	// large pool uses one server-controlled deadline; keep completed chunks
+	// when a later one fails.
 	readings := make(map[string]claudeGuestQuota)
 	for chunk := range slices.Chunk(ids, 96) {
 		if s.windowsGuest != nil {
@@ -399,7 +401,7 @@ func (s *Server) readClaudeGuestQuotas(ctx context.Context, ids []string) (map[s
 			}
 			continue
 		}
-		data, err := s.guest(ctx, "exec /usr/local/bin/cage-claude-account quotas "+strings.Join(chunk, " "))
+		data, err := s.guestQuick(ctx, "exec /usr/local/bin/cage-claude-account quotas "+strings.Join(chunk, " "))
 		if err != nil {
 			return readings, err
 		}

@@ -43,6 +43,33 @@ type toolVersion struct {
 	Required string `json:"required"`
 }
 
+// environmentVersionsProbe prints the guest's component manifest and the
+// version of each tool it ships, as JSON.
+const environmentVersionsProbe = `python3 - <<'CAGE_VERSIONS'
+import json,subprocess,os
+from pathlib import Path
+p=Path('/etc/claude-cage/components.json')
+try: manifest=json.loads(p.read_text())
+except (OSError,ValueError): manifest=None
+versions={}
+env={**os.environ,'DISABLE_AUTOUPDATER':'1','PATH':str(Path.home()/'.local/bin')+':'+os.environ.get('PATH','')}
+browser='/usr/local/lib/workbench-browser/chromium'
+if not os.path.isfile(browser): browser='/usr/bin/chromium'
+for name,args in {'chromium':[browser,'--version'],'code_server':['code-server','--version'],'claude':['claude','--version'],'gh':['gh','--version'],'git':['git','--version'],'mise':[str(Path.home()/'.local/bin/mise'),'--version']}.items():
+ try:
+  result=subprocess.run(args,env=env,capture_output=True,text=True,timeout=4)
+  versions[name]=result.stdout.strip().splitlines()[0][:200] if result.returncode==0 and result.stdout.strip() else ''
+ except (OSError,subprocess.TimeoutExpired): versions[name]=''
+print(json.dumps({'manifest':manifest,'tools':versions}))
+CAGE_VERSIONS`
+
+// readEnvironmentVersions runs the probe over the guest's control connection:
+// the tools' own version checks take a while, and a connection of its own
+// would add a key exchange to every click.
+func (s *Server) readEnvironmentVersions(ctx context.Context) ([]byte, error) {
+	return s.guestQuick(ctx, environmentVersionsProbe)
+}
+
 // Version commands run only for this explicit request, never in status polling.
 func (s *Server) environmentVersions(w http.ResponseWriter, r *http.Request) {
 	if s.macosGuest != nil || s.windowsGuest != nil {
@@ -59,23 +86,7 @@ func (s *Server) environmentVersions(w http.ResponseWriter, r *http.Request) {
 	}
 	var detail string
 	if running {
-		data, err := s.guest(ctx, `python3 - <<'CAGE_VERSIONS'
-import json,subprocess,os
-from pathlib import Path
-p=Path('/etc/claude-cage/components.json')
-try: manifest=json.loads(p.read_text())
-except (OSError,ValueError): manifest=None
-versions={}
-env={**os.environ,'DISABLE_AUTOUPDATER':'1','PATH':str(Path.home()/'.local/bin')+':'+os.environ.get('PATH','')}
-browser='/usr/local/lib/workbench-browser/chromium'
-if not os.path.isfile(browser): browser='/usr/bin/chromium'
-for name,args in {'chromium':[browser,'--version'],'code_server':['code-server','--version'],'claude':['claude','--version'],'gh':['gh','--version'],'git':['git','--version'],'mise':[str(Path.home()/'.local/bin/mise'),'--version']}.items():
- try:
-  result=subprocess.run(args,env=env,capture_output=True,text=True,timeout=4)
-  versions[name]=result.stdout.strip().splitlines()[0][:200] if result.returncode==0 and result.stdout.strip() else ''
- except (OSError,subprocess.TimeoutExpired): versions[name]=''
-print(json.dumps({'manifest':manifest,'tools':versions}))
-CAGE_VERSIONS`)
+		data, err := s.readEnvironmentVersions(ctx)
 		var snapshot struct {
 			Manifest *cage.GuestManifest `json:"manifest"`
 			Tools    map[string]string   `json:"tools"`

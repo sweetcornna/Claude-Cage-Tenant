@@ -342,7 +342,7 @@ func (s *Server) readCodexGuestQuotas(ctx context.Context, ids []string) (map[st
 	}
 	readings := make(map[string]codexGuestQuota)
 	for chunk := range slices.Chunk(ids, 96) {
-		data, err := s.guest(ctx, "exec /usr/local/bin/cage-codex-account quotas "+strings.Join(chunk, " "))
+		data, err := s.guestQuick(ctx, "exec /usr/local/bin/cage-codex-account quotas "+strings.Join(chunk, " "))
 		if err != nil {
 			return readings, err
 		}
