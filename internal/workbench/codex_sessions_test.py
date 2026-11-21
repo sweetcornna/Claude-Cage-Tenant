@@ -24,7 +24,9 @@ FAKE_CODEX = """#!{python}
 import json, os, pathlib, sys, time, uuid
 args = sys.argv[1:]
 home = pathlib.Path(os.environ.get("CODEX_HOME") or pathlib.Path.home() / ".codex")
-flags = os.environ.get("FAKE_CODEX_FLAGS", "all") == "all"
+level = os.environ.get("FAKE_CODEX_FLAGS", "all")
+flags, commands = level == "all", level in ("all", "old")
+options = "  -C, --cd <DIR>\\n      --add-dir <DIR>\\n      --no-daemon\\n" if flags else ""
 if args == ["--version"]:
     print("codex-cli 0.171.0")
     sys.exit(0)
@@ -32,9 +34,9 @@ if args[-1:] == ["--help"]:
     with open(os.environ["FAKE_CODEX_CALLS"] + ".help", "a") as calls:
         calls.write(" ".join(args) + "\\n")
     if args == ["--help"]:
-        print("Codex CLI\\n\\nCommands:\\n  exec    Run Codex non-interactively\\n" + ("  resume  Resume a previous session (picker by default; use --last to continue\\n          the most recent)\\n  delete  Permanently delete a saved session\\n" if flags else "") + "  help    Print this message\\n\\nOptions:\\n" + ("      --no-daemon\\n          Run without the shared background server\\n" if flags else ""))
+        print("Codex CLI\\n\\nCommands:\\n  exec    Run Codex non-interactively\\n" + ("  resume  Resume a previous session (picker by default; use --last to continue\\n          the most recent)\\n  delete  Permanently delete a saved session\\n" if commands else "") + "  help    Print this message\\n\\nOptions:\\n" + options)
     elif args[0] == "resume":
-        print("Usage: codex resume [OPTIONS] [SESSION_ID]\\n" + ("      --no-daemon\\n" if flags else ""))
+        print("Usage: codex resume [OPTIONS] [SESSION_ID]\\n" + options)
     elif args[0] == "delete":
         print("Usage: codex delete [OPTIONS] <SESSION>\\n" + ("      --force\\n" if flags else ""))
     sys.exit(0)
@@ -541,6 +543,35 @@ class CodexSessionTests(unittest.TestCase):
         self.assertEqual(sessions.purge({"thread": other, "account": "default", "workspace": str(self.project)}), {"ok": True})
         self.assertFalse(other_path.exists())
         self.assertEqual(len([row for row in self.calls_of("tui") if row["argv"][:1] == ["delete"]]), 1)
+
+    def test_tui_flags_come_from_the_probe(self):
+        every = dict(sessions.UNPROBED, complete=True, resume=True, cd=True, add_dir=True, no_daemon=True, resume_cd=True,
+                     resume_add_dir=True, resume_no_daemon=True)
+        thread, extra = str(uuid.uuid4()), str(self.home)
+        self.assertEqual(sessions.tui_args(every, thread, self.project, [extra]),
+                         ["resume", "-C", str(self.project), "--add-dir", extra, "--no-daemon", thread])
+        self.assertEqual(sessions.tui_args(every, "", self.project, [extra]), ["-C", str(self.project), "--add-dir", extra, "--no-daemon"])
+        old = dict(sessions.UNPROBED, complete=True, resume=True)
+        self.assertEqual(sessions.tui_args(old, thread, self.project, [extra]), ["resume", thread])
+        self.assertEqual(sessions.tui_args(sessions.UNPROBED, "", self.project, [extra]), [])
+        # An older CLI: no optional flags, and the TUI starts in the project.
+        os.environ["FAKE_CODEX_FLAGS"] = "old"
+        resumed, _ = self.rollout(self.turn_rows("old cli", "ok"))
+        process = self.launch(str(uuid.uuid4()), thread=resumed)
+        tui = [row for row in self.calls_of("tui") if row["pid"] == process.pid][0]
+        self.assertEqual((tui["argv"], os.path.realpath(tui["cwd"])), (["resume", resumed], os.path.realpath(self.project)))
+
+    def test_launch_waits_for_an_unfinished_probe(self):
+        thread, _ = self.rollout(self.turn_rows("slow", "ok"))
+        connection = str(uuid.uuid4())
+        request = {"connection": connection, "lease": str(uuid.uuid4()), "thread": thread, "account": "default", "subject": "",
+                   "cwd": str(self.project), "additional_directories": []}
+        with patch.object(sessions, "PROBE_TIMEOUT", 0.001):
+            with self.assertRaisesRegex(ValueError, "暂时无法确认"):
+                sessions.tui_launch(request)
+        self.assertFalse((sessions.ROOT / "probe.json").exists())
+        self.assertNotIn("lease", self.state(connection))
+        self.assertEqual(self.calls_of("tui"), [])
 
     def test_newer_rollout_names(self):
         thread, path = self.rollout(self.turn_rows("suffixed", "ok"))

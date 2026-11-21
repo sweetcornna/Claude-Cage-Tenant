@@ -34,6 +34,10 @@ ACCOUNT_REFUSED = 78
 # A desktop terminal's launch refused to start Codex; the message is on stderr.
 LAUNCH_REFUSED = 75
 PROBE_TIMEOUT = 15
+# Bumped when probe.json gains fields, so a cached older probe is redone.
+PROBE_SCHEMA = 2
+UNPROBED = {"installed": False, "complete": False, "version": "", "resume": False, "no_daemon": False, "resume_no_daemon": False,
+            "cd": False, "add_dir": False, "resume_cd": False, "resume_add_dir": False, "delete": False}
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 # Newer CLIs name a rollout <thread>_<rollout id> when the two differ, and can
 # compress cold rollouts (.jsonl.zst), which this helper cannot read.
@@ -1074,7 +1078,7 @@ def probe_binary(binary, env):
     """What this Codex CLI supports, from its own help. Cached per binary."""
     target = os.path.realpath(binary)
     info = os.stat(target)
-    key = [target, info.st_size, info.st_mtime_ns]
+    key = [target, info.st_size, info.st_mtime_ns, PROBE_SCHEMA]
     cached = read_json(ROOT / "probe.json", {}) or {}
     if cached.get("key") == key and isinstance(cached.get("result"), dict):
         return dict(cached["result"])
@@ -1090,13 +1094,14 @@ def probe_binary(binary, env):
     version, top = output("--version"), output("--help")
     if version is None or top is None:
         # Not cached: a slow or broken start is retried next time.
-        return {"installed": True, "complete": False, "version": "", "resume": False, "no_daemon": False, "resume_no_daemon": False, "delete": False}
+        return dict(UNPROBED, installed=True)
     found = re.search(r"(\d+\.\d+\.\d+[0-9A-Za-z.+-]*)", version or "")
     commands = help_commands(top)
-    result = {"installed": True, "complete": True, "version": found.group(1) if found else "", "resume": "resume" in commands,
-              "no_daemon": "--no-daemon" in top, "resume_no_daemon": False, "delete": False}
+    result = dict(UNPROBED, installed=True, complete=True, version=found.group(1) if found else "", resume="resume" in commands,
+                  no_daemon="--no-daemon" in top, cd="--cd" in top, add_dir="--add-dir" in top)
     if result["resume"]:
-        result["resume_no_daemon"] = "--no-daemon" in (output("resume", "--help") or "")
+        options = output("resume", "--help") or ""
+        result.update(resume_no_daemon="--no-daemon" in options, resume_cd="--cd" in options, resume_add_dir="--add-dir" in options)
     if "delete" in commands:
         result["delete"] = "--force" in (output("delete", "--help") or "")
     ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -1108,7 +1113,7 @@ def probe(request):
     env = cli_environment()
     binary = shutil.which("codex", path=env["PATH"])
     if not binary:
-        return {"installed": False, "complete": True, "version": "", "resume": False, "no_daemon": False, "resume_no_daemon": False, "delete": False}
+        return dict(UNPROBED, complete=True)
     result = probe_binary(binary, env)
     result["writer_locks"] = (codex_home("default") / "thread-writer-locks").is_dir()
     return result
@@ -1128,6 +1133,24 @@ def codex_delete(account, home, thread):
                               timeout=20, env=env, cwd=str(Path.home())).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
+
+
+def tui_args(caps, thread, cwd, directories):
+    """The Codex TUI's arguments. Each optional flag needs the probe to have
+    seen it in this CLI's help: without -C the TUI runs from cwd, which the
+    launcher changes to, and without --add-dir it gets the project only."""
+    resume = bool(thread)
+    options = []
+    if caps.get("resume_cd" if resume else "cd"):
+        options += ["-C", str(cwd)]
+    if caps.get("resume_add_dir" if resume else "add_dir"):
+        for directory in directories:
+            options += ["--add-dir", directory]
+    # A shared background server could keep the thread loaded after the TUI
+    # exits; a TUI of its own ends its writes when it ends.
+    if caps.get("resume_no_daemon" if resume else "no_daemon"):
+        options.append("--no-daemon")
+    return ["resume", *options, thread] if resume else options
 
 
 def tui_launch(request):
@@ -1183,6 +1206,10 @@ def tui_launch(request):
                 raise ValueError(OTHER_TERMINAL)
             if foreign(path or packed, thread, users, set()):
                 raise ValueError(OTHER_PROCESS)
+            if not caps.get("complete"):
+                # Resuming on a CLI without resume would start a new thread
+                # with the thread ID as its prompt.
+                raise ValueError("暂时无法确认电脑上的 Codex 版本，请稍后重试。")
             if not caps.get("resume"):
                 raise ValueError("电脑上的 Codex 版本不支持继续会话，请更新 Codex 后重试。")
         state.update(account=account, cwd=str(cwd))
@@ -1190,14 +1217,7 @@ def tui_launch(request):
             state["thread_id"] = thread
         state["lease"] = {"id": lease_id, "pid": os.getpid(), "start": start, "pgid": os.getpgid(0), "thread": thread,
                           "account": account, "cwd": str(cwd), "acquired_at": time.time()}
-    options = ["-C", str(cwd)]
-    for directory in directories:
-        options += ["--add-dir", directory]
-    # A shared background server could keep the thread loaded after the TUI
-    # exits; a TUI of its own ends its writes when it ends.
-    if caps.get("resume_no_daemon" if thread else "no_daemon"):
-        options.append("--no-daemon")
-    args = ["resume", *options, thread] if thread else options
+    args = tui_args(caps, thread, cwd, directories)
     if account == "default":
         argv = [binary, *args]
     else:

@@ -959,7 +959,7 @@ if args == ["--version"]:
     print("codex-cli 0.171.0")
     sys.exit(0)
 if args[-1:] == ["--help"]:
-    print("Commands:\n  exec    Run Codex non-interactively\n  resume  Resume a previous session\n\nOptions:\n      --no-daemon\n")
+    print("Commands:\n  exec    Run Codex non-interactively\n  resume  Resume a previous session\n\nOptions:\n  -C, --cd <DIR>\n      --add-dir <DIR>\n      --no-daemon\n")
     sys.exit(0)
 def rollout(thread):
     return next(home.glob("sessions/*/*/*/rollout-*-" + thread + ".jsonl"))
