@@ -9,7 +9,7 @@
   align-items: center;
   gap: 8px;
 }
-.settings-content .proxy-heading h3 {
+:is(.settings-content, .initialization) .proxy-heading h3 {
   margin: 0;
 }
 .proxy-heading + p {
@@ -39,7 +39,7 @@
   line-height: 1.75;
   overflow-wrap: anywhere;
 }
-.settings-content .proxy-help h4 {
+:is(.settings-content, .initialization) .proxy-help h4 {
   margin: 0 0 8px;
   font-size: var(--fs-body);
 }
@@ -130,7 +130,7 @@
   padding: 0;
   border-bottom: 1px solid var(--line);
 }
-.settings-content .proxy-tabs button {
+:is(.settings-content, .initialization) .proxy-tabs button {
   position: relative;
   min-height: var(--h-control);
   padding: 0 2px;
@@ -141,12 +141,12 @@
   font-size: var(--fs-body);
   font-weight: 500;
 }
-.settings-content .proxy-tabs button:hover:not(:disabled) {
+:is(.settings-content, .initialization) .proxy-tabs button:hover:not(:disabled) {
   background: transparent;
   color: var(--ink);
 }
-.settings-content .proxy-tabs button[aria-selected="true"],
-.settings-content .proxy-tabs button.selected {
+:is(.settings-content, .initialization) .proxy-tabs button[aria-selected="true"],
+:is(.settings-content, .initialization) .proxy-tabs button.selected {
   color: var(--ink);
 }
 .proxy-tabs button[aria-selected="true"]::after,
@@ -178,7 +178,7 @@
 .proxy-toolbar .inline-select {
   max-width: 150px;
 }
-.settings-content
+:is(.settings-content, .initialization)
   .proxy-manager
   .proxy-toolbar
   label.proxy-search:not(.check-line) {
@@ -198,7 +198,7 @@
   pointer-events: none;
 }
 .settings-page
-  .settings-content
+  :is(.settings-content, .initialization)
   .proxy-manager
   .proxy-toolbar
   label.proxy-search:not(.check-line)
@@ -221,7 +221,7 @@
 .proxy-node.selected {
   background: color-mix(in srgb, var(--selected) 60%, transparent);
 }
-.settings-content .proxy-node > button:last-child {
+:is(.settings-content, .initialization) .proxy-node > button:last-child {
   width: var(--h-compact);
   min-height: var(--h-compact);
   padding: 0;
@@ -230,11 +230,11 @@
   background: transparent;
   color: var(--muted);
 }
-.settings-content .proxy-node > button:last-child:hover:not(:disabled) {
+:is(.settings-content, .initialization) .proxy-node > button:last-child:hover:not(:disabled) {
   background: var(--soft);
   color: var(--ink);
 }
-.settings-content .proxy-node-choice {
+:is(.settings-content, .initialization) .proxy-node-choice {
   display: flex;
   justify-content: flex-start;
   align-items: center;
@@ -251,7 +251,7 @@
   font-weight: 400;
   white-space: normal;
 }
-.settings-content .proxy-node-choice:hover:not(:disabled) {
+:is(.settings-content, .initialization) .proxy-node-choice:hover:not(:disabled) {
   background: transparent;
 }
 .proxy-node-choice > span:last-child {
@@ -331,7 +331,7 @@
   display: flex;
   gap: 2px;
 }
-.settings-content .proxy-source-actions button {
+:is(.settings-content, .initialization) .proxy-source-actions button {
   width: var(--h-compact);
   min-height: var(--h-compact);
   padding: 0;
@@ -340,7 +340,7 @@
   background: transparent;
   color: var(--muted);
 }
-.settings-content .proxy-source-actions button:hover:not(:disabled) {
+:is(.settings-content, .initialization) .proxy-source-actions button:hover:not(:disabled) {
   background: var(--soft);
   color: var(--ink);
 }
@@ -598,7 +598,7 @@
   cursor: pointer;
 }
 @media (max-width: 900px) {
-  .settings-content .proxy-node-choice {
+  :is(.settings-content, .initialization) .proxy-node-choice {
     gap: 8px;
   }
   .proxy-source {
@@ -621,8 +621,8 @@
   align-items: center;
   gap: 12px;
 }
-.settings-content .proxy-route h4,
-.settings-content .proxy-node-heading h4 {
+:is(.settings-content, .initialization) .proxy-route h4,
+:is(.settings-content, .initialization) .proxy-node-heading h4 {
   margin: 0;
   color: var(--ink);
   font-size: var(--fs-lead);
@@ -641,7 +641,7 @@
   border-radius: var(--r-md);
   background: var(--soft);
 }
-.settings-content .proxy-route-mode button {
+:is(.settings-content, .initialization) .proxy-route-mode button {
   min-height: calc(var(--h-control) - 6px);
   padding: 0 14px;
   border: 0;
@@ -653,7 +653,7 @@
     background var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out);
 }
-.settings-content .proxy-route-mode button[aria-pressed="true"] {
+:is(.settings-content, .initialization) .proxy-route-mode button[aria-pressed="true"] {
   background: var(--surface);
   color: var(--ink);
   box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 10%, transparent);
@@ -706,7 +706,7 @@
   flex: 1;
   min-width: 0;
 }
-.settings-content
+:is(.settings-content, .initialization)
   .proxy-manager
   .proxy-hop-control
   label:not(.check-line):not(.choice):not(.toggle-row) {
