@@ -491,6 +491,8 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /api/claude-desktop/vnc", s.claudeDesktopVNC)
 	mux.HandleFunc("POST /api/claude-desktop/resize", s.claudeDesktopResize)
 	mux.HandleFunc("POST /api/claude-desktop/{action}", s.claudeDesktopAction)
+	mux.HandleFunc("GET /api/claude-science", s.claudeScienceStatus)
+	mux.HandleFunc("POST /api/claude-science/{action}", s.claudeScienceAction)
 	if s.macosGuest != nil {
 		mux.HandleFunc("POST /api/macos/first-setup", s.macOSLoginWindow)
 		mux.HandleFunc("POST /api/macos/login", s.macOSLoginWindow)

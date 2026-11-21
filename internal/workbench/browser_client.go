@@ -144,6 +144,8 @@ func (c *browserClient) request(ctx context.Context, token, method, path string,
 			"无痕标签暂不支持双网页分屏":                                              "无痕标签暂不支持双网页分屏。请使用普通标签页。",
 			"设置页请在单个浏览器窗格内使用":                                            "设置页请在单个浏览器窗格内使用。请先退出分屏。",
 			"扩展 ZIP 不能超过 32 MB":                                          "扩展 ZIP 不能超过 32 MB。请缩小扩展包后重新导入。",
+			"Claude Science 登录链接无效":                                      "Claude Science 返回的登录链接无效。请关闭 Claude Science 后重新打开。",
+			"Claude Science 尚未安装或配置":                                     "浏览器没有读到 Claude Science 的配置。请重新启动 Claude Science 后再打开。",
 		}
 		if reason := known[result.Error]; reason != "" {
 			return nil, errors.New(browserOperation(path) + "失败：" + reason)

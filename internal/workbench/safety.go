@@ -1091,7 +1091,8 @@ func (s *Server) runSafetyCheck() (returned error) {
 // failure drill. Lost supervision eventually closes existing guest connections.
 func (s *Server) networkMonitorBlockedLocked() bool {
 	job := s.jobs.snapshot()
-	return s.closing || s.networkPaused || (job.Running && job.Kind != "environment-tools" && job.Kind != "claude-desktop-install")
+	return s.closing || s.networkPaused || (job.Running && job.Kind != "environment-tools" && job.Kind != "claude-desktop-install" &&
+		job.Kind != "claude-science-install" && job.Kind != "claude-science-update")
 }
 
 func (s *Server) monitorSafety() {

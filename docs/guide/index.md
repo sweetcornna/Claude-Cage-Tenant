@@ -37,6 +37,7 @@ Super Cage 把终端、浏览器、编辑器和官方 Claude Desktop 放进同�
 | 添加多个订阅、查看额度、分配或接续会话 | [多账号与额度](accounts.md) |
 | 收藏网页、无痕浏览、清理 Cookie、安装扩展 | [浏览器与网站数据](browser.md) |
 | 在 Super Cage 内使用 Claude Desktop | [Claude Desktop](desktop.md) |
+| 在 x86-64 Linux 环境中使用 Claude Science | [Claude Science](claude-science.md) |
 | 扫码配对手机、审批工具、使用手机远程浏览器 | [手机连接与远程会话](mobile.md) |
 | 部署到无 KVM 的 VPS、连接服务器和管理远端项目 | [云端部署与 SSH](cloud.md) |
 | 在 Super Cage 登录私网，从本机与客机双向使用 SSH | [Tailscale 与 SSH 私网](tailscale.md) |

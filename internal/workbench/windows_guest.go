@@ -62,7 +62,8 @@ type windowsBrowserState struct {
 }
 
 func windowsWorkbenchRoute(path string) bool {
-	if nativeWorkbenchRoute(path) || path == "/api/claude-desktop" {
+	// Claude Science answers "unsupported" here; its actions stay unreachable.
+	if nativeWorkbenchRoute(path) || path == "/api/claude-desktop" || path == "/api/claude-science" {
 		return true
 	}
 	return strings.HasPrefix(path, "/api/claude-desktop/") || strings.HasPrefix(path, "/api/safety/") || strings.HasPrefix(path, "/api/settings/") || strings.HasPrefix(path, "/api/input/")

@@ -66,7 +66,7 @@ func grantTestGate(t *testing.T, gate *cage.EgressGate) {
 }
 
 func TestToolUpdateLeaseHonorsPauseStopAndConfigurationAtRenewal(t *testing.T) {
-	for _, jobKind := range []string{"environment-tools", "claude-desktop-install"} {
+	for _, jobKind := range []string{"environment-tools", "claude-desktop-install", "claude-science-install", "claude-science-update"} {
 		t.Run(jobKind, func(t *testing.T) {
 			for _, condition := range []string{"allowed", "paused", "stop", "configuration-changed"} {
 				t.Run(condition, func(t *testing.T) {
