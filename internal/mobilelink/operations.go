@@ -34,6 +34,29 @@ var epochID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0
 
 var frameQuery = regexp.MustCompile(`^after=([0-9a-f]{32})$`)
 
+// Held reads (?wait=) and the session list's revision (?after=); see the
+// session list protocol in internal/workbench/mobile_cli_http.go.
+var waitSeconds = regexp.MustCompile(`^[1-9][0-9]?$`)
+
+var listRevision = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+func sessionListQuery(query string) bool {
+	fields := strings.Split(query, "&")
+	if len(fields) > 3 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, field := range fields {
+		key, value, _ := strings.Cut(field, "=")
+		valid := key == "archived" && value == "true" || key == "after" && listRevision.MatchString(value) || key == "wait" && waitSeconds.MatchString(value)
+		if !valid || seen[key] {
+			return false
+		}
+		seen[key] = true
+	}
+	return !seen["wait"] || seen["after"]
+}
+
 // FrameAfter accepts a single opaque frame tag in its canonical wire form.
 func FrameAfter(query string) (string, bool) {
 	match := frameQuery.FindStringSubmatch(query)
@@ -47,8 +70,8 @@ func allowed(method string, u *url.URL) bool {
 	if u == nil || u.RawPath != "" || u.Opaque != "" || u.User != nil || u.Fragment != "" || u.ForceQuery {
 		return false
 	}
-	if u.Path == "/api/mobile/cli/sessions" && u.RawQuery == "archived=true" {
-		return method == http.MethodGet
+	if u.Path == "/api/mobile/cli/sessions" && u.RawQuery != "" {
+		return method == http.MethodGet && sessionListQuery(u.RawQuery)
 	}
 	if u.RawQuery == "" {
 		switch u.Path {
@@ -96,14 +119,19 @@ func allowed(method string, u *url.URL) bool {
 		return true
 	}
 	fields := strings.Split(u.RawQuery, "&")
-	if len(fields) > 2 {
+	if len(fields) > 3 {
 		return false
 	}
 	var after string
-	var hasEpoch bool
+	var hasEpoch, hasWait bool
 	for _, field := range fields {
 		key, value, _ := strings.Cut(field, "=")
 		switch key {
+		case "wait":
+			if hasWait || !waitSeconds.MatchString(value) {
+				return false
+			}
+			hasWait = true
 		case "after":
 			if after != "" || value == "" {
 				return false
