@@ -38,7 +38,11 @@ var codexSessionsEncoded = func() string {
 // Codex runs only in Linux guests, so this command is bounded by Linux's
 // 128 KiB argument limit rather than the Claude channel's Windows limit. The
 // helper file is versioned, so a running exec turn keeps its own copy.
-func codexSessionsCommand(mode string) string {
+func codexSessionsCommand(mode string) string { return codexSessionsInvocation(mode, "-") }
+
+// codexSessionsInvocation passes the request as an argument instead of on
+// stdin, which a terminal's Codex needs for itself.
+func codexSessionsInvocation(mode, argument string) string {
 	bootstrap := fmt.Sprintf(`import base64,gzip,os,pathlib,sys,tempfile
 d=pathlib.Path.home()/".local/share/cage/codex-session-code"
 d.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -50,7 +54,7 @@ if not p.exists():
  os.replace(t,p)
 os.execv(sys.executable,[sys.executable,"-I",str(p),*sys.argv[1:]])
 `, sha256.Sum256([]byte(codexSessionsHelper)), codexSessionsEncoded)
-	return shellescape.QuoteCommand([]string{"python3", "-I", "-c", bootstrap, mode, "-"})
+	return shellescape.QuoteCommand([]string{"python3", "-I", "-c", bootstrap, mode, argument})
 }
 
 type codexConversation struct {
@@ -104,6 +108,16 @@ func codexOwner(bound bool, guest string) string {
 		return "external"
 	}
 	return guest
+}
+
+// forgetCodexDesktop drops the guest's report of a desktop lease once this
+// server's terminal for the session has ended; the next look says afresh.
+func (m *mobileCLIStore) forgetCodexDesktop(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.codexOwner[id] == "desktop" {
+		delete(m.codexOwner, id)
+	}
 }
 
 // guestCodexOwner reads the guest's owner; a running thread with no owner
@@ -434,29 +448,11 @@ func (s *Server) codexConversationAction(ctx context.Context, record *mobileReco
 		if err := s.codexConnection(record); err != nil {
 			return err
 		}
-		subject := ""
-		if record.CodexAccount != "" {
-			s.mu.Lock()
-			update := s.guestUpdateRequired
-			s.mu.Unlock()
-			if update {
-				return errGuestUpdateRequired
-			}
-			s.codexAccounts.mu.Lock()
-			list, err := s.loadCodexAccounts()
-			s.codexAccounts.mu.Unlock()
-			if err != nil {
-				return err
-			}
-			a := list.find(record.CodexAccount)
-			if a == nil {
-				return errors.New("这段会话所用的 Codex 账号已移除，无法继续")
-			}
-			if a.Email == "" {
-				return errors.New("这段会话所用的 Codex 账号尚未登录，请在 Codex 账号管理中检查")
-			}
-			subject = a.subject()
+		selection, err := s.pinnedCodexSelection(record)
+		if err != nil {
+			return err
 		}
+		subject := selection.Subject
 		directories, err := s.projectAdditionalDirectories(record.Workspace)
 		if err != nil {
 			return err

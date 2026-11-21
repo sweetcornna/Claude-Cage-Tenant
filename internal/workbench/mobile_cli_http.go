@@ -54,12 +54,14 @@ func (s *Server) mobileOpenTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mobileConnectMu.Lock()
 	defer s.mobileConnectMu.Unlock()
-	view, ok := s.authorizedMobileSession(w, r)
-	if !ok {
+	if view, _, ok := s.authorizedMobileSessionRecord(w, r); !ok {
+		return
+	} else if view.Provider == codexProvider {
+		s.openCodexSession(w, r, view)
 		return
 	}
-	if view.Provider == codexProvider {
-		http.Error(w, "Codex 会话请在手机上继续，暂不支持从手机打开电脑终端", 409)
+	view, ok := s.authorizedMobileSession(w, r)
+	if !ok {
 		return
 	}
 	if !s.isTerminalConversation(view.ID) {
@@ -150,6 +152,42 @@ func (s *Server) mobileOpenTerminal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	jsonReply(w, view)
+}
+
+// openCodexSession opens a Codex session in its desktop terminal. Shipped
+// phones call /open on their own for Claude sessions only, and older desktop
+// UIs never list Codex rows; the phone route keeps refusing.
+func (s *Server) openCodexSession(w http.ResponseWriter, r *http.Request, view mobileSession) {
+	if view.Archived {
+		http.Error(w, "此会话已归档，请先在设置中的已归档会话撤销归档", http.StatusGone)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/mobile/") {
+		http.Error(w, "Codex 会话请在手机上继续，暂不支持从手机打开电脑终端", 409)
+		return
+	}
+	terminal, err := s.createTerminal(terminalRequest{Workspace: view.Workspace, Kind: "codex", sharedID: view.ID, requestContext: r.Context()})
+	if err != nil {
+		switch {
+		case errors.Is(err, errMobileLocked):
+			http.Error(w, err.Error(), http.StatusLocked)
+		case errors.Is(err, errTerminalsClosed):
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		case errors.Is(err, errTerminalStart):
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		default:
+			http.Error(w, err.Error(), http.StatusConflict)
+		}
+		return
+	}
+	s.mobileCLI.mu.Lock()
+	record, err := s.mobileCLI.record(s.profile, view.ID)
+	if err == nil {
+		view = record.snapshot()
+	}
+	s.mobileCLI.mu.Unlock()
+	view.DesktopTerminalID, view.Owner, view.Running = terminal.id, "desktop", true
 	jsonReply(w, view)
 }
 

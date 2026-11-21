@@ -465,6 +465,35 @@ func pickCodexAccount(list codexAccountList, active map[string]int, logins map[s
 	return best
 }
 
+// pinnedCodexSelection is the account a Codex session started with; it never
+// changes. Opening the session on the desktop and sending from the phone
+// accept and refuse the same accounts.
+func (s *Server) pinnedCodexSelection(record *mobileRecord) (codexSelection, error) {
+	if record.CodexAccount == "" {
+		return codexSelection{}, nil
+	}
+	s.mu.Lock()
+	update := s.guestUpdateRequired
+	s.mu.Unlock()
+	if update {
+		return codexSelection{}, errGuestUpdateRequired
+	}
+	s.codexAccounts.mu.Lock()
+	list, err := s.loadCodexAccounts()
+	s.codexAccounts.mu.Unlock()
+	if err != nil {
+		return codexSelection{}, err
+	}
+	a := list.find(record.CodexAccount)
+	if a == nil {
+		return codexSelection{}, errors.New("这段会话所用的 Codex 账号已移除，无法继续")
+	}
+	if a.Email == "" {
+		return codexSelection{}, errors.New("这段会话所用的 Codex 账号尚未登录，请在 Codex 账号管理中检查")
+	}
+	return codexSelection{ID: a.ID, GuestID: a.ID, Subject: a.subject()}, nil
+}
+
 func (s *Server) noteCodexSelection(id, workspace string) {
 	m := &s.codexAccounts
 	m.mu.Lock()

@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -67,8 +68,11 @@ func newCodexFixture(t *testing.T) (*Server, string, *codexFakeGuest) {
 	if err := os.MkdirAll(filepath.Dir(helper), 0700); err != nil {
 		t.Fatal(err)
 	}
-	code := "import json,os,sys\nmode=sys.argv[1]\nrequest=json.load(sys.stdin)\nhome=os.environ['HOME']\n" +
+	// A terminal's tui-launch gets its request as an argument and stays, as
+	// Codex would, until its terminal goes.
+	code := "import json,os,sys\nmode=sys.argv[1]\nrequest=json.load(sys.stdin) if sys.argv[2]=='-' else json.loads(sys.argv[2])\nhome=os.environ['HOME']\n" +
 		"open(os.path.join(home,'calls.jsonl'),'a').write(json.dumps({'mode':mode,'request':request})+'\\n')\n" +
+		"if mode=='tui-launch':\n print('fake codex tui',flush=True)\n sys.stdin.read()\n sys.exit(0)\n" +
 		"print(json.dumps(json.load(open(os.path.join(home,'replies.json'))).get(mode,{'error':'unexpected'})))\n"
 	if err := os.WriteFile(helper, []byte(code), 0600); err != nil {
 		t.Fatal(err)
@@ -516,6 +520,222 @@ func TestCodexDesktopListingIsOptIn(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("held list did not answer")
 	}
+}
+
+func waitCodexCalls(t *testing.T, guest *codexFakeGuest, mode string, count int) []map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		calls := guest.calls(mode)
+		if len(calls) >= count {
+			return calls
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d %s calls, want %d", len(calls), mode, count)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func listedCodexSession(t *testing.T, s *Server, guest *codexFakeGuest, project, title string) mobileSummary {
+	t.Helper()
+	thread := uuid.NewString()
+	guest.reply("discover", []map[string]any{{"thread_id": thread, "account": "default", "workspace": guestPath(project), "title": title, "updated_at": 1763600000.0, "owner": ""}})
+	answer, _ := desktopCodexList(t, s, "?providers=claude,codex")
+	for _, row := range answer.Sessions {
+		if row.Title == title {
+			return row
+		}
+	}
+	t.Fatal("session not listed", answer)
+	return mobileSummary{}
+}
+
+// A Codex row opens on the desktop as a Codex terminal bound to the session.
+func TestCodexDesktopOpenBindsATerminal(t *testing.T) {
+	s, project, guest := newCodexFixture(t)
+	t.Cleanup(s.terminals.close)
+	s.projectShares = map[string]*projectShare{project: {done: make(chan struct{})}}
+	row := listedCodexSession(t, s, guest, project, "打开我")
+	record, _ := s.mobileCLI.record(s.profile, row.ID)
+	guest.reply("view", map[string]any{"thread_id": record.CLIID, "account": "default", "workspace": guestPath(project), "turns": []any{}, "can_send": true, "owner": "",
+		"cli": map[string]any{"installed": true, "complete": true, "version": "0.171.0", "resume": true, "resume_no_daemon": true}})
+	path := "/api/cli/sessions/" + row.ID + "/open"
+	w := request(s, "POST", path, s.origin, "{}", true)
+	var opened mobileSession
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &opened) != nil || opened.DesktopTerminalID == "" || opened.Owner != "desktop" || opened.TerminalAvailable {
+		t.Fatal("open", w.Code, w.Body.String())
+	}
+	terminal := s.terminals.get(opened.DesktopTerminalID)
+	if summary := terminal.summary(); summary["kind"] != "codex" || summary["cli_session_id"] != row.ID || summary["cli_session_provider"] != codexProvider {
+		t.Fatal("terminal", summary)
+	}
+	if views := guest.calls("view"); len(views) != 1 || views[0]["probe"] != true || views[0]["thread"] != record.CLIID {
+		t.Fatal("the guest was not asked who owns the thread", views)
+	}
+	record, _ = s.mobileCLI.record(s.profile, row.ID)
+	launch := waitCodexCalls(t, guest, "tui-launch", 1)[0]
+	if launch["connection"] != record.Connection || !mobileID(record.Connection) || launch["lease"] != record.CodexLease || launch["thread"] != record.CLIID ||
+		launch["account"] != "default" || launch["cwd"] != guestPath(project) || record.TerminalID != terminal.id {
+		t.Fatalf("launch %#v record %#v", launch, record)
+	}
+	if answer, _ := desktopCodexList(t, s, "?providers=claude,codex"); answer.Capabilities.CodexCLI == nil || answer.Capabilities.CodexCLI.Version != "0.171.0" {
+		t.Fatal("probe not reported", answer.Capabilities)
+	}
+	// Opening again shows the same terminal.
+	if again := request(s, "POST", path, s.origin, "{}", true); again.Code != 200 || !strings.Contains(again.Body.String(), terminal.id) || len(s.terminals.snapshot()) != 1 {
+		t.Fatal("second open", again.Code, again.Body.String())
+	}
+	if views := guest.calls("view"); len(views) != 1 {
+		t.Fatal("a second open asked the guest again", views)
+	}
+	// The phone route still refuses, and the phone cannot write meanwhile.
+	if w := request(s, "POST", "/api/mobile/cli/sessions/"+row.ID+"/open", s.origin, "{}", true); w.Code != 409 {
+		t.Fatal("phone open", w.Code, w.Body.String())
+	}
+	body, _ := json.Marshal(map[string]string{"request_id": uuid.NewString(), "text": "手机"})
+	if w := request(s, "POST", "/api/mobile/cli/sessions/"+row.ID+"/messages", s.origin, string(body), true); w.Code != 409 || len(guest.calls("send")) != 0 {
+		t.Fatal("phone message", w.Code, w.Body.String())
+	}
+
+	// Refusals answer the open instead of starting a terminal.
+	for owner, want := range map[string]error{"phone": errCodexPhoneRunning, "external": errCodexOtherProcess, "desktop": errCodexOtherTerminal} {
+		other := listedCodexSession(t, s, guest, project, "被占用 "+owner)
+		guest.reply("view", map[string]any{"thread_id": "", "turns": []any{}, "owner": owner, "running": true})
+		if w := request(s, "POST", "/api/cli/sessions/"+other.ID+"/open", s.origin, "{}", true); w.Code != 409 || !strings.Contains(w.Body.String(), want.Error()) {
+			t.Fatal(owner, w.Code, w.Body.String())
+		}
+	}
+	if len(s.terminals.snapshot()) != 1 {
+		t.Fatal("a refused open started a terminal")
+	}
+	guest.reply("view", map[string]any{"thread_id": "", "turns": []any{}, "can_send": true})
+	managed := listedCodexSession(t, s, guest, project, "账号")
+	s.mobileCLI.mu.Lock()
+	pinned, _ := s.mobileCLI.record(s.profile, managed.ID)
+	pinned.CodexAccount = strings.Repeat("ab", 12)
+	_ = writePrivate(mobileRecordPath(s.profile, pinned.ID), pinned)
+	s.mobileCLI.mu.Unlock()
+	if w := request(s, "POST", "/api/cli/sessions/"+managed.ID+"/open", s.origin, "{}", true); w.Code != 409 || !strings.Contains(w.Body.String(), "已移除") {
+		t.Fatal("removed account", w.Code, w.Body.String())
+	}
+	if err := s.saveCodexAccounts(codexAccountList{Accounts: []codexAccount{{ID: pinned.CodexAccount, Enabled: true, Status: "signed_out"}}, Scheduling: (claudeScheduling{}).defaults()}); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(s, "POST", "/api/cli/sessions/"+managed.ID+"/open", s.origin, "{}", true); w.Code != 409 || !strings.Contains(w.Body.String(), "尚未登录") {
+		t.Fatal("signed-out account", w.Code, w.Body.String())
+	}
+	s.preferences.CodexTerminalCommand = "codex --search"
+	if w := request(s, "POST", "/api/cli/sessions/"+managed.ID+"/open", s.origin, "{}", true); w.Code != 409 || !strings.Contains(w.Body.String(), errCodexCommand.Error()) {
+		t.Fatal("custom command", w.Code, w.Body.String())
+	}
+	s.preferences.CodexTerminalCommand = ""
+	if w := request(s, "POST", "/api/cli/sessions/"+managed.ID+"/archive", s.origin, "{}", true); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if w := request(s, "POST", "/api/cli/sessions/"+managed.ID+"/open", s.origin, "{}", true); w.Code != http.StatusGone {
+		t.Fatal("archived", w.Code, w.Body.String())
+	}
+}
+
+// The menu's Codex entry makes a session for a client that lists them.
+func TestCodexMenuTerminalBecomesASession(t *testing.T) {
+	s, project, guest := newCodexFixture(t)
+	t.Cleanup(s.terminals.close)
+	s.projectShares = map[string]*projectShare{project: {done: make(chan struct{})}}
+	body, _ := json.Marshal(map[string]string{"kind": "codex", "workspace": project})
+	open := func(query string) map[string]any {
+		w := request(s, "POST", "/api/terminals"+query, s.origin, string(body), true)
+		var summary map[string]any
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &summary) != nil {
+			t.Fatal(query, w.Code, w.Body.String())
+		}
+		return summary
+	}
+	if plain := open(""); plain["cli_session_id"] != "" || plain["cli_session_provider"] != nil {
+		t.Fatal("an older client got a session", plain)
+	}
+	session := open("?providers=claude,codex")
+	id, _ := session["cli_session_id"].(string)
+	record, err := s.mobileCLI.record(s.profile, id)
+	if err != nil || session["cli_session_provider"] != codexProvider || !record.codex() || !record.Terminal || record.Resume || !mobileID(record.Connection) ||
+		record.TerminalID != session["id"] || record.CodexLease == "" || record.GuestWorkspace != guestPath(project) {
+		t.Fatalf("menu session %v %#v %v", session, record, err)
+	}
+	launch := waitCodexCalls(t, guest, "tui-launch", 1)[0]
+	if launch["thread"] != "" || launch["connection"] != record.Connection || launch["lease"] != record.CodexLease {
+		t.Fatal("launch", launch)
+	}
+	if views := guest.calls("view"); len(views) != 0 {
+		t.Fatal("a new session asked the guest first", views)
+	}
+	if answer, _ := desktopCodexList(t, s, "?providers=claude,codex"); !slices.ContainsFunc(answer.Sessions, func(row mobileSummary) bool { return row.ID == id && row.Owner == "desktop" }) {
+		t.Fatal("new session not listed as the desktop's", answer.Sessions)
+	}
+	s.preferences.CodexTerminalCommand = "codex --search"
+	if custom := open("?providers=claude,codex"); custom["cli_session_id"] != "" {
+		t.Fatal("a custom command made a session", custom)
+	}
+	if w := request(s, "POST", "/api/terminals?providers=gemini", s.origin, string(body), true); w.Code != 400 {
+		t.Fatal(w.Code)
+	}
+}
+
+// The terminal script execs all the way into the helper, so the terminal's
+// process is the helper's (later Codex's) and its status is theirs.
+func TestCodexSessionScriptExecsIntoTheHelper(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(t.TempDir(), "project with ' quote")
+	if err := os.Mkdir(work, 0700); err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(home, ".local/share/cage/codex-session-code", fmt.Sprintf("%x.py", sha256.Sum256([]byte(codexSessionsHelper))))
+	if err := os.MkdirAll(filepath.Dir(helper), 0700); err != nil {
+		t.Fatal(err)
+	}
+	stand := "import json,os,sys\nopen(os.path.join(os.environ['HOME'],'argv'),'w').write(json.dumps({'argv':sys.argv[1:],'pid':os.getpid(),'cwd':os.getcwd()}))\nsys.exit(json.loads(sys.argv[2])['exit'])\n"
+	if err := os.WriteFile(helper, []byte(stand), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, code := range []int{0, 75, 78} {
+		payload := fmt.Sprintf("{\"exit\":%d,\"cwd\":\"it's\"}", code)
+		script := codexSessionTerminalScript(work, payload)
+		if len(script) > 96<<10 {
+			t.Fatalf("terminal script uses %d bytes", len(script))
+		}
+		cmd := exec.Command("bash", "-c", script)
+		cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}
+		cmd.Stdin = strings.NewReader("printf shell > shell-result\nexit\n")
+		err := cmd.Run()
+		var exit *exec.ExitError
+		if code != 0 && (!errors.As(err, &exit) || exit.ExitCode() != code) || code == 0 && err != nil {
+			t.Fatalf("status %d: %v", code, err)
+		}
+		var seen struct {
+			Argv []string
+			PID  int
+			Cwd  string
+		}
+		data, _ := os.ReadFile(filepath.Join(home, "argv"))
+		if json.Unmarshal(data, &seen) != nil || len(seen.Argv) != 2 || seen.Argv[0] != "tui-launch" || seen.Argv[1] != payload || seen.PID != cmd.Process.Pid {
+			t.Fatalf("helper saw %s (shell %d)", data, cmd.Process.Pid)
+		}
+		if resolved, _ := filepath.EvalSymlinks(seen.Cwd); resolved != mustEval(t, work) {
+			t.Fatal("cwd", seen.Cwd)
+		}
+		if _, err := os.Stat(filepath.Join(work, "shell-result")); !os.IsNotExist(err) {
+			t.Fatal("a shell ran after the helper")
+		}
+	}
+}
+
+func mustEval(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
 }
 
 type httpResponse struct {

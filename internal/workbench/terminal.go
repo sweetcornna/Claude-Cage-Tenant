@@ -78,6 +78,16 @@ func (s *Server) newTerminal(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &input) {
 		return
 	}
+	// A client that lists Codex sessions (?providers=claude,codex) gets a
+	// session from the menu's Codex entry; older clients keep plain terminals.
+	if values := r.URL.Query()["providers"]; values != nil {
+		kinds, ok := sessionListFilter(false, values)
+		if !ok {
+			http.Error(w, "会话类型无效", http.StatusBadRequest)
+			return
+		}
+		input.codexSession = kinds.codex
+	}
 	session, err := s.createTerminal(input)
 	if err != nil {
 		terminalFailure(w, err)
@@ -114,7 +124,14 @@ func (s *Server) closeTerminal(w http.ResponseWriter, r *http.Request) {
 // any other terminal ends and is removed.
 func (s *Server) closeTerminalID(id string) error {
 	if terminal := s.terminals.get(id); terminal != nil {
-		if shared, _ := terminal.summary()["cli_session_id"].(string); shared != "" {
+		summary := terminal.summary()
+		if shared, _ := summary["cli_session_id"].(string); shared != "" {
+			// A bound Codex terminal ends with its Codex; closing what is left
+			// of it only removes the tab. Closing a live one archives.
+			if summary["kind"] == "codex" && summary["closed"] == true {
+				s.terminals.remove(id)
+				return nil
+			}
 			return s.setSessionArchived(shared, true, nil)
 		}
 	}
