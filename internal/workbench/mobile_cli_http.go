@@ -323,7 +323,6 @@ func (s *Server) awaitSessionList(ctx context.Context, deadline time.Time, after
 	defer slow.Stop()
 	end := time.NewTimer(time.Until(deadline))
 	defer end.Stop()
-	epoch, unlocked := s.account.access()
 	looks := 0
 	key := strings.Join(slices.Sorted(slices.Values(paths)), "\x00")
 	run := func() (context.Context, context.CancelFunc) { return s.discoveryContext(ctx) }
@@ -343,18 +342,13 @@ func (s *Server) awaitSessionList(ctx context.Context, deadline time.Time, after
 			return sessionListAnswer{}, ctx.Err()
 		case <-end.C:
 			return s.sessionListAnswer(granted(), archived, phone, claudeErr, codexErr)
-		case <-s.lifetimeContext().Done():
-			// The server is closing; answer now instead of delaying it.
-			return s.sessionListAnswer(granted(), archived, phone, claudeErr, codexErr)
 		case <-changed:
 			claude, arrival = true, changedAt
 		case <-slow.C:
 			claude, codex = !watching, phone
 		case <-host.C:
-			// A lock, unlock or project change needs a new observation.
-			if current, now := s.account.access(); current != epoch || now != unlocked {
-				epoch, unlocked, claude, codex = current, now, true, phone
-			}
+			// A project change needs a new observation. Locking the account
+			// or closing the server ends the request context instead.
 			if looks++; looks%4 == 0 {
 				if current, err := s.projectPaths(); err == nil && strings.Join(slices.Sorted(slices.Values(current)), "\x00") != key {
 					paths, key = current, strings.Join(slices.Sorted(slices.Values(current)), "\x00")
@@ -630,11 +624,9 @@ func (s *Server) mobileSessionView(w http.ResponseWriter, r *http.Request) {
 		unchanged := func() bool { return revision == view.Revision && (epoch == "" || epoch == view.Generation) }
 		// Hold the request while the session is unchanged; no lock is held
 		// while waiting, and every look is a full authorized read.
-		held, release := context.WithCancel(r.Context())
-		defer release()
-		// A closing server answers held reads at once instead of waiting.
-		defer context.AfterFunc(s.lifetimeContext(), release)()
-		for deadline := time.Now().Add(wait); unchanged() && s.awaitSessionView(held, view, deadline); {
+		// The request context ends with the server, the account lock and
+		// the phone link, which ends a held read too.
+		for deadline := time.Now().Add(wait); unchanged() && s.awaitSessionView(r.Context(), view, deadline); {
 			if view, ok = s.authorizedMobileSession(w, r); !ok {
 				return
 			}

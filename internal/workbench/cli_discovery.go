@@ -313,6 +313,7 @@ func (s *Server) subscribeGuestChanges() (changes func() (<-chan struct{}, time.
 // differs from the last one the host saw, and wakes the held requests.
 func (s *Server) watchGuestSessions(ctx context.Context) {
 	d := &s.cliDiscovery
+	lost := 0
 	for ctx.Err() == nil {
 		d.mu.Lock()
 		input, known := d.lastInput, d.lastHash
@@ -339,7 +340,7 @@ func (s *Server) watchGuestSessions(ctx context.Context) {
 		}
 		if outcome != residentAnswered || json.Unmarshal(reply, &answer) != nil || answer.Hash == "" {
 			pause := guestWatchRetry
-			if outcome == residentLost {
+			if lost++; outcome == residentLost && lost == 1 {
 				pause = 250 * time.Millisecond // a successor starts on the next request
 			} else {
 				d.setWatching(false)
@@ -350,6 +351,7 @@ func (s *Server) watchGuestSessions(ctx context.Context) {
 			}
 			continue
 		}
+		lost = 0
 		if answer.Changed {
 			d.mu.Lock()
 			if d.lastHash == known {
