@@ -1,7 +1,14 @@
 import React, { useEffect, useRef } from "react";
-import { Folder, FolderOpen, Globe2, LoaderCircle, LogOut, Monitor, Plus, Settings, Sparkles } from "lucide-react";
+import { Folder, FolderOpen, Globe2, LoaderCircle, LogOut, Monitor, Plus, Power, Settings, Sparkles, SquarePen, SquareTerminal } from "lucide-react";
+import { Logo } from "./doodles";
 import { InlineSelect } from "./inline-select";
 import { SessionRow, sortSessions } from "./session-row";
+
+export const workspaceCoreTools = [
+  {id:"terminal", name:"终端", icon:SquareTerminal},
+  {id:"files", name:"文件", icon:Folder},
+  {id:"environment", name:"环境", icon:Power},
+];
 
 export const workspaceTools = [
   {id:"browser", name:"浏览器", icon:Globe2},
@@ -11,7 +18,7 @@ export const workspaceTools = [
 
 export function CodeNavigation({catalog, project, sessions, current, creating, onProject, onSession, onNew, onAction, formatTime}) {
   if (!catalog) return <p className="nav-note" role="status">正在读取项目…</p>;
-  if (!project) return <p className="nav-note">请先在电脑 Cage 打开项目。</p>;
+  if (!project) return <p className="nav-note">请先在电脑 Super Cage 打开项目。</p>;
   return <section className="code-navigation" aria-label="Claude Code 项目和会话">
     <div className="project-field">
       <InlineSelect label="选择项目" icon={<FolderOpen size={16} />} value={project.path}
@@ -23,14 +30,14 @@ export function CodeNavigation({catalog, project, sessions, current, creating, o
       {creating ? <LoaderCircle size={15} className="spin" /> : <Plus size={15} />}新建会话</button></div>
     {sessions.length ? <ul className="session-list">{sessions.map(s => <SessionRow key={s.id} session={s} current={current === s.id}
       disabled={creating} onSelect={() => onSession(s.id)} onAction={onAction} detail={formatTime(s.updated_at)}/>)}</ul>
-      : <p className="nav-note">{catalog.ready ? "这个项目还没有会话。" : "请先在电脑上启动 Cage。"}</p>}
+      : <p className="nav-note">{catalog.ready ? "这个项目还没有会话。" : "请先启动环境。"}</p>}
   </section>;
 }
 
-export function ProjectTree({catalog, projectPath, sessionID, expanded, toggle, creating, onNew, onSession, onAction, emptyHint = "请在电脑 Cage 打开项目。"}) {
+export function ProjectTree({catalog, projectPath, sessionID, expanded, toggle, creating, onNew, onSession, onAction, emptyHint = "请在电脑 Super Cage 打开项目。"}) {
   const projects = catalog?.projects || [];
-  return <section className="project-tree" aria-label="Claude Code 项目和会话">
-    <h2>Claude Code</h2>
+  return <section className="project-tree" aria-label="项目和会话">
+    <h2>对话</h2>
     {catalog?.shared_sessions === false && <p className="nav-note">当前启动配置使用独立移动会话。共享电脑终端需要使用 claude 启动命令。</p>}
     {!catalog ? <p className="nav-note" role="status">正在读取项目…</p> :
       !projects.length ? <p className="nav-note">{emptyHint}</p> : projects.map((project, index) => {
@@ -60,7 +67,7 @@ export function ProjectTree({catalog, projectPath, sessionID, expanded, toggle, 
   </section>;
 }
 
-export function WorkspaceDrawer({open, active, name, tools = workspaceTools, onClose, onTool, onExit, onSettings, nativePhone, children}) {
+export function WorkspaceDrawer({open, active, name, tools = workspaceTools, coreTools = workspaceCoreTools, envTone, onHome, onClose, onTool, onExit, onSettings, nativePhone, children}) {
   const panel = useRef(null);
   useEffect(() => {
     const dialog = panel.current;
@@ -83,12 +90,13 @@ export function WorkspaceDrawer({open, active, name, tools = workspaceTools, onC
       const rect = panel.current.getBoundingClientRect();
       if (event.clientX < rect.left || event.clientX >= rect.right || event.clientY < rect.top || event.clientY >= rect.bottom) onClose();
     }}>
-    <header className="drawer-heading"><Monitor size={18} /><h2>{name || "远程工作台"}</h2></header>
+    <header className="drawer-heading"><Logo className="drawer-logo" /><div className="drawer-brand"><h2>Super Cage</h2><small>{name || "远程工作台"}</small></div></header>
     <div className="drawer-content">
-      {tools.length > 0 && <nav className="workspace-tools" aria-label="远程工具">{tools.map(({id, name:toolName, icon:Icon}) =>
+      <button type="button" className="drawer-new" onClick={onHome}><SquarePen size={18} />新对话</button>
+      <nav className="workspace-tools" aria-label="工具">{[...coreTools, ...tools].map(({id, name:toolName, icon:Icon}) =>
         <button key={id} type="button" className="tool-link" aria-current={id === active ? "page" : undefined} onClick={() => onTool(id)}>
-          <Icon size={19} /><span>{toolName}</span>
-        </button>)}</nav>}
+          <Icon size={19} /><span>{toolName}</span>{id === "environment" && envTone && <i className={"env-dot " + envTone} />}
+        </button>)}</nav>
       {children}
     </div>
     <footer className="drawer-footer"><button className="drawer-exit" type="button" onClick={onSettings}><Settings size={18}/>设置</button>

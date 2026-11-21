@@ -17,8 +17,9 @@ export function SessionAccount({ id, request, onChanged, compact = false }) {
       try {
         const result=await current.current.request(path,{body:{action:"inspect"}});
         if(live) {
-          setView(result); setTarget(previous=>result.candidates.some(a=>a.id===previous)?previous:(result.candidates[0]?.id || ""));
-          const next=result.session.desktop_terminal_id;
+          const candidates=result.candidates || [];
+          setView(result); setTarget(previous=>candidates.some(a=>a.id===previous)?previous:(candidates[0]?.id || ""));
+          const next=result.session?.desktop_terminal_id;
           if(terminalID.current && next && next!==terminalID.current)current.current.onChanged?.(result.session);
           terminalID.current=next;
         }

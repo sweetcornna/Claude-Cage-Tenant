@@ -5,6 +5,8 @@ import { resolve } from "node:path";
 
 const ui = fileURLToPath(new URL("../ui/", import.meta.url));
 const require = createRequire(new URL("../ui/package.json", import.meta.url));
+// The phone terminal uses the same IME-patched xterm bundle as the workbench.
+await import(pathToFileURL(resolve(ui, "scripts/prepare-xterm.mjs")).href);
 const { build } = await import(pathToFileURL(require.resolve("vite")));
 const { default: react } = await import(pathToFileURL(require.resolve("@vitejs/plugin-react")));
 await build({

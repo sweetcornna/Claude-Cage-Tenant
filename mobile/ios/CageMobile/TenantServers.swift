@@ -26,6 +26,14 @@ struct ServerVM: Decodable, Equatable, Identifiable {
         default: return "已停止"
         }
     }
+    var stateTone: Color {
+        switch state {
+        case "ready": return CageStyle.ok
+        case "starting": return CageStyle.clayInk
+        case "error": return CageStyle.danger
+        default: return CageStyle.ink2
+        }
+    }
 }
 
 /// Saved server accounts, with the password when the user chose to keep it.
@@ -152,7 +160,7 @@ final class ServerModel: ObservableObject {
             DispatchQueue.main.async {
                 guard self.finish(attempt), self.current == account else {return}
                 switch result {
-                case .success(let list): self.vms = list; self.status = list.isEmpty ? "这个账户还没有虚拟机。" : ""
+                case .success(let list): self.vms = list; self.status = ""
                 case .failure(let error): self.status = error.localizedDescription
                 }
             }
@@ -247,17 +255,19 @@ struct ServerSheet: View {
         }
         .interactiveDismissDisabled(model.opening != nil)
         .presentationDetents([.large]).presentationDragIndicator(.visible)
+        .presentationBackground(CageStyle.paper)
     }
 
     private var signIn: some View {
         Form {
             Section {
-                VStack(spacing: 8) {
-                    Image(systemName: "server.rack").font(.system(size: 40, weight: .light))
-                    Text("连接服务器").font(.title2.bold())
-                    Text("登录多租户 Cage 服务器的门户账户，打开你的虚拟机。").font(.subheadline)
-                        .foregroundStyle(.secondary).multilineTextAlignment(.center)
-                }.frame(maxWidth: .infinity).padding(.vertical, 8)
+                VStack(spacing: 10) {
+                    Image("DoodleServer").resizable().scaledToFit().frame(height: model.accounts.isEmpty ? 110 : 72)
+                        .accessibilityHidden(true)
+                    Text("连接服务器").font(CageStyle.serif(26)).foregroundStyle(CageStyle.ink).accessibilityAddTraits(.isHeader)
+                    Text(model.accounts.isEmpty ? "还没有服务器。添加一个，随时回到你的工作区。" : "登录 Super Cage 服务器的门户账户，打开你的虚拟机。")
+                        .font(.subheadline).foregroundStyle(CageStyle.ink2).multilineTextAlignment(.center)
+                }.frame(maxWidth: .infinity).padding(.vertical, 4)
             }.listRowBackground(Color.clear)
             if !model.accounts.isEmpty {
                 Section("已保存的服务器") {
@@ -268,34 +278,44 @@ struct ServerSheet: View {
                                 model.status = "请输入 " + account.user + " 的密码。"
                             }
                         } label: {
-                            HStack {
-                                Image(systemName: "server.rack")
-                                VStack(alignment: .leading) {Text(account.user); Text(account.host).font(.caption).foregroundStyle(.secondary)}
-                                Spacer(); Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                            }.contentShape(Rectangle())
+                            HStack(spacing: 12) {
+                                Image(systemName: "server.rack").foregroundStyle(CageStyle.ink2).frame(width: 26).accessibilityHidden(true)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(account.user).foregroundStyle(CageStyle.ink)
+                                    Text(account.host).font(.caption).foregroundStyle(CageStyle.ink2)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(CageStyle.ink2)
+                            }.frame(minHeight: 48).contentShape(Rectangle())
                         }.disabled(model.busy)
                         .swipeActions {Button("忘记", role: .destructive) {forgetting = account}}
                         .contextMenu {Button("忘记这台服务器", role: .destructive) {forgetting = account}}
                     }
-                }
+                }.listRowBackground(CageStyle.surface)
             }
             Section(model.accounts.isEmpty ? "服务器账户" : "登录其他账户") {
-                TextField("服务器地址，例如 https://cage.example.org", text: $portal)
+                TextField(String("服务器地址，例如 https://cage.example.org"), text: $portal)
                     .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                     .textContentType(.URL)
                 TextField("账户", text: $user).textInputAutocapitalization(.never).autocorrectionDisabled()
                     .textContentType(.username)
                 SecureField("密码", text: $password).textContentType(.password)
-                Toggle("在这台手机上记住密码", isOn: $remember)
+                Toggle("在这台手机上记住密码", isOn: $remember).tint(CageStyle.clay)
+            }.listRowBackground(CageStyle.surface)
+            Section {
                 Button {
                     model.signIn(portal: portal, user: user, password: password, remember: remember)
                     password = ""
                 } label: {
-                    HStack {Spacer(); if model.busy {ProgressView()} else {Text("登录").bold()}; Spacer()}
-                }.disabled(model.busy || portal.trimmingCharacters(in: .whitespaces).isEmpty || user.isEmpty || password.isEmpty)
+                    ActionLabel(title: model.busy ? "" : "登录").overlay {if model.busy {ProgressView().tint(CageStyle.paper)}}
+                }.buttonStyle(CageButtonStyle())
+                    .disabled(model.busy || portal.trimmingCharacters(in: .whitespaces).isEmpty || user.isEmpty || password.isEmpty)
+            }.listRowBackground(Color.clear).listRowInsets(EdgeInsets())
+            if !model.status.isEmpty {
+                Section {Text(model.status).font(.footnote).foregroundStyle(CageStyle.ink2)}.listRowBackground(Color.clear)
             }
-            if !model.status.isEmpty {Section {Text(model.status).font(.footnote).foregroundStyle(.secondary)}}
         }
+        .cageForm()
         .navigationTitle("服务器")
         .alert("忘记这台服务器？", isPresented: Binding(get: {forgetting != nil}, set: {if !$0 {forgetting = nil}}), presenting: forgetting) {account in
             Button("取消", role: .cancel) {}
@@ -306,34 +326,46 @@ struct ServerSheet: View {
     private func machines(_ account: ServerAccount) -> some View {
         List {
             Section {
+                if model.vms.isEmpty && !model.busy {
+                    VStack(spacing: 10) {
+                        Image("DoodleTerminal").resizable().scaledToFit().frame(height: 84).accessibilityHidden(true)
+                        Text("还没有虚拟机。新建一台，开始你的工作区。").font(.subheadline)
+                            .foregroundStyle(CageStyle.ink2).multilineTextAlignment(.center)
+                    }.frame(maxWidth: .infinity).padding(.vertical, 12)
+                }
                 ForEach(model.vms) {vm in
                     let open = connections.devices.contains {$0.id == model.deviceID(account, vm)}
                     Button {model.open(vm)} label: {
                         HStack(spacing: 12) {
-                            Image(systemName: "shippingbox").font(.title3).frame(width: 28)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(vm.name).font(.body.weight(.medium))
-                                Text([vm.system_label, open ? "已打开" : vm.stateLabel].compactMap {$0}.joined(separator: " · "))
-                                    .font(.caption).foregroundStyle(vm.state == "error" ? .red : .secondary)
+                            Image("DoodleTerminal").resizable().scaledToFit().frame(width: 36, height: 28).accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(vm.name).font(.body.weight(.medium)).foregroundStyle(CageStyle.ink)
+                                if let label = vm.system_label, !label.isEmpty {
+                                    Text(label).font(.caption).foregroundStyle(CageStyle.ink2)
+                                }
                             }
                             Spacer()
-                            if model.opening?.id == vm.id {ProgressView()} else {Image(systemName: "chevron.right").foregroundStyle(.tertiary)}
-                        }.frame(minHeight: 48).contentShape(Rectangle())
+                            if model.opening?.id == vm.id {ProgressView()}
+                            else {StateChip(text: open ? "已打开" : vm.stateLabel, tone: open ? CageStyle.clayInk : vm.stateTone)}
+                        }.frame(minHeight: 52).contentShape(Rectangle())
                     }.disabled(model.busy)
                 }
-                Button {newName = ""; naming = true} label: {Label("新建虚拟机", systemImage: "plus")}.disabled(model.busy)
+                Button {newName = ""; naming = true} label: {
+                    Label("新建虚拟机", systemImage: "plus").font(.body.weight(.medium)).foregroundStyle(CageStyle.clayInk)
+                }.disabled(model.busy)
             } header: {
                 Text(account.user + " @ " + account.host)
             } footer: {
                 Text("打开的虚拟机显示 Claude Code 项目、会话和工具审批。远程浏览器与 Claude Desktop 需要扫码连接电脑。")
-            }
+            }.listRowBackground(CageStyle.surface)
             if !model.status.isEmpty {
                 Section {
-                    Text(model.status).font(.footnote).foregroundStyle(.secondary)
-                    if model.opening != nil {Button("取消打开", role: .cancel, action: model.cancelOpening)}
-                }
+                    Text(model.status).font(.footnote).foregroundStyle(CageStyle.ink2)
+                    if model.opening != nil {Button("取消打开", role: .cancel, action: model.cancelOpening).foregroundStyle(CageStyle.clayInk)}
+                }.listRowBackground(Color.clear)
             }
         }
+        .cageForm()
         .refreshable {model.refresh()}
         .navigationTitle("虚拟机")
         .toolbar {

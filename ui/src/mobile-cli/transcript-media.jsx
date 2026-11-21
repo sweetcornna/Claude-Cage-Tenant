@@ -79,7 +79,7 @@ export function ProjectMedia({ reference, label, sessionID }) {
         if (!controller.signal.aborted)
           setError(
             e.status === 404
-              ? "未找到媒体文件，或电脑端 Cage 需要更新。"
+              ? "未找到媒体文件，或电脑端 Super Cage 需要更新。"
               : e.message,
           );
       }

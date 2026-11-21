@@ -6,6 +6,11 @@ import (
 )
 
 func (s *Server) launch(w http.ResponseWriter, kind string, run func() error) {
+	s.launchJob(w, kind, run, func(w http.ResponseWriter, job Job) { jsonReply(w, job) })
+}
+
+// launchJob shares admission errors between the desktop and phone replies.
+func (s *Server) launchJob(w http.ResponseWriter, kind string, run func() error, reply func(http.ResponseWriter, Job)) {
 	job, err := s.submitJob(kind, run)
 	switch {
 	case errors.Is(err, errJobsClosed):
@@ -15,6 +20,6 @@ func (s *Server) launch(w http.ResponseWriter, kind string, run func() error) {
 	case err != nil:
 		requestError(w, err)
 	default:
-		jsonReply(w, job)
+		reply(w, job)
 	}
 }

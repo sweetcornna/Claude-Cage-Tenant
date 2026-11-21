@@ -513,7 +513,7 @@ try {
   const bookmarks = page.getByRole("button",{name:"收藏夹",exact:true});
   const panel = page.getByRole("region",{name:"电脑收藏夹",exact:true});
   await bookmarks.click();
-  await panel.getByText("这台电脑尚不支持共享收藏夹，请更新电脑端 Cage。").waitFor();
+  await panel.getByText("这台电脑尚不支持共享收藏夹，请更新电脑端 Super Cage。").waitFor();
   favoritesAvailable = true;
   await panel.getByRole("button",{name:"刷新收藏夹"}).click();
   const folder = panel.getByRole("button",{name:"参考资料",exact:true});

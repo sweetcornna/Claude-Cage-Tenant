@@ -122,11 +122,18 @@ func (s *Server) runCLIChannel(ctx context.Context, mode string, input any, outp
 	if s.windowsGuest != nil {
 		return s.windowsCLIRequest(ctx, map[string]any{"action": "channel", "mode": mode, "input": input}, output)
 	}
+	return s.runGuestHelper(ctx, started, "cli-channel", mode, s.cliHelperCommand(mode, "-"), input, output)
+}
+
+// runGuestHelper writes input as JSON to a helper started from the guest's
+// login shell and decodes the helper's JSON reply. Startup banners cannot
+// reach the reply because the login shell's output goes to stderr.
+func (s *Server) runGuestHelper(ctx context.Context, started time.Time, source, mode, helper string, input any, output any) error {
 	data, err := json.Marshal(input)
 	if err != nil {
 		return err
 	}
-	command := "exec /bin/bash -c " + shellescape.Quote("exec 3>&1 1>&2; exec /bin/bash -lc "+shellescape.Quote("exec 1>&3 3>&-; exec "+s.cliHelperCommand(mode, "-")))
+	command := "exec /bin/bash -c " + shellescape.Quote("exec 3>&1 1>&2; exec /bin/bash -lc "+shellescape.Quote("exec 1>&3 3>&-; exec "+helper))
 	cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", command)
 	cmd.Stdin = strings.NewReader(string(data))
 	var stderr fileControlStderr
@@ -150,7 +157,7 @@ func (s *Server) runCLIChannel(ctx context.Context, mode string, input any, outp
 		}
 		// Record transport and protocol evidence without terminal output,
 		// prompts, account paths or raw SSH/Python error messages.
-		_ = diagnostics.New(s.profile).Record("warn", "cli-channel", fmt.Sprintf("operation=%s failure=%s exit=%d elapsed_ms=%d context=%v output_bytes=%d stderr_bytes=%d", mode, failure, exit, time.Since(started).Milliseconds(), ctx.Err(), len(result), len(stderr.data)))
+		_ = diagnostics.New(s.profile).Record("warn", source, fmt.Sprintf("operation=%s failure=%s exit=%d elapsed_ms=%d context=%v output_bytes=%d stderr_bytes=%d", mode, failure, exit, time.Since(started).Milliseconds(), ctx.Err(), len(result), len(stderr.data)))
 		return errors.New(message)
 	}
 	return nil
@@ -281,6 +288,9 @@ func (s *Server) terminalConversationView(ctx context.Context, id string) (mobil
 	if err != nil {
 		return mobileSession{}, err
 	}
+	if record.codex() {
+		return s.codexConversationView(ctx, record)
+	}
 	var current terminalConversation
 	input := map[string]any{"cli_id": record.CLIID, "config": record.GuestConfig, "connection": record.Connection, "account": record.Account.GuestID}
 	if err := s.windowsConversationInput(record, input); err != nil {
@@ -410,25 +420,16 @@ func (s *Server) terminalConversationAction(ctx context.Context, id string, inpu
 			}
 		}
 	}
-	if record.Connection == "" {
-		return mobileSession{}, errors.New("会话连接尚未就绪，请稍后重试")
-	}
 	if record.Archived {
 		return mobileSession{}, errors.New("此会话已归档，请先撤销归档")
 	}
-	input["cli_id"], input["connection"] = record.CLIID, record.Connection
-	if err := s.windowsConversationInput(record, input); err != nil {
+	if record.codex() {
+		err = s.codexConversationAction(ctx, record, input)
+	} else {
+		err = s.claudeConversationRPC(ctx, record, input)
+	}
+	if err != nil {
 		return mobileSession{}, err
-	}
-	var response struct {
-		OK    bool   `json:"ok"`
-		Error string `json:"error"`
-	}
-	if err := s.runCLIChannel(ctx, "rpc", input, &response); err != nil {
-		return mobileSession{}, err
-	}
-	if !response.OK {
-		return mobileSession{}, errors.New(response.Error)
 	}
 	if input["action"] == "send" {
 		// The guest already committed this message. Return its receipt now;
@@ -454,6 +455,27 @@ func (s *Server) terminalConversationAction(ctx context.Context, id string, inpu
 		return view, nil
 	}
 	return s.terminalConversationView(ctx, id)
+}
+
+func (s *Server) claudeConversationRPC(ctx context.Context, record *mobileRecord, input map[string]any) error {
+	if record.Connection == "" {
+		return errors.New("会话连接尚未就绪，请稍后重试")
+	}
+	input["cli_id"], input["connection"] = record.CLIID, record.Connection
+	if err := s.windowsConversationInput(record, input); err != nil {
+		return err
+	}
+	var response struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := s.runCLIChannel(ctx, "rpc", input, &response); err != nil {
+		return err
+	}
+	if !response.OK {
+		return errors.New(response.Error)
+	}
+	return nil
 }
 
 func (s *Server) prepareTerminalConversation(workspace string, selection claudeSelection, existing string) (string, *mobileRecord, error) {
@@ -593,6 +615,9 @@ func (s *Server) stopTerminalConversation(ctx context.Context, view mobileSessio
 	s.mobileCLI.mu.Unlock()
 	if err != nil {
 		return view, err
+	}
+	if record.codex() {
+		return s.terminalConversationAction(ctx, view.ID, map[string]any{"action": "stop", "request_id": turnID})
 	}
 	terminal := s.terminals.get(record.TerminalID)
 	if terminal == nil {

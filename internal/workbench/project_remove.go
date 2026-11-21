@@ -121,14 +121,18 @@ func (s *Server) checkProjectFoldersIdle(ctx context.Context, folders []string, 
 			return errors.New("请先关闭此项目的终端，再移除项目。会话历史会保留。")
 		}
 	}
-	if ready && sharedCLILauncher(claudeTerminalCommand(preferences)) {
+	if shared := sharedCLILauncher(claudeTerminalCommand(preferences)); ready && (shared || s.codexGuestSupported()) {
 		granted := make(map[string]bool, len(projects))
 		for _, project := range projects {
 			granted[project] = true
 		}
 		_, err = s.mobileCLI.summaries(s.profile, granted, false)
-		if err == nil {
+		if err == nil && shared {
 			err = s.discoverTerminalConversations(ctx, projects)
+		}
+		// Only projects with phone Codex sessions depend on the Codex helper.
+		if err == nil && s.mobileCLI.hasCodexSession(folders) {
+			err = s.discoverCodexConversations(ctx, projects)
 		}
 		if err != nil {
 			return errors.New("暂时无法核对运行中的会话。请恢复会话连接，或保存工作并停止环境后再移除项目。")
@@ -139,8 +143,10 @@ func (s *Server) checkProjectFoldersIdle(ctx context.Context, folders []string, 
 	for _, run := range s.mobileCLI.active {
 		active = active || slices.Contains(folders, run.record.Workspace)
 	}
-	for id, running := range s.mobileCLI.running {
-		active = active || ready && running && slices.Contains(folders, s.mobileCLI.catalog[id].Workspace)
+	for _, observed := range []map[string]bool{s.mobileCLI.running, s.mobileCLI.codexLive} {
+		for id, running := range observed {
+			active = active || ready && running && slices.Contains(folders, s.mobileCLI.catalog[id].Workspace)
+		}
 	}
 	s.mobileCLI.mu.Unlock()
 	if active {

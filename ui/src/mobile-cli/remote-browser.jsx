@@ -281,6 +281,6 @@ export function RemoteDisplay({visible, onBack, onReopen, id, tool, start, initi
       <Tool label="输入文字" icon={Keyboard} disabled={!focus || state.busy || favorites}
         onClick={() => flushSync(() => setKeyboard(focus))} />
     </nav>}
-    {desktop && frame?.login_supported === false && <p className="remote-home-note" role="status">需要登录时，请在电脑的 Cage 中完成 Claude Desktop 登录，手机会继续使用同一登录状态。</p>}
+    {desktop && frame?.login_supported === false && <p className="remote-home-note" role="status">需要登录时，请在电脑的 Super Cage 中完成 Claude Desktop 登录，手机会继续使用同一登录状态。</p>}
   </section>;
 }

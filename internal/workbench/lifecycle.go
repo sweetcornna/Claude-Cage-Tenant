@@ -131,6 +131,7 @@ func (s *Server) closeService() error {
 		s.terminals.close()
 		s.closeBackground()
 		s.activities.Wait()
+		s.mobileUploads.close()
 		s.op.Lock()
 		defer s.op.Unlock()
 		s.closeMacOSScreenSharing()
