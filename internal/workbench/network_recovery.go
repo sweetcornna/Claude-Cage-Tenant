@@ -375,7 +375,8 @@ func (s *Server) networkExplanationLocked(now time.Time) *networkExplanation {
 		if d == nil {
 			return nil
 		}
-		until := d.Until.UTC()
+		// The lease's end as the gate times it, shown on today's wall clock.
+		until := now.Add(d.Deadline.Sub(now)).UTC()
 		e.State, e.LeaseUntil = networkUnconfirmed, &until
 		e.Reason = withMemoryReason(memory, "联网监测暂时"+unconfirmedStage(d.Stage))
 		e.Next = "外网暂时保持开放，但联网许可没有延长。系统会继续重试；许可到期前仍无法确认时，外网会自动暂停并安排完整重检。"

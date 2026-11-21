@@ -50,11 +50,14 @@ type safetyState struct {
 
 // monitorDeferral records monitoring rounds that could not confirm the guest
 // within one lease. It never extends the lease: Until is the gate's deadline,
-// after which the gate's own timer closes it.
+// after which the gate's own timer closes it. Until (the gate's wall-clock
+// reading) names the lease; Deadline is the same end on this process's
+// monotonic clock, and every wait and countdown is timed from it.
 type monitorDeferral struct {
 	RunID    string
 	Epoch    uint64
 	Until    time.Time
+	Deadline time.Time
 	Since    time.Time
 	RetryAt  time.Time
 	Stage    string
@@ -154,6 +157,21 @@ type browserObservation struct {
 	Network          networkObservation `json:"network"`
 }
 
+// safetyViewLocked is the safety state as clients read it. They compare the
+// gate's until with their own wall clock, so it is the lease's end as the
+// gate times it (Deadline) placed on the current wall clock: after the host
+// slept, the gate's own wall-clock reading lies in the past while the lease
+// still runs. Called with s.mu held.
+func (s *Server) safetyViewLocked(now time.Time) safetyState {
+	view := s.safety
+	if gate := view.Gate; gate != nil && gate.Mode != cage.GateClosed && !gate.Until.IsZero() {
+		shown := *gate
+		shown.Until = now.Add(gate.Deadline().Sub(now)).Round(0)
+		view.Gate = &shown
+	}
+	return view
+}
+
 func (s *Server) gateClient() (*cage.GateClient, error) {
 	return cage.OpenGateClient(s.instanceDir())
 }
@@ -185,7 +203,7 @@ func (s *Server) currentNetworkErrorLocked() string {
 	now := time.Now()
 	reason := s.networkErrorLocked()
 	if d := s.activeDeferralLocked(now); d != nil {
-		notice := fmt.Sprintf("仍无法确认时，外网将在 %d 秒后暂停并自动安排完整重检", int((d.Until.Sub(now)+time.Second-1)/time.Second))
+		notice := fmt.Sprintf("仍无法确认时，外网将在 %d 秒后暂停并自动安排完整重检", int((d.Deadline.Sub(now)+time.Second-1)/time.Second))
 		if reason == "" {
 			return notice
 		}
@@ -1213,7 +1231,7 @@ func (s *Server) monitorSafetyWithProbe(probe func(context.Context, cage.Config)
 		s.mu.Unlock()
 		return
 	}
-	timing.until = state.Until
+	timing.until = state.Deadline()
 	s.publishGate(state)
 	if state.Mode != cage.GateOpen || state.Report == nil {
 		timing.result = "gate_not_open"
@@ -1267,10 +1285,12 @@ func (s *Server) monitorSafetyWithProbe(probe func(context.Context, cage.Config)
 		}
 	}
 	// Each guest read ends early enough for a confirmed round to renew, and
-	// none starts when too little of the lease is left.
+	// none starts when too little of the lease is left. The lease is timed
+	// as the gate times it (Deadline): after the host slept, its wall-clock
+	// end has passed although the lease still runs.
 	readContext := func() (context.Context, context.CancelFunc) {
 		deadline := time.Now().Add(monitorReadLimit)
-		if last := state.Until.Add(-monitorRenewMargin); last.Before(deadline) {
+		if last := state.Deadline().Add(-monitorRenewMargin); last.Before(deadline) {
 			deadline = last
 		}
 		if time.Until(deadline) < monitorReadMinimum {
@@ -1377,9 +1397,10 @@ func (s *Server) deferUnconfirmedObservation(client *cage.GateClient, observed c
 	if d.RunID != current.RunID || d.Epoch != current.Epoch || !d.Until.Equal(current.Until) {
 		d = monitorDeferral{RunID: current.RunID, Epoch: current.Epoch, Until: current.Until, Since: now}
 	}
+	d.Deadline = current.Deadline()
 	d.Stage = stage
 	d.Attempts++
-	d.RetryAt = nextMonitorAttempt(now, current.Until)
+	d.RetryAt = nextMonitorAttempt(now, d.Deadline)
 	s.safety.deferral = d
 	// monitorError keeps the raw cause; the explanation adds the memory reason.
 	if stage == "exit_ip" {
@@ -1391,13 +1412,15 @@ func (s *Server) deferUnconfirmedObservation(client *cage.GateClient, observed c
 	s.refreshNetworkExplanationLocked(now)
 	s.mu.Unlock()
 	diagnostics.Log("warn", "network", fmt.Sprintf("monitoring could not confirm stage=%s attempt=%d lease_remaining_ms=%d next_attempt_ms=%d memory_short=%t; lease not extended",
-		stage, d.Attempts, current.Until.Sub(now).Milliseconds(), d.RetryAt.Sub(now).Milliseconds(), memory.Short))
+		stage, d.Attempts, d.Deadline.Sub(now).Milliseconds(), d.RetryAt.Sub(now).Milliseconds(), memory.Short))
 	return true
 }
 
 // nextMonitorAttempt spaces the rounds after one that could not confirm the
 // guest, keeping a last attempt before the lease ends. After that attempt
 // the lease decides: nothing more is tried, and the gate's timer closes it.
+// until is the lease's Deadline, so every time returned carries a monotonic
+// reading and no wall-clock step can hold a retry back.
 func nextMonitorAttempt(now, until time.Time) time.Time {
 	last := until.Add(-monitorLastAttempt)
 	if !now.Before(last) {
@@ -1413,19 +1436,22 @@ func nextMonitorAttempt(now, until time.Time) time.Time {
 func (s *Server) activeDeferralLocked(now time.Time) *monitorDeferral {
 	d, gate := s.safety.deferral, s.safety.Gate
 	if d.RunID == "" || gate == nil || gate.Mode != cage.GateOpen || gate.RunID != d.RunID || gate.Epoch != d.Epoch ||
-		!gate.Until.Equal(d.Until) || !now.Before(d.Until) || s.networkPaused || s.closing {
+		!gate.Until.Equal(d.Until) || !now.Before(d.Deadline) || s.networkPaused || s.closing {
 		return nil
 	}
 	return &d
 }
 
 // noteExpiredDeferral explains a lease that ran out while the monitor could
-// not confirm the guest: the gate's timer closed it, not a wrong value.
+// not confirm the guest: the gate's timer closed it, not a wrong value. The
+// gate says so itself (its run, the lease's epoch or the timer's transition
+// right after it, and the expiry reason); no clock is compared here.
 func (s *Server) noteExpiredDeferral(state cage.GateStatus) {
 	s.mu.Lock()
 	d := s.safety.deferral
 	s.mu.Unlock()
-	if d.RunID == "" || d.RunID != state.RunID || state.Reason != gateLeaseExpired || d.Until.After(time.Now()) {
+	if d.RunID == "" || d.RunID != state.RunID || state.Reason != gateLeaseExpired || state.Mode != cage.GateClosed ||
+		(state.Epoch != d.Epoch && state.Epoch != d.Epoch+1) {
 		return
 	}
 	memory := s.readMemorySnapshot()
@@ -1460,7 +1486,7 @@ func (s *Server) finishSafetyMonitor(ctx context.Context, client *cage.GateClien
 
 func (s *Server) finishSafetyObservation(ctx context.Context, client *cage.GateClient, state cage.GateStatus, ip, issue string, recoverable bool) {
 	timing := s.startMonitorTiming()
-	timing.until = state.Until
+	timing.until = state.Deadline()
 	defer s.recordMonitorTiming("renewal", timing)
 	s.safetyOp.Lock()
 	defer s.safetyOp.Unlock()

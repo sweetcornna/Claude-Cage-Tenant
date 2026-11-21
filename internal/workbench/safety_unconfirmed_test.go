@@ -134,7 +134,10 @@ func TestUnconfirmedSettingsReadKeepsLeaseWithoutRenewing(t *testing.T) {
 				t.Fatal("a recheck was scheduled while the lease is still valid")
 			}
 			e := s.safety.Explanation
-			if e == nil || e.State != networkUnconfirmed || e.LeaseUntil == nil || !e.LeaseUntil.Equal(before.Until) || !strings.Contains(e.Reason, tc.stage) {
+			// lease_until is the remaining lease the gate reported, counted
+			// from when the status request left: at most a few ms early.
+			if e == nil || e.State != networkUnconfirmed || e.LeaseUntil == nil || e.LeaseUntil.After(before.Until) ||
+				before.Until.Sub(*e.LeaseUntil) > 100*time.Millisecond || !strings.Contains(e.Reason, tc.stage) {
 				t.Fatalf("explanation: %+v", e)
 			}
 			if message := s.currentNetworkErrorLocked(); !strings.Contains(message, "现有联网许可未延长") || !strings.Contains(message, "秒后暂停") {

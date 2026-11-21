@@ -96,7 +96,7 @@ func (s *Server) proxyState(ctx context.Context, p managedproxy.Store, cfg cage.
 					if gate, e := client.Status(ctx); e == nil {
 						if gate.Mode == cage.GateChecking {
 							state, label = "checking", "正在检查"
-						} else if gate.Mode == cage.GateOpen && gate.Report != nil && gate.Report.Authorizes(gate.RunID, cfg.Fingerprint(), time.Now()) == nil && time.Now().Before(gate.Until) {
+						} else if gate.Mode == cage.GateOpen && gate.Report != nil && gate.Report.Authorizes(gate.RunID, cfg.Fingerprint(), time.Now()) == nil && time.Now().Before(gate.Deadline()) {
 							state, label = "ready", "已联网"
 						}
 					}
