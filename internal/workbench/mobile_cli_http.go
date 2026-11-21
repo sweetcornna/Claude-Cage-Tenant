@@ -247,7 +247,13 @@ func (s *Server) mobileSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	var notices []string
 	claudeErr := s.discoverTerminalConversations(r.Context(), paths)
-	codexErr := s.discoverCodexConversations(r.Context(), paths)
+	// Codex sessions continue only from the phone; the desktop sidebar opens
+	// sessions as Claude Code terminals and would offer rows it cannot open.
+	phone := strings.HasPrefix(r.URL.Path, "/api/mobile/")
+	var codexErr error
+	if phone {
+		codexErr = s.discoverCodexConversations(r.Context(), paths)
+	}
 	for _, err := range []error{claudeErr, codexErr} {
 		if err != nil && !slices.Contains(notices, err.Error()) {
 			notices = append(notices, err.Error())
@@ -271,6 +277,9 @@ func (s *Server) mobileSessions(w http.ResponseWriter, r *http.Request) {
 		if !ready || failed != nil {
 			sessions[i].Active = false
 		}
+	}
+	if !phone {
+		sessions = slices.DeleteFunc(sessions, func(item mobileSummary) bool { return item.Provider == codexProvider })
 	}
 	jsonReply(w, map[string]any{"sessions": sessions, "notice": strings.Join(notices, "\n")})
 }

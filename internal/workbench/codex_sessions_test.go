@@ -132,6 +132,10 @@ func TestCodexSessionsDiscoveryViewAndMessages(t *testing.T) {
 	if again, _ := codexSessions(t, s); len(again) != 1 || again[0].ID != sessions[0].ID {
 		t.Fatal("rediscovery duplicated the session", again)
 	}
+	// The desktop sidebar cannot open Codex sessions, so it does not list them.
+	if w := request(s, "GET", "/api/cli/sessions", "", "", true); w.Code != 200 || strings.Contains(w.Body.String(), sessions[0].ID) {
+		t.Fatalf("desktop listing: %d %s", w.Code, w.Body.String())
+	}
 	if calls := guest.calls("discover"); len(calls) != 2 || fmt.Sprint(calls[0]["accounts"]) != "[default]" || fmt.Sprint(calls[0]["workspaces"]) != "["+root+"]" {
 		t.Fatal("discovery request", calls)
 	}
