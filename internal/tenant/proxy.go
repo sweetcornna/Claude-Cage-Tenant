@@ -356,7 +356,10 @@ type withoutTrace struct{ context.Context }
 func (withoutTrace) Value(any) any { return nil }
 
 func (transport proxyTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	outbound := request.WithContext(withoutTrace{request.Context()})
+	// The trace goes on top of withoutTrace, which hides every value of the
+	// inbound request context from the transport.
+	traced, reused := reuseTrace(withoutTrace{request.Context()})
+	outbound := request.WithContext(traced)
 	if outbound.Body != nil && outbound.Body != http.NoBody {
 		outbound.Body = clientBody{ReadCloser: outbound.Body, touch: transport.touch}
 	}
@@ -365,6 +368,13 @@ func (transport proxyTransport) RoundTrip(request *http.Request) (*http.Response
 		if request.Context().Err() == nil {
 			var clientErr clientReadError
 			switch {
+			case connectionFailure(err) && reused.Load():
+				// A connection that was idle in the pool may have been closed by
+				// the workbench at the instant of this write (its idle timer is
+				// shorter than the pool's), and only a request that can be replayed
+				// is retried: a POST then ends in a bare EOF. That says nothing
+				// about the controller, so confirm it with a probe.
+				transport.suspect()
 			case connectionFailure(err):
 				transport.fault()
 			case !errors.As(err, &clientErr) && isTimeout(err):

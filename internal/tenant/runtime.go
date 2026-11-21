@@ -17,6 +17,12 @@ import (
 var errController = errors.New("workspace controller is unavailable")
 var errControllerSession = errors.New("workspace controller session has expired")
 
+// idleConnTimeout is how long the pool keeps an idle guest connection. The
+// workbench closes a connection that stays idle for 60 seconds, so the pool
+// lets go of its own earlier and a reused connection is rarely one the guest
+// is closing.
+const idleConnTimeout = 45 * time.Second
+
 type Workspace struct {
 	origin          *url.URL
 	cookie          *http.Cookie
@@ -54,7 +60,7 @@ func newWorkspace(port int, dial func(context.Context) (net.Conn, error)) *Works
 		// Keep enough warm connections for the workbench's polling and its
 		// reconnecting streams instead of paying that start on each request.
 		MaxConnsPerHost: 64, MaxIdleConns: 16, MaxIdleConnsPerHost: 16,
-		IdleConnTimeout: 90 * time.Second, ResponseHeaderTimeout: 90 * time.Second,
+		IdleConnTimeout: idleConnTimeout, ResponseHeaderTimeout: 90 * time.Second,
 		ExpectContinueTimeout: time.Second, MaxResponseHeaderBytes: 64 << 10,
 	}
 	// Reserve one connection for rechecks and one for fault confirmation.
