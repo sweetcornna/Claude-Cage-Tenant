@@ -53,10 +53,19 @@ var residentLifetime = 10 * time.Minute
 
 const residentRetired = 4
 
+// residentOversized and residentRefused fail one request, not the helper: the
+// answer exceeded the helper's 1 MiB (the channel helper allows 4 MiB), or the
+// request failed in the channel helper's own code (see cli_discovery.py). The
+// caller answers it with the channel helper; the helper stays in use.
+const (
+	residentOversized = 3
+	residentRefused   = 6
+)
+
 type residentOutcome int
 
 const (
-	residentUnavailable residentOutcome = iota // not sent: no helper or backing off
+	residentUnavailable residentOutcome = iota // not sent, backing off, or refused this request
 	residentAnswered
 	residentLost   // the helper or its connection ended; the next request starts another
 	residentFailed // the helper failed the request; backing off
@@ -69,6 +78,7 @@ const (
 type cliDiscovery struct {
 	mu      sync.Mutex
 	flights map[string]*discoveryFlight
+	results map[string]error // the outcome of the newest finished run of each key
 	// resident is one long-lived helper process on Linux guests, started
 	// through the login shell once instead of per request; see
 	// cli_discovery.py. Only read-only requests use it.
@@ -106,7 +116,8 @@ const discoveryTimeout = 20 * time.Second
 // or after arrival. A run that started earlier may have missed a change the
 // caller has to see, so the caller waits for it to end and then shares or
 // starts the next one. Concurrent callers therefore cost at most two runs,
-// and every answer reflects an observation made after its request arrived.
+// and every answer reflects an observation made after its request arrived,
+// unless the caller's time ran out first.
 func (d *cliDiscovery) share(ctx context.Context, key string, arrival time.Time, run func() (context.Context, context.CancelFunc), discover func(context.Context) error) error {
 	for {
 		d.mu.Lock()
@@ -125,6 +136,10 @@ func (d *cliDiscovery) share(ctx context.Context, key string, arrival time.Time,
 				if d.flights[key] == flight {
 					delete(d.flights, key)
 				}
+				if d.results == nil {
+					d.results = map[string]error{}
+				}
+				d.results[key] = flight.err
 				d.mu.Unlock()
 				close(flight.done)
 			}()
@@ -133,6 +148,13 @@ func (d *cliDiscovery) share(ctx context.Context, key string, arrival time.Time,
 		select {
 		case <-flight.done:
 		case <-ctx.Done():
+			if holdExpired(ctx) {
+				// The request's time is up (session_hold.go): it answers with
+				// the newest observation that finished; this run goes on.
+				d.mu.Lock()
+				defer d.mu.Unlock()
+				return d.results[key]
+			}
 			return ctx.Err()
 		}
 		if !flight.started.Before(arrival) {
@@ -193,6 +215,9 @@ func (s *Server) residentRequest(ctx context.Context, mode string, input any) (j
 	if s.windowsGuest != nil || s.macosGuest != nil || !s.cliDiscovery.usable() {
 		return nil, residentUnavailable
 	}
+	if ctx.Err() != nil {
+		return nil, residentLost // the caller already left
+	}
 	payload, err := json.Marshal(map[string]any{"mode": mode, "input": input})
 	if err != nil {
 		return nil, residentUnavailable
@@ -211,12 +236,17 @@ func (s *Server) residentRequest(ctx context.Context, mode string, input any) (j
 			return reply.stdout, residentAnswered
 		case err == nil && reply.code == residentMissing:
 			return nil, residentUnavailable
+		case err == nil && (reply.code == residentRefused || reply.code == residentOversized):
+			return nil, residentUnavailable
 		case ctx.Err() != nil && errors.Is(err, context.Canceled):
 			return nil, residentLost // the caller left
+		case err != nil && holdExpired(ctx):
+			return nil, residentLost // the held request's time is up, not the helper's
 		case errors.Is(err, errGuestSessionEnded):
 			return nil, residentLost
 		}
-		// A stalled or failing helper must not delay the next requests.
+		// A stalled or failing helper must not delay the next requests: a
+		// timeout, a broken connection or a malformed answer backs off.
 		s.cliDiscovery.failed()
 		_ = diagnostics.New(s.profile).Record("warn", "cli-discovery", fmt.Sprintf("operation=%s exit=%d elapsed_ms=%d error=%v output_bytes=%d", mode, reply.code, time.Since(started).Milliseconds(), err, len(reply.stdout)))
 		return nil, residentFailed
@@ -362,6 +392,16 @@ func (s *Server) watchGuestSessions(ctx context.Context) {
 		s.mu.Lock()
 		ready := s.ready && !s.closing
 		s.mu.Unlock()
+		// The rule of lock-free guest calls: while a job owns a ready guest the
+		// watch pauses. It keeps its word meanwhile, so held lists do not look
+		// at the guest themselves, and the hash it sends next catches up.
+		if ready && s.busy() {
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Second):
+			}
+			continue
+		}
 		var reply json.RawMessage
 		outcome := residentUnavailable
 		// A stopped guest is not watched; held lists look at it every 5 s.
@@ -371,7 +411,7 @@ func (s *Server) watchGuestSessions(ctx context.Context) {
 				request[key] = value
 			}
 			request["known"], request["timeout"] = known, guestWatchTimeout.Seconds()
-			d.setWatching(true)
+			d.setWatching(ctx, true)
 			watchCtx, cancel := context.WithTimeout(ctx, guestWatchTimeout+5*time.Second)
 			stop := context.AfterFunc(epoch, cancel)
 			reply, outcome = s.residentRequest(watchCtx, "watch", request)
@@ -387,7 +427,7 @@ func (s *Server) watchGuestSessions(ctx context.Context) {
 			if lost++; outcome == residentLost && lost == 1 {
 				pause = 250 * time.Millisecond // a successor starts on the next request
 			} else {
-				d.setWatching(false)
+				d.setWatching(ctx, false)
 			}
 			select {
 			case <-ctx.Done():
@@ -408,9 +448,12 @@ func (s *Server) watchGuestSessions(ctx context.Context) {
 	}
 }
 
-func (d *cliDiscovery) setWatching(value bool) {
+// setWatching records whether the watch running under ctx answers. A watch
+// that was stopped no longer speaks for the watch: the next one may run
+// already. stop cancels ctx under d.mu, so this check cannot miss it.
+func (d *cliDiscovery) setWatching(ctx context.Context, value bool) {
 	d.mu.Lock()
-	if d.stopWatch != nil {
+	if d.stopWatch != nil && ctx.Err() == nil {
 		d.watching = value
 	}
 	d.mu.Unlock()
@@ -428,7 +471,8 @@ func (s *Server) awaitSessionView(ctx context.Context, view mobileSession, deadl
 	if !view.Active {
 		pause = 4 * time.Second
 	}
-	if !view.TerminalAvailable && view.Provider != codexProvider {
+	guest := view.TerminalAvailable || view.Provider == codexProvider
+	if !guest {
 		pause = 250 * time.Millisecond // host-run sessions change in this process
 	} else if view.TerminalAvailable {
 		s.cliDiscovery.mu.Lock()
@@ -439,24 +483,42 @@ func (s *Server) awaitSessionView(ctx context.Context, view mobileSession, deadl
 			for key, value := range last.input {
 				request[key] = value
 			}
-			request["key"], request["timeout"] = last.key, remaining.Seconds()
-			waitCtx, cancel := context.WithTimeout(ctx, remaining+5*time.Second)
+			// The guest answers a little before the deadline, so the read that
+			// follows a change has time, and an unchanged hold ends on time.
+			request["key"], request["timeout"] = last.key, max(remaining-viewWaitMargin, 0).Seconds()
+			waitCtx, cancel := context.WithTimeout(ctx, remaining+viewWaitSlack)
 			stop := context.AfterFunc(epoch, cancel)
-			_, outcome := s.residentRequest(waitCtx, "view-wait", request)
+			reply, outcome := s.residentRequest(waitCtx, "view-wait", request)
 			stop()
 			cancel()
-			if outcome == residentAnswered || ctx.Err() != nil {
-				return ctx.Err() == nil
+			var answer struct {
+				Changed bool `json:"changed"`
 			}
+			if ctx.Err() != nil {
+				return false
+			}
+			if outcome == residentAnswered && json.Unmarshal(reply, &answer) == nil {
+				if answer.Changed {
+					return true
+				}
+				pause = remaining // nothing changed: wait out the hold
+			}
+			remaining = time.Until(deadline)
 		}
 	}
-	timer := time.NewTimer(min(pause, remaining))
+	// A guest look needs time before the deadline; one that would start in its
+	// last second is left to the client's next request.
+	look := !guest || pause < remaining-time.Second
+	if !look {
+		pause = remaining
+	}
+	timer := time.NewTimer(max(min(pause, remaining), 0))
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
 		return false
 	case <-timer.C:
-		return true
+		return look
 	}
 }
 

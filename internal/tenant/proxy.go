@@ -17,6 +17,8 @@ import (
 	"syscall"
 	"time"
 	"unicode"
+
+	"github.com/sylvinus/agent-vm/internal/mobilelink"
 )
 
 const enterHTML = `<!doctype html>
@@ -302,6 +304,19 @@ var responseHeaders = []string{
 	"Location", "Allow", "Retry-After", "X-Cage-Recovery", "X-Cage-Clipboard-Status", "X-Cage-Metadata-Warning",
 }
 
+// frameHeaders passes on the phone's frame negotiation (mobilelink): the
+// metadata of a binary frame and the host's offer of held frame reads. Without
+// them the phone silently keeps the slower base64 frames on tenant
+// workspaces; only values the phone link itself accepts are passed.
+func frameHeaders(dst, src http.Header) {
+	if values := src.Values(mobilelink.FrameMetaHeader); len(values) == 1 && mobilelink.ValidFrameMeta(values[0]) {
+		dst.Set(mobilelink.FrameMetaHeader, values[0])
+	}
+	if values := src.Values(mobilelink.FrameStreamHeader); len(values) == 1 && values[0] == "1" {
+		dst.Set(mobilelink.FrameStreamHeader, "1")
+	}
+}
+
 func selectHeaders(src http.Header, names ...string) http.Header {
 	result := make(http.Header)
 	for _, name := range names {
@@ -332,6 +347,9 @@ func (workspace *Workspace) proxy(origin string, fault, suspect func()) *httputi
 				workspace.confirmSessionFailure(response.Request, fault)
 			}
 			headers := selectHeaders(response.Header, responseHeaders...)
+			if target := response.Request.URL.Path; strings.HasPrefix(target, "/api/mobile/") && strings.HasSuffix(target, "/frame") {
+				frameHeaders(headers, response.Header)
+			}
 			if response.StatusCode == http.StatusSwitchingProtocols {
 				if !strings.EqualFold(response.Request.Header.Get("Upgrade"), "websocket") || !strings.EqualFold(response.Header.Get("Upgrade"), "websocket") {
 					return errors.New("workspace protocol upgrade refused")

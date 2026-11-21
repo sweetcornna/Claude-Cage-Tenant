@@ -205,6 +205,15 @@ class DiscoveryTests(unittest.TestCase):
         send(2, "watch", dict(self.request, known=reply["hash"], timeout=20))
         send(3, "nonsense", {})
         self.assertEqual(receive()[:2], (3, 1))
+        # A request that fails in the channel helper's own code is refused on
+        # its own; the process keeps serving.
+        self.agents.write_text("not a listing")
+        self.register(os.getpid(), session)
+        send(4, "discover", self.request)
+        self.assertEqual(receive()[:2], (4, 6))
+        self.agents.write_text("[]")
+        send(5, "discover", self.request)
+        self.assertEqual(receive()[:2], (5, 0))
         started = time.monotonic()
         server.stdin.write(b"C 2\n")
         server.stdin.flush()
