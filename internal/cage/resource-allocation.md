@@ -301,8 +301,20 @@ internal/tenant/replay_test.go (simulator).
 ### 7.1 Level A (allocateMemory, unexported; planMemory kept for CAGE_TENANT_MEMORY_POLICY=legacy)
 - Floor of a shrink is max(base, guarantee, roundUp(W + 512 MiB)) (memoryMinHeadroom = 512 MiB, not 256:
   a shrink into the headroom under pressure must not read as a shortage in the next round).
-- While the host is under pressure only a VM that is short itself grows to its fair share; one that merely
-  lacks headroom waits (otherwise shrink-into-headroom and regrowth oscillate).
+- Pressure (review 2, R2-5, replaces "available < 2R"): guest page cache fills the limits and is resident on
+  the host, so a host whose limits fill its capacity has R - own available: the plan, not a shortage. With
+  the old "available < 2R" a VM host sat in pressure for good once its limits passed total - own - 2R, and a
+  VM grew only when nearly out of memory. Pressure is now: stall >= 10, or available < keep (keep =
+  max(512 MiB, R/4): limits above the capacity being filled), or available < R while the limits leave more
+  unallocated than is available (the host's own use is above its reserve). Below 2R ("reclaim") memory
+  above max(demand, fair) is taken back early, idle VMs first; under pressure also the headroom above
+  max(W + 512 MiB, fair). The 1 GiB step applies below R.
+- Every shrink floor is at least the fair allocation: a VM above its fair share is never taken below it, so
+  nothing a shrink takes is grown back the next round (the reviewer saw 4.75 -> 3.75 GiB with fair 4.0).
+- Growth to the fair allocation is at once within what the host has free above keep, short guests first,
+  max-min fair among the rest (waterFill over the gaps); what it cannot back now (result.backlog) follows
+  as memory taken back from VMs above their fair shares is freed. While the host is in pressure only a VM
+  that is short itself grows; one that merely lacks headroom waits.
 - "Capacity needed" reclaim (above fair share, idle first) runs only when some VM grows or is short.
 - Shortage boost: stall >= 10, pswpin advanced, or available < 256 MiB: d >= L + max(512 MiB, L/4).
   Nested short_bytes is added to d. machine-memory.json must be fresh within +-45 s of the gateway clock
@@ -420,6 +432,9 @@ is available. The model is a model: it shows the rules interact as intended, not
 | page cache hog vs quiet neighbour | | guest 2816 vs 2560 MiB: cache buys nothing |
 | machine shrinking under an idle guest | | 10 -> 4.75 GiB, neighbour grows to 8.5 GiB, no machine OOM |
 | 60 s of failed samples | | target never shrinks, resumes |
+| two machines growing, machine page cache filling (R2-5) | | pressure in 102 of 120 rounds before, 3 after (boot at the ceiling) |
+| reviewer's 17 GiB host, 3 plain VMs, cache fills limits | | vm0 grows in the round its demand rises, never short, no pressure |
+| 8 h steady state, plain VMs, middle band and saturated | | no move after settling, no round in pressure |
 | parked machine, +3 GiB over 30 s | | guest has it after 30 s, probes silent 6 s |
 | parked machine, +3 GiB in 1 s | | guest has it after 35 s, probes silent 34 s |
 Machine out of memory: 0 s in every trace.

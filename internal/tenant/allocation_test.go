@@ -330,6 +330,7 @@ func TestAllocationProperties(t *testing.T) {
 		if severe {
 			step = memoryPressureStep
 		}
+		var grown int64
 		var fairSum int64
 		for id, report := range result.report {
 			if state.Instances[id].GuestSilent {
@@ -345,6 +346,13 @@ func TestAllocationProperties(t *testing.T) {
 			if change.to%(1<<20) != 0 || change.to < MinimumMemory {
 				t.Fatalf("invalid size %+v", change)
 			}
+			if change.to > entry.Limit && change.reason != "guest did not answer" {
+				grown += change.to - entry.Limit
+			}
+			// Never from above the fair allocation to below it.
+			if fair := result.report[change.id].Fair; change.to < entry.Limit && entry.Limit > fair && change.to < fair {
+				t.Fatalf("shrank across the fair allocation %d: %+v", fair, change)
+			}
 			if change.to < entry.Limit {
 				working := entry.GuestTotal - entry.GuestAvailable
 				if entry.GuestSilent || entry.Status != "Running" {
@@ -357,6 +365,15 @@ func TestAllocationProperties(t *testing.T) {
 					t.Fatalf("step too large: %+v", change)
 				}
 			}
+		}
+		// Growth stays within the host's free memory above what it keeps.
+		if grown > max(0, state.HostAvailable-hostKeep(reserve)) {
+			t.Fatalf("grew %d MiB with %d MiB available: %+v", grown>>20, state.HostAvailable>>20, result.changes)
+		}
+		if result.backlog > 0 {
+			// Growth that waits for free memory or for pressure to end goes on
+			// in the next rounds, as the inputs change.
+			continue
 		}
 		// Stable: with the same input and the result applied, a second round
 		// moves nothing that the first did not already decide.
