@@ -546,7 +546,7 @@ func cmdline(ctx context.Context, cfg Config, workingDir *string) (exe string, a
 	args = appendArgsIfNoConflict(args, "-m", strconv.Itoa(int(memBytes>>20)))
 	// A balloon returns guest pages to the host without restarting the VM.
 	if *y.OS == limatype.LINUX {
-		args = append(args, "-device", "virtio-balloon")
+		args = append(args, "-device", balloonDevice(version, runtime.GOOS))
 	}
 
 	if *y.MountType == limatype.VIRTIOFS {
@@ -1290,6 +1290,19 @@ func SwtpmCmdline(cfg Config) (exe string, args []string, err error) {
 	}
 
 	return swtpmExe, args, nil
+}
+
+// balloonDevice is the memory balloon of a Linux guest. Free page reporting
+// (QEMU 5.1 and later) also returns the pages a guest frees by itself, with no
+// balloon change. It is used on Linux hosts only, where QEMU discards reported
+// pages with madvise and fallocate; returning them through the Windows build's
+// discard patch or macOS madvise is unverified. A QEMU of unknown version keeps
+// the plain balloon.
+func balloonDevice(version *semver.Version, goos string) string {
+	if goos != "linux" || version == nil || version.LessThan(*semver.New("5.1.0")) {
+		return "virtio-balloon"
+	}
+	return "virtio-balloon,free-page-reporting=on"
 }
 
 func parseQemuVersion(output string) (*semver.Version, error) {

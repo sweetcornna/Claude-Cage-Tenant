@@ -50,6 +50,13 @@ type Config struct {
 	FreezeAfter time.Duration
 	StopAfter   time.Duration
 	BusyCPU     float64
+	// MemoryInterval is how often running VMs are resized to fit the host;
+	// zero turns elastic memory off. MemoryReserve is the host memory kept
+	// for the host itself (zero: the larger of 2 GiB and 15% of host memory)
+	// and MemoryMin the smallest size given to a VM (zero: DefaultMemoryMin).
+	MemoryInterval time.Duration
+	MemoryReserve  int64
+	MemoryMin      int64
 }
 
 type Server struct {
@@ -75,6 +82,7 @@ type Server struct {
 	now           func() time.Time
 	sessionTTL    time.Duration
 	cooling       cooling
+	memory        memoryBalancing
 }
 
 func NewServer(cfg Config) (*Server, error) {
@@ -90,6 +98,9 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	if cfg.FreezeAfter < 0 || (cfg.FreezeAfter > 0 && cfg.FreezeAfter < time.Minute) || cfg.StopAfter < 0 || (cfg.StopAfter > 0 && cfg.StopAfter < cfg.FreezeAfter) || cfg.BusyCPU < 0 || cfg.BusyCPU > 64 {
 		return nil, errors.New("freeze-after must be 0 or at least one minute, stop-after must be 0 or no shorter than freeze-after, and the busy CPU share must be between 0 and 64")
+	}
+	if (cfg.MemoryInterval != 0 && (cfg.MemoryInterval < 5*time.Second || cfg.MemoryInterval > 10*time.Minute)) || cfg.MemoryReserve < 0 || (cfg.MemoryMin != 0 && cfg.MemoryMin < MinimumMemory) {
+		return nil, errors.New("memory-interval must be 0 or between 5s and 10m, memory-reserve must not be negative, and memory-min must be at least 1GiB")
 	}
 	systems, err := systemIndex(cfg.Systems)
 	if err != nil {
@@ -127,6 +138,7 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	server.workers.Go(server.maintain)
 	server.startCooling()
+	server.startMemoryBalancer()
 	return server, nil
 }
 

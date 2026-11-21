@@ -1,6 +1,6 @@
 # Super Cage 多租户宿主部署
 
-`cage-tenant` 在 Linux Incus 宿主机上运行。门户每个 VM 记录对应专用项目中的 `cage-<id>` 虚拟机和独立可写根盘；没有 KVM 的宿主改用 Incus 系统容器，见[第 8 节](#8-无硬件虚拟化的宿主incus-系统容器)。空闲实例由网关自动冻结和停机，见[第 7 节](#7-空闲冷却)。网关只通过 Incus guest agent 接入每台 VM 自己的 Super Cage 回环端口。网关为每台 VM 默认启用托管的工作台账户：门户登录后自动进入工作台，不需要再次输入密码。首次连接空白 VM 时创建该账户；已有工作台账户保持不变，继续使用原有的解锁界面和密码保险箱。
+`cage-tenant` 在 Linux Incus 宿主机上运行。门户每个 VM 记录对应专用项目中的 `cage-<id>` 虚拟机和独立可写根盘；没有 KVM 的宿主改用 Incus 系统容器，见[第 8 节](#8-无硬件虚拟化的宿主incus-系统容器)。空闲实例由网关自动冻结和停机，见[第 7 节](#7-空闲冷却)；运行中 VM 的内存按宿主当前内存弹性调整，profile 的内存值是上限，见[第 9 节](#9-弹性内存vm-模式)。网关只通过 Incus guest agent 接入每台 VM 自己的 Super Cage 回环端口。网关为每台 VM 默认启用托管的工作台账户：门户登录后自动进入工作台，不需要再次输入密码。首次连接空白 VM 时创建该账户；已有工作台账户保持不变，继续使用原有的解锁界面和密码保险箱。
 
 ## 1. 准备 Linux 宿主机和专用项目
 
@@ -21,9 +21,9 @@ incus --force-local --project cage-tenant profile set default limits.memory=8GiB
 incus --force-local --project cage-tenant profile show default
 ```
 
-项目和每台 VM 的 CPU、内存与磁盘配额应按宿主储备设置。示例分配每台 4 vCPU、8 GiB 内存和 10 GiB 根盘。完整图形环境可能需要更大的根盘与更多内存。仅验证空闲控制器可从 2 vCPU、1 GiB 起步。
+项目和每台 VM 的 CPU、内存与磁盘配额应按宿主储备设置。示例分配每台 4 vCPU、最多 8 GiB 内存和 10 GiB 根盘；VM 模式下 profile 的 `limits.memory` 是每台 VM 的上限，网关按第 9 节在上限内调整运行中 VM 的实际内存。项目的 `limits.memory` 配额按每台 VM 的上限计算。完整图形环境可能需要更大的根盘与更多内存。仅验证空闲控制器可从 2 vCPU、1 GiB 起步。
 
-网关明确选择专用项目内的 `-incus-profile`（默认 `default`），不使用镜像关联的 profile。项目必须启用 `features.profiles=true`。网关在配备、接管及就绪复查时核对展开配置：只接受该 profile，要求显式正整数 vCPU、绝对内存大小，且有效值与 profile 一致；有效设备也必须一致。根盘只允许 `type=disk`、`path=/`、`pool` 和显式 `size`，不接受额外盘、宿主路径、socket、代理或其他共享设备，也不接受 `raw.*` 等自定义实例配置。已有实例若不匹配，查看网关宿主日志；保留原盘，先停机并由管理员核对配置再调整，不要临时放宽限制。不要在网关运行时改动 profile 或已运行 VM 的宿主侧配置：网关不是连续的配置审计器，也不能撤销已经生效的宿主配置。
+网关明确选择专用项目内的 `-incus-profile`（默认 `default`），不使用镜像关联的 profile。项目必须启用 `features.profiles=true`。网关在配备、接管及就绪复查时核对展开配置：只接受该 profile，要求显式正整数 vCPU 和绝对内存大小。vCPU 的有效值必须与 profile 一致；VM 的有效 `limits.memory` 可以是 profile 值，也可以是网关写入的实例级值，须为精确的 Incus 大小，且介于 1 GiB（profile 值更小时为 profile 值）与 profile 值之间。容器模式的内存仍须与 profile 一致。有效设备也必须一致。根盘只允许 `type=disk`、`path=/`、`pool` 和显式 `size`，不接受额外盘、宿主路径、socket、代理或其他共享设备，也不接受 `raw.*` 等自定义实例配置；唯一例外是第 9 节中开启 balloon 空闲页返还的那一条 profile 级 `raw.qemu.conf`，内容须逐字一致。已有实例若不匹配，查看网关宿主日志；保留原盘，先停机并由管理员核对配置再调整，不要临时放宽限制。不要在网关运行时改动 profile 或已运行 VM 的宿主侧配置：网关不是连续的配置审计器，也不能撤销已经生效的宿主配置。实例级 `limits.memory` 由网关自己维护（第 9 节），不要手动修改。
 
 示例配置的租户 VM 没有网卡。每台 VM 的代理订阅、节点和出口在该 VM 自己的工作台「网络与代理」中设置，代理核心运行在 VM 内，因此 VM 需要网卡才能使用代理出口。需要联网时，仅在管理员已配置并验证受信网络后，允许在 profile 中增加一个仅含 `type=nic`、`network=<网络名>` 和可选 `name` 的受管 NIC，设置 `-incus-network` 为同一个名字，并相应调整专用项目的 NIC 限制（不要放开其他网络）。使用宿主侧规则隔离 VM 间流量，并阻止 VM 访问宿主的服务与管理网段、其他私网和云元数据地址。IPv4、IPv6 与二层转发均须在部署时验证，网关不验证这些网络规则。宿主运行 Clash、Mihomo 等带 auto-redirect 的 TUN 透明代理时，VM 的 TCP 连接会被重定向到网桥地址上的代理端口；Incus 网络 ACL 若丢弃发往私网（含网桥地址）的流量，会连带切断全部外网。这种宿主改用 nftables 表实现隔离，参照无虚拟化版安装脚本写入的 `/etc/cage-tenant/guard.nft`：转发链丢弃私网、组播与 IPv6，输入链只放行来自网桥的 DHCP、DNS 和 `ct status dnat` 连接。控制端口继续只监听 VM 回环，宿主防火墙仅向浏览器开放 TLS 入口。Incus 管理 socket 的权限相当于宿主管理员权限，运行网关的专用系统账户和部署配置属于宿主信任边界。
 
@@ -91,7 +91,7 @@ incus --force-local --project cage-tenant config show cage-preflight --expanded
   -trust-loopback-client-ip
 ```
 
-空闲冷却默认开启（`-freeze-after 15m`、`-stop-after 72h`），参数和前提见第 7 节。
+空闲冷却默认开启（`-freeze-after 15m`、`-stop-after 72h`），参数和前提见第 7 节。VM 模式默认开启弹性内存（`-memory-interval 15s`），参数见第 9 节；现有启动命令和 systemd 单元无需修改。
 
 托管工作台账户默认启用。首次启动时，网关在状态目录创建私有文件 `guest-account.json`（`0600`），内容为 `{"username":"cage","secret":"<64 位小写十六进制>"}`；每个 VM 的密码由该密钥和 VM ID 派生，不写入 `state.json` 或浏览器。需要显式指定或与其它主机共享同一密钥时，可加 `-guest-account-file /etc/cage-tenant/guest-account.json`，文件必须为 `0600` 的同一 JSON 格式。更改或丢失密钥后，已有托管账户不会被改写或删除，但会回退到工作台自己的密码界面；需要保留自动进入时，应随状态目录一起备份该文件。
 
@@ -313,3 +313,46 @@ WantedBy=multi-user.target
 **启动网关。** 在第 3 节的命令上加 `-incus-instance-type container`，`-incus-image` 指向容器镜像。
 
 **本轮验证范围。** 在无 `/dev/kvm` 的 Ubuntu 24.04 arm64 虚拟机上：网关以容器模式创建、认领、连接 4 个租户（每个约 5 秒就绪，冷启动约 2.5 秒），经网关访问工作台，完成第 7 节的冻结、恢复、停机和重开。在 `security.nesting=true` 的无特权容器内，rootless Docker 29.0.0（runc 1.3.3）以 `--network none`、内存和进程上限运行容器，前提是 Incus 6.0.7 且宿主放开了上面的 AppArmor 限制。完整的 Super Cage 云工作环境镜像（仅支持 amd64）和真实模型调用未在容器租户中验证。
+
+## 9. 弹性内存（VM 模式）
+
+VM 模式下，profile 的 `limits.memory` 是每台 VM 的内存上限，不是固定分配。网关按宿主当前的内存，在运行中调整每台 VM 的实例级 `limits.memory`。Incus 通过 virtio balloon 在线生效，VM 不重启。容器模式不调整：容器只占用实际用到的内存，其 `limits.memory` 仍须与 profile 一致。
+
+**启动在上限。** 停机的 VM 启动前，网关删除它的实例级 `limits.memory`，让它按 profile 上限启动。之后的调整都不超过启动时的内存，Incus 只移动 balloon，不热插内存（热插的内存在下次启动前收不回来）。网关的空闲停机之后也会删除该值。不经网关启动的 VM，例如宿主重启后由 Incus 自启动、或来宾在 VM 内自行重启，按当时的实例级大小启动，见下面的失败处理。
+
+**每轮做什么。** 每轮间隔为 `-memory-interval`（默认 `15s`）。网关读取宿主的 `/proc/meminfo` 和 `/proc/pressure/memory`、profile 上限，并经 `incus exec` 用 `/usr/bin/head` 读取每台运行中 VM 的 `/proc/meminfo`。来宾工作集按 `MemTotal − MemAvailable` 计算，不含页缓存。Incus 自己报告的 VM 内存用量是 `MemTotal − MemFree`，包含页缓存，不能用作下限。
+
+- **需要量**：工作集加余量（1 GiB 与工作集四分之一中的较大者），再加来宾内核占用，向上取整到 256 MiB，且不低于 `-memory-min`。
+- **立即增长**：VM 少于需要量时，下一轮直接增长到需要量，宿主紧张时也一样，因为来宾内 OOM 比宿主换页更糟。增长不超过 profile 上限，也不超过「宿主内存 − 预留」。
+- **宿主紧张时回收**：宿主 `MemAvailable` 低于预留的两倍，或 PSI `some avg10` 达到 10% 时，每台 VM 每轮最多缩小 512 MiB，直到需要量为止。回收的主要是来宾页缓存。
+- **公平份额**：份额 = (宿主内存 − 预留 − 冻结及本轮不调整的 VM 内存) / 可调整的运行中 VM 数。超过份额的 VM 每轮最多缩小 512 MiB，但不低于需要量。例如第二台 VM 启动后，两台会逐步让出内存。
+- **其余情况保持不变**：宿主有空闲内存本身不会让 VM 增长，所以缩小后不会自己弹回。差距不到 512 MiB 时不调整。
+- **不调整的 VM**：冻结、停机、正在准备或正在冷却的 VM 不调整；网关调整某台 VM 时，空闲冷却先等它完成。
+- **来宾不应答**：读取来宾 `/proc/meminfo` 失败的 VM 本轮不调整。连续两轮失败时，它可能正因内存不足而卡顿，网关把它恢复到上限（宿主紧张时每轮增长 512 MiB）。
+
+**失败处理。** 来宾 5 秒内没有到达目标时，Incus 报 `taking too long`。调整失败只记录网关日志，工作台保持就绪；缩小失败后，该 VM 一分钟内不再缩小。每次在线修改，Incus 都会设置 `volatile.vm.needs_reset`：来宾在 VM 内自行重启时，Incus 会完整重启 QEMU，按当时的实例级大小启动。这样的 VM 之后需要增长时，Incus 会热插内存。`volatile.vm.hotplug.memory` 不为空的 VM 在下次启动前只增长、不缩小。网关下次启动它时，会重新按上限启动。
+
+**参数。**
+
+- `-memory-interval`：默认 `15s`，`0` 关闭弹性内存，可设范围为 5 秒到 10 分钟。
+- `-memory-reserve`：宿主自身保留的内存，默认取 2 GiB 与宿主内存 15% 中的较大者。宿主可用内存低于它的两倍时，开始回收来宾缓存。宿主上有 ZFS ARC 等不计入 `MemAvailable` 的大块占用时，应调大该值，例如 `-memory-reserve 4GiB`。
+- `-memory-min`：给运行中 VM 的最小内存，默认 `2GiB`，不能低于 `1GiB`。
+
+网关启动时会记录一行 `elastic VM memory every …`，每次调整也会记录一行，例如 `workspace <id> memory 10240 MiB -> 9728 MiB (host memory is low)`。
+
+**算例。** 宿主 15 GiB，profile 上限 10 GiB，只有一台 VM 在运行。来宾 `MemTotal` 为 9890 MiB、`MemAvailable` 为 3783 MiB，宿主可用 3.1 GiB。预留是 2.25 GiB，宿主可用低于 4.5 GiB，算作紧张，VM 每 15 秒缩小 512 MiB：10 GiB → 9.5 → 9 → 8.5 GiB。宿主可用回到 4.5 GiB 以上时停止。如果宿主一直紧张，最低停在 8 GiB，即 6.0 GiB 工作集加余量和内核占用。
+
+### 空闲页返还（可选）
+
+Incus 6.0 创建的 virtio-balloon 设备没有开启 free page reporting，后续 Incus 版本默认开启。不开启时，来宾释放的内存要等 balloon 下次收缩才回到宿主。网关唯一接受的 `raw.qemu.conf` 是下面这一条 profile 级覆盖，它给 Incus 生成的 `device "qemu_balloon"` 加上 `free-page-reporting`：
+
+```sh
+# raw.qemu.conf 不能在 VM 运行时修改：先停网关，再停所有运行中的租户 VM。
+incus --force-local project set cage-tenant restricted.virtual-machines.lowlevel=allow
+incus --force-local --project cage-tenant profile set default \
+  raw.qemu.conf="$(printf '[device "qemu_balloon"]\nfree-page-reporting = "on"')"
+```
+
+`restricted.virtual-machines.lowlevel=allow` 会让该项目接受所有低级 VM 配置，例如 `raw.qemu` 和 `raw.apparmor`。网关仍拒绝这条以外的全部 `raw.*`，但 Incus 本身不再拦截，项目里的这类限制只剩网关校验一道。只在只有网关能访问 Incus socket 时这样设置。设置后，VM 下次启动时生效。在 VM 内执行 `cut -c6 /sys/bus/virtio/drivers/virtio_balloon/virtio*/features`，输出 `1` 表示来宾已协商该特性（第 6 个字符对应特性位 5，即 `VIRTIO_BALLOON_F_REPORTING`）。这项设置本轮没有在 KVM 宿主上实测。
+
+VM 内嵌套运行的 Super Cage 客机（QEMU 5.1 及以上；仅 Linux 宿主上的 QEMU）默认开启同一特性，嵌套客机释放的内存会先回到租户 VM，再由上面的设置或网关的 balloon 回到宿主。

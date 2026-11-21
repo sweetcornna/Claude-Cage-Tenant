@@ -29,6 +29,10 @@ func (requirements MacOSResourceRequirements) Limits(allocation cage.ResourceAll
 	if err != nil {
 		return 0, 0, err
 	}
+	if allocation.Automatic {
+		// A macOS guest has no balloon to return memory it does not use.
+		memory = min(memory, cage.AutomaticFixedMemoryGiB)
+	}
 	if allocation.Automatic && memory < requirements.MemoryGiB {
 		// The automatic cap must not push a guest below its own minimum while the host can still afford it.
 		memory, _ = cage.ResourceLimits()

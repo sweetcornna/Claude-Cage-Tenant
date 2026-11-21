@@ -30,7 +30,7 @@ func main() {
 func run() error {
 	var config tenant.Config
 	var incus tenant.IncusConfig
-	var listen, uiDir, image, systemsFile, guestAccountFile, instanceType string
+	var listen, uiDir, image, systemsFile, guestAccountFile, instanceType, memoryReserve, memoryMin string
 	var busyPercent float64
 	flag.StringVar(&listen, "listen", "127.0.0.1:8080", "loopback HTTP listen address")
 	flag.StringVar(&config.Origin, "origin", "", "public portal origin, without a trailing slash")
@@ -55,6 +55,9 @@ func run() error {
 	flag.DurationVar(&config.FreezeAfter, "freeze-after", 15*time.Minute, "freeze a workspace after this much idle time; its memory moves to swap and it resumes on the next request (0 disables idle cooling)")
 	flag.DurationVar(&config.StopAfter, "stop-after", 72*time.Hour, "shut a frozen workspace down after this much idle time, keeping its disk (0 keeps it frozen)")
 	flag.Float64Var(&busyPercent, "idle-cpu-percent", 5, "guest CPU use, in percent of one CPU, that counts as activity (0 ignores guest CPU)")
+	flag.DurationVar(&config.MemoryInterval, "memory-interval", 15*time.Second, "resize running VMs to this host's memory this often; the profile limits.memory is each VM's ceiling (0 disables elastic memory; VM mode only)")
+	flag.StringVar(&memoryReserve, "memory-reserve", "", "host memory kept for the host itself, such as 4GiB (default: the larger of 2GiB and 15% of host memory); below twice this much available, VMs give back their caches")
+	flag.StringVar(&memoryMin, "memory-min", "2GiB", "smallest memory size elastic memory gives a running VM (at least 1GiB)")
 	flag.Parse()
 	if flag.NArg() != 0 {
 		return errors.New("unexpected positional arguments")
@@ -68,6 +71,15 @@ func run() error {
 		return errors.New("incus-instance-type must be vm or container")
 	}
 	config.BusyCPU = busyPercent / 100
+	var valid bool
+	if memoryReserve != "" {
+		if config.MemoryReserve, valid = tenant.ParseMemorySize(memoryReserve); !valid {
+			return errors.New("memory-reserve must be a memory size such as 4GiB")
+		}
+	}
+	if config.MemoryMin, valid = tenant.ParseMemorySize(memoryMin); !valid {
+		return errors.New("memory-min must be a memory size such as 2GiB")
+	}
 	host, port, err := net.SplitHostPort(listen)
 	address := net.ParseIP(host)
 	portNumber, portErr := strconv.Atoi(port)

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/sylvinus/agent-vm/internal/host"
 )
 
 // ResourceAllocation is separate from network configuration: changing a VM's
@@ -20,16 +22,24 @@ func ResourceAllocationPath(configPath string) string {
 	return filepath.Join(filepath.Dir(configPath), "resource-limits.json")
 }
 
-// AutomaticMemoryCapGiB bounds the memory an automatically sized VM may grow
-// to. The host share (half of host memory by default) stays the ceiling for a
-// manually chosen allocation, so a 64 GiB host no longer starts every VM with
-// a 32 GiB budget the guest rarely needs.
-const AutomaticMemoryCapGiB = 8
+// An automatically sized VM may grow to three eighths of host memory, at least
+// AutomaticMemoryFloorGiB and at most AutomaticMemoryCapGiB, and never beyond
+// the host share (half of host memory by default), which also bounds a
+// manually chosen allocation. The balloon returns what the guest does not use,
+// so a larger host lends more without starting every VM with half of it.
+const (
+	AutomaticMemoryFloorGiB = 8
+	AutomaticMemoryCapGiB   = 32
+	// AutomaticFixedMemoryGiB caps the automatic memory of a guest without a
+	// memory balloon, such as macOS: it keeps everything it boots with.
+	AutomaticFixedMemoryGiB = 8
+)
 
 // AutomaticMemoryGiB is the memory ceiling of an automatic allocation on a
-// host whose share is shareGiB.
+// host whose share is shareGiB. Inside a tenant VM the host is that VM, so the
+// share keeps half of it for the VM's own system.
 func AutomaticMemoryGiB(shareGiB int) int {
-	return min(shareGiB, AutomaticMemoryCapGiB)
+	return min(shareGiB, max(AutomaticMemoryFloorGiB, host.MemGiB()*3/8), AutomaticMemoryCapGiB)
 }
 
 func (a ResourceAllocation) Limits() (memory, cpus int, err error) {
