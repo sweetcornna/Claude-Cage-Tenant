@@ -1705,8 +1705,24 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
     }
     tablist.addEventListener("scroll", updateTabFade, { passive: true });
     win.addEventListener("resize", updateTabFade, { signal: shellListeners.signal });
+    // Keep the selected tab clear of the edge fade after the strip narrows (the context bar widens as a VM's
+    // status text changes), which can push a tab that was in view on selection back under the edge.
+    function revealSelectedTab() {
+      const tab = tablist.querySelector('[role=tab][aria-selected="true"]');
+      if (!tab) return;
+      const strip = tablist.getBoundingClientRect();
+      const box = tab.getBoundingClientRect();
+      const edge = 40;
+      if (box.right > strip.right - 4) tablist.scrollLeft += box.right - strip.right + edge;
+      else if (box.left < strip.left + 4) tablist.scrollLeft -= strip.left - box.left + edge;
+    }
     // The strip also changes width when the context bar appears or the banner shows, without a window resize.
-    const tabResize = typeof win.ResizeObserver === "function" ? new win.ResizeObserver(updateTabFade) : null;
+    const tabResize = typeof win.ResizeObserver === "function"
+      ? new win.ResizeObserver(() => {
+          revealSelectedTab();
+          updateTabFade();
+        })
+      : null;
     tabResize?.observe(tablist);
 
     function createTab(id) {
