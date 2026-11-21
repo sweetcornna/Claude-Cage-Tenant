@@ -32,6 +32,11 @@ var cliDiscoveryEncoded = func() string {
 // resident helper failed a request.
 const residentRetry = time.Minute
 
+// residentReadTimeout bounds a discover or view on the resident helper,
+// including its start, so a stalled connection leaves the channel helper
+// most of the request's 15 s.
+const residentReadTimeout = 8 * time.Second
+
 // residentLifetime bounds one resident helper. After it, the helper answers
 // residentRetired without reading the request, and a new one, started through
 // a fresh login shell, takes over; changes to the login environment apply.
@@ -214,6 +219,8 @@ func (s *Server) residentCLIChannel(ctx context.Context, mode string, input any,
 		if mode != "discover" {
 			return false
 		}
+		ctx, cancel := context.WithTimeout(ctx, residentReadTimeout)
+		defer cancel()
 		reply, outcome := s.residentRequest(ctx, mode, input)
 		var answer struct {
 			Hash     string                 `json:"hash"`
@@ -229,6 +236,8 @@ func (s *Server) residentCLIChannel(ctx context.Context, mode string, input any,
 		if mode != "view" {
 			return false
 		}
+		ctx, cancel := context.WithTimeout(ctx, residentReadTimeout)
+		defer cancel()
 		reply, outcome := s.residentRequest(ctx, mode, input)
 		var current terminalConversation
 		if outcome != residentAnswered || json.Unmarshal(reply, &current) != nil || current.WatchKey == "" {
