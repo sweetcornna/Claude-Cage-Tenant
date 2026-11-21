@@ -125,13 +125,12 @@ func (s *Server) workbench(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	defer workspace.touch()
-	select {
-	case workspace.slots <- struct{}{}:
-		defer func() { <-workspace.slots }()
-	default:
+	release, admitted := workspace.acquire(r)
+	if !admitted {
 		rateLimited(w)
 		return
 	}
+	defer release()
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	stopLogin := context.AfterFunc(grant.login.ctx, cancel)

@@ -1058,7 +1058,7 @@ func TestTenantRecheckKeepsBusyWorkspace(t *testing.T) {
 	workspace.checkedAt = s.now().Add(-readinessTTL)
 	s.mu.Unlock()
 	// Occupy the entire workbench pool with ordinary long-lived streams.
-	streams := make([]io.ReadCloser, 0, cap(workspace.slots))
+	streams := make([]io.ReadCloser, 0, workspace.transport.MaxConnsPerHost)
 	defer func() {
 		for _, stream := range streams {
 			stream.Close()
@@ -1066,7 +1066,7 @@ func TestTenantRecheckKeepsBusyWorkspace(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
 	defer cancel()
-	for range cap(workspace.slots) {
+	for range workspace.transport.MaxConnsPerHost {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, workspace.origin.String()+"/stream", nil)
 		if err != nil {
 			t.Fatal(err)

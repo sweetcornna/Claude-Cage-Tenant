@@ -23,6 +23,14 @@ var errControllerSession = errors.New("workspace controller session has expired"
 // is closing.
 const idleConnTimeout = 45 * time.Second
 
+// Each workspace has two budgets of simultaneous proxied requests. Streams
+// (WebSockets and server-sent events) live for as long as a browser tab does,
+// so they must not use up the places ordinary requests need.
+const (
+	maxRequestSlots = 64
+	maxStreamSlots  = 128
+)
+
 type Workspace struct {
 	origin          *url.URL
 	cookie          *http.Cookie
@@ -31,6 +39,7 @@ type Workspace struct {
 	ctx             context.Context
 	cancel          context.CancelFunc
 	slots           chan struct{}
+	streamSlots     chan struct{} // the budget of streams; slots is the one of ordinary requests
 	checkedAt       time.Time
 	nextProbe       time.Time
 	nextFaultProbe  time.Time
@@ -59,7 +68,7 @@ func newWorkspace(port int, dial func(context.Context) (net.Conn, error)) *Works
 		// Every new guest connection starts a transport process in the VM.
 		// Keep enough warm connections for the workbench's polling and its
 		// reconnecting streams instead of paying that start on each request.
-		MaxConnsPerHost: 64, MaxIdleConns: 16, MaxIdleConnsPerHost: 16,
+		MaxConnsPerHost: maxRequestSlots + maxStreamSlots, MaxIdleConns: 16, MaxIdleConnsPerHost: 16,
 		IdleConnTimeout: idleConnTimeout, ResponseHeaderTimeout: 90 * time.Second,
 		ExpectContinueTimeout: time.Second, MaxResponseHeaderBytes: 64 << 10,
 	}
@@ -70,7 +79,7 @@ func newWorkspace(port int, dial func(context.Context) (net.Conn, error)) *Works
 	control.MaxIdleConns = 1
 	control.MaxIdleConnsPerHost = 1
 	awake, doze := context.WithCancel(ctx)
-	workspace := &Workspace{origin: origin, transport: transport, control: control, ctx: ctx, cancel: cancel, slots: make(chan struct{}, 64), awake: awake, doze: doze}
+	workspace := &Workspace{origin: origin, transport: transport, control: control, ctx: ctx, cancel: cancel, slots: make(chan struct{}, maxRequestSlots), streamSlots: make(chan struct{}, maxStreamSlots), awake: awake, doze: doze}
 	workspace.touch()
 	return workspace
 }
