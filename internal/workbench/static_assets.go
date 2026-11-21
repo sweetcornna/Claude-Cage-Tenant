@@ -269,12 +269,19 @@ func (h *staticHandler) represent(asset *staticAsset, r *http.Request) (*staticR
 	return best, encoding
 }
 
-// staticErrorWriter marks error responses no-store again: http.ServeContent
-// removes Cache-Control from the errors it writes itself (416, 412).
-type staticErrorWriter struct{ http.ResponseWriter }
+// staticStatusWriter keeps the headers of a successful response off the other
+// ones. http.ServeContent answers a failed If-Match (412) without a body and
+// without touching headers set for the 200, and removes Cache-Control from the
+// errors it writes itself (416): the coded-body headers must go and no-store
+// must come back.
+type staticStatusWriter struct{ http.ResponseWriter }
 
-func (w staticErrorWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
-func (w staticErrorWriter) WriteHeader(status int) {
+func (w staticStatusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+func (w staticStatusWriter) WriteHeader(status int) {
+	if status != http.StatusOK && status != http.StatusPartialContent {
+		w.Header().Del("Content-Encoding")
+		w.Header().Del("Content-Length")
+	}
 	if status >= http.StatusBadRequest {
 		w.Header().Set("Cache-Control", "no-store")
 	}
@@ -333,5 +340,5 @@ func (h *staticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		header.Set("Content-Encoding", encoding)
 		header.Set("Content-Length", strconv.Itoa(len(representation.data)))
 	}
-	http.ServeContent(staticErrorWriter{w}, r, asset.name, time.Time{}, bytes.NewReader(representation.data))
+	http.ServeContent(staticStatusWriter{w}, r, asset.name, time.Time{}, bytes.NewReader(representation.data))
 }

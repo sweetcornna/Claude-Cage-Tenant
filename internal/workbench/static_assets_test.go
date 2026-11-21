@@ -289,6 +289,17 @@ func TestStaticRangeServesIdentityBytes(t *testing.T) {
 	}
 }
 
+func TestStaticFailedPreconditionIsAPlainError(t *testing.T) {
+	f := newStaticFixture(t)
+	response, body := f.get("GET", "/assets/main-AbCd1234.js", map[string]string{"Accept-Encoding": "br", "If-Match": `"nothing"`})
+	if response.StatusCode != 412 || response.Header.Get("Content-Encoding") != "" || response.Header.Get("Cache-Control") != "no-store" || bytes.Contains(body, f.mainBr) {
+		t.Errorf("If-Match mismatch: %d encoding=%q cache=%q body=%q", response.StatusCode, response.Header.Get("Content-Encoding"), response.Header.Get("Cache-Control"), body)
+	}
+	if length := response.Header.Get("Content-Length"); length != "" && length != strconv.Itoa(len(body)) {
+		t.Errorf("Content-Length %q for a %d byte error", length, len(body))
+	}
+}
+
 func TestStaticContentTypeIgnoresTheHostMIMERegistry(t *testing.T) {
 	// On Windows the registry can map .js to text/plain; with nosniff the
 	// browser then refuses to run the page's modules.
