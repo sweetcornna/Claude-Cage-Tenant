@@ -38,7 +38,7 @@ for i in $(seq 1 240); do
   fi
   if systemctl is-failed --quiet "$unit"; then
     echo 'Claude Science 未能启动。它的沙箱需要 bubblewrap 0.8 或更高版本以及可用的用户命名空间；最近的日志如下，已隐去登录链接。' >&2
-    sudo journalctl --namespace=cage -u "$unit" -n 30 --no-pager -o cat 2>/dev/null | sed -E 's/nonce=[^[:space:]&"]*/nonce=…/g' >&2 || true
+    sudo journalctl --namespace=cage -u "$unit" -n 30 --no-pager -o cat 2>/dev/null | sed -E 's/nonce=[^[:space:]&"]*/nonce=…/g; s/([?&](code|state)=)[^[:space:]&"#]*/\1…/g' >&2 || true
     exit 1
   fi
   sleep .5

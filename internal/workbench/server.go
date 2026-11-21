@@ -47,6 +47,7 @@ type Server struct {
 	desktopDisplayUpdate                             func(bool) error
 	browserViews                                     displayViewDemand
 	desktopStatus                                    desktopStatusCache
+	scienceLast                                      claudeScienceLast
 	agentNativeQueue                                 agentNativeQueue
 	macSetupProjectsChecked                          time.Time
 	macSetupProjectsAttempt                          time.Time
