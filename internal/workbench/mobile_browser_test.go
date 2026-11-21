@@ -37,6 +37,7 @@ func testPairedBrowser(t *testing.T, ctx context.Context, s *Server, phone *mobi
 	if len(profile) != 64 {
 		t.Fatal("missing enrollment profile")
 	}
+	testPairedFrameStream(t, ctx, s, phone)
 	const customHome = "https://example.com/start?source=desktop"
 	const blockedHome = "http://127.0.0.1/private"
 	openedURLs := make(chan string, 6)
