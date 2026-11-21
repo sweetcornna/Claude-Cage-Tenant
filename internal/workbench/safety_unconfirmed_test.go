@@ -199,6 +199,7 @@ func shortMonitorTiming(t *testing.T) {
 func TestUnconfirmedReadsUntilDeadlineEndWithGateTimer(t *testing.T) {
 	s, gate := unconfirmedMonitorServer(t)
 	shortMonitorTiming(t)
+	writeGuestPressure(t, s) // The field case: the guest is short of memory throughout.
 	gate.ShortenLeaseForTest(2500 * time.Millisecond)
 	if err := gate.Renew(gate.Status().Report.ID); err != nil {
 		t.Fatal(err)
@@ -250,8 +251,50 @@ func TestUnconfirmedReadsUntilDeadlineEndWithGateTimer(t *testing.T) {
 	if !strings.Contains(s.safety.monitorError, "联网许可到期前仍无法读取系统时区和语言") {
 		t.Fatalf("closure reason: %q", s.safety.monitorError)
 	}
-	if e := s.safety.Explanation; e == nil || e.State != networkRecheckScheduled || e.RecheckAt == nil {
+	e := s.safety.Explanation
+	if e == nil || e.State != networkRecheckScheduled || e.RecheckAt == nil || !e.MemoryShort ||
+		strings.Count(e.Reason, "环境内存不足") != 1 || !strings.HasSuffix(e.Reason, "联网许可到期前仍无法读取系统时区和语言，外网已暂停") {
 		t.Fatalf("explanation after expiry: %+v", e)
+	}
+	if message := s.currentNetworkErrorLocked(); strings.Count(message, "环境内存不足") > 1 || !strings.Contains(message, "自动重检将在") {
+		t.Fatalf("network_error after expiry: %s", message)
+	}
+}
+
+func TestSlowButCorrectAnswerStillRenews(t *testing.T) {
+	// With the default timing a read keeps the monitor's whole budget, as
+	// before: a slow guest that answers correctly is not cut short.
+	s, gate := unconfirmedMonitorServer(t)
+	cfg, _ := loadConfig(s.configPath)
+	var budget time.Duration
+	fakeMonitorReads(t, func(ctx context.Context) (guestObservation, error) {
+		deadline, _ := ctx.Deadline()
+		budget = time.Until(deadline)
+		return matchingGuestSettings(cfg), nil
+	}, func(context.Context) (browserObservation, error) { return matchingBrowserSettings(cfg), nil })
+	s.monitorSafetyWithProbe(exitProbeOK)
+	if budget < 40*time.Second {
+		t.Fatalf("a guest read on a fresh lease gets only %s", budget)
+	}
+	// A slow correct answer inside a short lease renews it.
+	s, gate = unconfirmedMonitorServer(t)
+	shortMonitorTiming(t)
+	gate.ShortenLeaseForTest(2500 * time.Millisecond)
+	if err := gate.Renew(gate.Status().Report.ID); err != nil {
+		t.Fatal(err)
+	}
+	s.publishGate(gate.Status())
+	before := gate.Status()
+	fakeMonitorReads(t, func(context.Context) (guestObservation, error) {
+		time.Sleep(300 * time.Millisecond)
+		return matchingGuestSettings(cfg), nil
+	}, func(context.Context) (browserObservation, error) {
+		time.Sleep(300 * time.Millisecond)
+		return matchingBrowserSettings(cfg), nil
+	})
+	s.monitorSafetyWithProbe(exitProbeOK)
+	if after := gate.Status(); after.Mode != cage.GateOpen || !after.Until.After(before.Until) || s.safety.Explanation != nil {
+		t.Fatalf("a slow correct answer did not renew: before=%+v after=%+v", before, after)
 	}
 }
 

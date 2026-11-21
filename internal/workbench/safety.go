@@ -71,13 +71,14 @@ var (
 	}
 )
 
-// Timing of the monitor's guest reads within a lease. A read gets at most
-// monitorReadLimit and ends monitorRenewMargin before the lease does, so a
-// confirmed round can still renew. After a round that could not confirm, the
-// next starts monitorRetrySpacing later, and a last one starts
-// monitorLastAttempt before the lease ends.
+// Timing of the monitor's guest reads within a lease. A read keeps the
+// monitor's own budget (its 45 s context, as before) but ends
+// monitorRenewMargin before the lease does, so a confirmed round can still
+// renew. After a round that could not confirm, the next starts
+// monitorRetrySpacing later, and a last one starts monitorLastAttempt before
+// the lease ends.
 var (
-	monitorReadLimit    = 20 * time.Second
+	monitorReadLimit    = 45 * time.Second
 	monitorRenewMargin  = 3 * time.Second
 	monitorReadMinimum  = 2 * time.Second
 	monitorRetrySpacing = 15 * time.Second
@@ -1379,11 +1380,12 @@ func (s *Server) deferUnconfirmedObservation(client *cage.GateClient, observed c
 	d.Attempts++
 	d.RetryAt = nextMonitorAttempt(now, current.Until)
 	s.safety.deferral = d
+	// monitorError keeps the raw cause; the explanation adds the memory reason.
 	if stage == "exit_ip" {
 		s.safety.monitorError = "出口检测暂时超时，正在重试；现有联网许可未延长"
 	} else {
 		s.safety.memory = memory
-		s.safety.monitorError = withMemoryReason(memory, "暂时"+unconfirmedStage(stage)+"，正在重试；现有联网许可未延长")
+		s.safety.monitorError = "暂时" + unconfirmedStage(stage) + "，正在重试；现有联网许可未延长"
 	}
 	s.refreshNetworkExplanationLocked(now)
 	s.mu.Unlock()
@@ -1433,7 +1435,7 @@ func (s *Server) noteExpiredDeferral(state cage.GateStatus) {
 	}
 	s.safety.deferral = monitorDeferral{}
 	s.safety.memory = memory
-	s.safety.monitorError = withMemoryReason(memory, "联网许可到期前仍"+unconfirmedStage(d.Stage)+"，外网已暂停")
+	s.safety.monitorError = "联网许可到期前仍" + unconfirmedStage(d.Stage) + "，外网已暂停"
 	s.refreshNetworkExplanationLocked(time.Now())
 	diagnostics.Log("warn", "network", fmt.Sprintf("monitoring lease ran out unconfirmed stage=%s attempts=%d memory_short=%t", d.Stage, d.Attempts, memory.Short))
 }

@@ -381,8 +381,14 @@ func (s *Server) networkExplanationLocked(now time.Time) *networkExplanation {
 		e.Next = "外网暂时保持开放，但联网许可没有延长。系统会继续重试；许可到期前仍无法确认时，外网会自动暂停并安排完整重检。"
 		return e
 	}
-	e.Reason = withMemoryReason(memory, reason)
+	if s.proxyNetworkLost {
+		e.State, e.Reason = networkRecheckScheduled, reason
+		e.Next = "外网暂停中。电脑的网络恢复后，会自动重新连接代理并重新检测。"
+		return e
+	}
 	if r, pending := s.pendingRecoveryLocked(); pending {
+		// A temporary failure: the memory shortage is its likely cause.
+		e.Reason = withMemoryReason(memory, reason)
 		job := s.jobs.snapshot()
 		switch {
 		case job.Running && job.Kind == "network-recovery":
@@ -417,10 +423,14 @@ func (s *Server) networkExplanationLocked(now time.Time) *networkExplanation {
 	}
 	if gate.Report != nil && (gate.Reason == gateLeaseExpired || s.windowsGuest != nil && gate.Reason == windowsPacketDisconnectedReason) {
 		// The monitor schedules the recheck on its next round.
-		e.State, e.Next = networkRecheckScheduled, "外网暂停中。马上安排自动完整重检，通过后自动恢复联网。"
+		e.State, e.Reason = networkRecheckScheduled, withMemoryReason(memory, reason)
+		e.Next = "外网暂停中。马上安排自动完整重检，通过后自动恢复联网。"
 		return e
 	}
-	e.State, e.Next = networkCheckRequired, "外网保持关闭，不会自动恢复。处理上述问题后请重新检测。"
+	// No automatic recheck is scheduled. Memory stays in memory_short and
+	// advice; the reason is the closure's own cause.
+	e.State, e.Reason = networkCheckRequired, reason
+	e.Next = "外网保持关闭，目前没有安排自动重检。处理上述问题后请重新检测。"
 	return e
 }
 

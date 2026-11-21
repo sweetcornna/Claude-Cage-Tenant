@@ -170,7 +170,7 @@ func TestNetworkExplanationReachesStatusPhoneAndProxyLabel(t *testing.T) {
 	}
 	e := status.Safety.Explanation
 	if status.Safety.Gate == nil || status.Safety.Gate.Mode != cage.GateClosed || e.State != networkWaitingMemory || !e.MemoryShort ||
-		e.RecheckAt == nil || len(e.Advice) == 0 || !strings.Contains(e.Reason, "46 MB") || !strings.Contains(status.NetworkError, "自动重检最多再等待") {
+		e.RecheckAt == nil || len(e.Advice) == 0 || strings.Count(e.Reason, "46 MB") != 1 || !strings.Contains(status.NetworkError, "自动重检最多再等待") {
 		t.Fatalf("/api/status: %s", response.Body.String())
 	}
 	w := request(s, "GET", "/api/mobile/environment", "", "", true)
