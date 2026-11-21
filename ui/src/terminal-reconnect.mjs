@@ -21,6 +21,12 @@ export const terminalNoticeDelayMs = 1_500;
 // Waking a frozen workspace can take most of it.
 export const terminalConnectTimeoutMs = 20_000;
 
+// A terminal hidden this long gives its stream up until it is shown again,
+// then resumes after the last byte it received. Streams carry heartbeats, so
+// a hidden terminal would otherwise keep the network, the guest and the
+// tenant's idle clock busy for nothing.
+export const terminalSuspendMs = 120_000;
+
 // A stream that stayed open this long was dropped by the network, not refused.
 const stableMs = 10_000;
 // After this many quick failures in a row the view stops and offers the button.

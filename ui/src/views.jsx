@@ -18,7 +18,7 @@ import { readClipboardContent, transferFiles, hasFiles, imagePayload, prepareCli
 import { terminalClipboardText } from "./terminal-clipboard.mjs";
 import {
   terminalConnectTimeoutMs, terminalHistoryPlan, terminalKeepaliveMessage, terminalKeepaliveMs, terminalLiveness,
-  terminalNoticeDelayMs, terminalProbeMs, terminalReconnectPlan, terminalStreamPath, terminalWatchdogMs,
+  terminalNoticeDelayMs, terminalProbeMs, terminalReconnectPlan, terminalStreamPath, terminalSuspendMs, terminalWatchdogMs,
 } from "./terminal-reconnect.mjs";
 import { sendFiles, shellFilePaths } from "./file-transfer";
 import { installRemoteInput } from "./remote-input";
@@ -300,7 +300,8 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
     instance = useRef(),
     fit = useRef(),
     socket = useRef(),
-    renderer = useRef();
+    renderer = useRef(),
+    streamVisibility = useRef();
   // "connecting" until the first stream opens, then "open" or "retrying";
   // "stalled" after repeated quick failures and "ended" once the session exits.
   const [link, setLink] = useState("connecting"),
@@ -411,6 +412,9 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
     const stream = { offset: null, heartbeats: false, lastReceived: 0, lastPing: 0, probe: 0 };
     let failures = 0, openedAt = 0, ended = false;
     let retryTimer = null, noticeTimer = null, probeTimer = null, openTimer = null, watchdog = null;
+    // hiddenSince is when the view was last hidden (0 while shown); a view
+    // hidden for terminalSuspendMs is suspended: no stream until it is shown.
+    let hiddenSince = visibleRef.current ? 0 : Date.now(), suspended = false, suspendTimer = null;
     // Bytes still to come in the current replay, or one whole frame from a
     // server without offsets. Replayed output never writes the clipboard.
     let replayRemaining = 0, replayFrame = false, replaying = 0;
@@ -435,6 +439,7 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
     };
     const receiveFrame = (event) => {
       stream.lastReceived = Date.now();
+      if (typeof event.data !== "string") perf.wrote(event.data.byteLength);
       stream.probe = 0;
       if (typeof event.data === "string") {
         let state;
@@ -464,8 +469,8 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
     };
     // lost handles the end of the current stream once, whether it closed or
     // the watchdog gave up on it, and schedules the next attempt.
-    const lost = (current) => {
-      if (ws !== current) return;
+    // detach forgets the current stream and its timers and closes it.
+    const detach = (current) => {
       ws = null;
       socket.current = null;
       clearInterval(watchdog);
@@ -475,6 +480,10 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
       current.onopen = current.onmessage = current.onclose = null;
       // A dead path may never finish the closing handshake; do not wait for it.
       try { current.close(); } catch { /* already closed */ }
+    };
+    const lost = (current) => {
+      if (ws !== current) return;
+      detach(current);
       if (disposed) return;
       reveal();
       if (ended || closedRef.current) {
@@ -507,10 +516,47 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
       if (action === "dead") lost(ws);
       else if (action !== "idle") keepalive(action === "probe");
     };
+    // Only a stream that can resume after its last byte (its server reports
+    // offsets) is given up; a server without offsets would replay everything.
+    const dormant = () => !visibleRef.current && hiddenSince > 0 && !closedRef.current &&
+      stream.offset !== null && Date.now() - hiddenSince >= terminalSuspendMs;
+    const suspendStream = () => {
+      suspended = true;
+      clearTimeout(retryTimer);
+      retryTimer = null;
+      if (ws) detach(ws);
+      clearNotice();
+      // A slow resume then shows the quiet reconnect note, as after a drop.
+      setLink((state) => (state === "open" ? "retrying" : state));
+      perf.stream("suspended");
+    };
+    // A stalled view (no stream, no retry pending) keeps waiting for its button.
+    const suspend = () => {
+      if (!suspended && !disposed && !ended && (ws || retryTimer) && dormant()) suspendStream();
+    };
+    streamVisibility.current = (shown) => {
+      clearTimeout(suspendTimer);
+      suspendTimer = null;
+      if (!shown) {
+        if (!hiddenSince) hiddenSince = Date.now();
+        suspendTimer = setTimeout(suspend, Math.max(0, hiddenSince + terminalSuspendMs - Date.now()));
+        return;
+      }
+      hiddenSince = 0;
+      if (!suspended) return;
+      suspended = false;
+      failures = 0;
+      perf.stream("resumed");
+      // Directly, not through resume(): a session that ended meanwhile still
+      // has its last output and exit to deliver.
+      connect();
+    };
     const connect = () => {
       clearTimeout(retryTimer);
       retryTimer = null;
-      if (disposed || ended || ws) return;
+      if (disposed || ended || ws || suspended) return;
+      // A retry or a wake-up of a view hidden long enough suspends it instead.
+      if (dormant()) return void suspendStream();
       const current = new WebSocket(runtimeSocketURL(terminalStreamPath(session.id, stream.offset)));
       current.binaryType = "arraybuffer";
       ws = current;
@@ -529,6 +575,7 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
         openTimer = null;
         openedAt = stream.lastReceived = stream.lastPing = Date.now();
         stream.probe = 0;
+        perf.stream("opened");
         clearNotice();
         setLink("open");
         watchdog = setInterval(check, terminalWatchdogMs);
@@ -710,6 +757,8 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
     return () => {
       disposed = true;
       clearTimeout(startupTimer);
+      clearTimeout(suspendTimer);
+      streamVisibility.current = null;
       clearTimeout(retryTimer);
       clearTimeout(noticeTimer);
       clearTimeout(probeTimer);
@@ -743,6 +792,7 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
   useEffect(() => {
     if (visible) renderer.current?.show();
     else renderer.current?.hide();
+    streamVisibility.current?.(visible);
   }, [visible]);
   useEffect(() => {
     if (visible) {
