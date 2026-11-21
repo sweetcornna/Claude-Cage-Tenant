@@ -26,7 +26,7 @@ func embeddedEntryAsset(t *testing.T) string {
 	}
 	match := regexp.MustCompile(`src="(/assets/[^"]+\.js)"`).FindSubmatch(html)
 	if match == nil {
-		t.Fatal("index.html has no hashed entry script")
+		t.Skip("the embedded web directory holds no built UI (run npm --prefix ui run build)")
 	}
 	return string(match[1])
 }
