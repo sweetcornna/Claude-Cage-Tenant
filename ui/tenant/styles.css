@@ -20,7 +20,8 @@
   --amber: #9a6700;
   --error: #b3261e;
   --error-soft: #f8e7e4;
-  --scrim: #1f1e1d59;
+  /* Warm ink, not neutral grey, so the page behind a dialog keeps its paper tone. */
+  --scrim: #2e201866;
   --shadow: 0 1px 2px #1f1e1d0a, 0 8px 28px #1f1e1d10;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC", sans-serif;
   --serif: "New York", ui-serif, "Iowan Old Style", "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", Georgia, "Microsoft YaHei UI", "Noto Sans CJK SC", serif;
@@ -1303,6 +1304,28 @@ button {
 .vm-error {
   color: var(--error);
   font-size: 13px;
+}
+
+/* The server's own words when they could not be translated: small and quiet, kept for support. */
+.vm-error-detail,
+.hero-detail,
+.note-detail {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.hero-detail {
+  max-width: 400px;
+  margin-top: 6px;
+}
+
+.note-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .vm-card > .chip {

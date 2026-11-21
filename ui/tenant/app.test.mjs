@@ -853,6 +853,78 @@ describe("新建虚拟机", () => {
 
 });
 
+describe("错误文本映射", () => {
+  // Every code internal/tenant can answer with, and its English message: none may reach the user as English.
+  const GATEWAY = [
+    ["session_changed", 409, "The signed-in account has changed. Refresh your session and try again.", "登录账户已在其他标签页变化。"],
+    ["registration_closed", 403, "Self-service registration is closed. Contact the administrator for an account.", "此门户未开放自助注册，请联系管理员获取账户。"],
+    ["invalid_credentials", 401, "Invalid username or password.", "用户名或密码不正确。"],
+    ["username_taken", 409, "Username is already registered.", "该用户名已被使用。"],
+    ["vm_limit", 409, "The workspace quota has been reached.", "已达到虚拟机数量上限。"],
+    ["invalid_input", 400, "Invalid request fields.", "输入内容无效，请检查后重试。"],
+    ["invalid_input", 400, "Invalid request target.", "输入内容无效，请检查后重试。"],
+    ["origin_refused", 403, "Request host is not allowed.", "请求来源被拒绝，请从门户地址重新打开页面。"],
+    ["origin_refused", 403, "Request origin is not allowed.", "请求来源被拒绝，请从门户地址重新打开页面。"],
+    ["runtime_unavailable", 503, "The service or workspace is temporarily unavailable.", "虚拟机运行时暂时不可用，请稍后重试。"],
+    ["not_found", 404, "Resource not found.", "请求的内容不存在。"],
+    ["vm_not_found", 404, "Workspace not found.", "虚拟机不存在或无权访问。"],
+    ["unauthenticated", 401, "A valid sign-in is required.", "登录已失效，请重新登录。"],
+    ["rate_limited", 429, "Too many requests. Try again shortly.", "操作过于频繁，请稍后再试。"],
+    ["invalid_content_type", 415, "Use application/json with UTF-8.", "请求格式不受支持。"],
+  ];
+
+  test("网关的每个错误码都换成中文，不显示英文原文", () => {
+    for (const [code, status, english, chinese] of GATEWAY) {
+      assert.deepEqual(app.describeProblem(code, english, status), { message: chinese }, code);
+    }
+  });
+
+  test("已经是中文的服务端文本原样显示", () => {
+    assert.deepEqual(app.describeProblem("vm_limit", "每个账户最多 5 台虚拟机。", 409), { message: "每个账户最多 5 台虚拟机。" });
+    assert.deepEqual(app.describeProblem("mystery", "  镜像缺失\u0000 ", 500), { message: "镜像缺失" });
+  });
+
+  test("未知错误码：通用中文句子，服务端原文作为次要说明", () => {
+    assert.deepEqual(app.describeProblem("quota_frozen", "Quota is frozen.", 409), { message: "请求失败（HTTP 409），请稍后重试。", detail: "Quota is frozen." });
+    assert.deepEqual(app.describeProblem(undefined, "Unexpected token < in JSON", 0), { message: "请求失败，请稍后重试。", detail: "Unexpected token < in JSON" });
+    assert.deepEqual(app.describeProblem("quota_frozen", "", 502), { message: "请求失败（HTTP 502），请稍后重试。" });
+    assert.deepEqual(app.describeProblem("toString", "x", 400), { message: "请求失败（HTTP 400），请稍后重试。", detail: "x" }, "原型上的名字不算已知错误码");
+  });
+
+  test("虚拟机启动失败文本：网关的固定句子换成中文，其他英文保留为说明", () => {
+    const startup = "The workspace is unavailable. Open it again to retry.";
+    assert.deepEqual(app.describeVmFailure(startup), { message: "虚拟机暂时无法启动，可以重新打开再试。" });
+    assert.deepEqual(app.describeVmFailure("disk quota exceeded"), { message: "虚拟机启动失败，可以重试。", detail: "disk quota exceeded" });
+    assert.deepEqual(app.describeVmFailure("所选系统镜像缺失。"), { message: "所选系统镜像缺失。" });
+    assert.equal(app.describeVmFailure("  "), null);
+    const failed = app.normalizeVm(vm(ID_A, "error", { message: startup }));
+    assert.equal(failed.message, "虚拟机暂时无法启动，可以重新打开再试。");
+    assert.equal("message_detail" in failed, false);
+    assert.equal(app.normalizeVm(vm(ID_A, "error", { message: "disk quota exceeded" })).message_detail, "disk quota exceeded");
+  });
+
+  test("控制器经过映射：英文错误显示中文，未知错误码保留原文", async () => {
+    const ctx = setup();
+    await signIn(ctx, { vms: [], limit: 5 });
+    ctx.portal.openCreate();
+    const creating = ctx.portal.createVm("第一台");
+    ctx.f.next("POST", "/api/tenant/vms").respond(400, { error: { code: "invalid_input", message: "Invalid request fields." } });
+    await creating;
+    assert.equal(ctx.state.create.error.message, "输入内容无效，请检查后重试。");
+    assert.equal("detail" in ctx.state.create.error, false);
+
+    const again = ctx.portal.createVm("第一台");
+    ctx.f.next("POST", "/api/tenant/vms").respond(409, { error: { code: "quota_frozen", message: "Quota is frozen." } });
+    await again;
+    assert.equal(ctx.state.create.error.message, "请求失败（HTTP 409），请稍后重试。");
+    assert.equal(ctx.state.create.error.detail, "Quota is frozen.");
+  });
+
+  test("总览行的操作文字：开机中的虚拟机只查看进度", () => {
+    assert.deepEqual({ ...app.VM_ACTION_LABELS }, { ready: "打开", starting: "查看进度", stopped: "启动并打开", error: "启动并打开" });
+  });
+});
+
 describe("会话绑定与跨标签同步", () => {
   const unauth = { error: { code: "unauthenticated", message: "请先登录。" } };
   const changed = { error: { code: "session_changed", message: "登录账户已变化。" } };

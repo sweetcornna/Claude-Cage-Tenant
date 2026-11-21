@@ -131,8 +131,9 @@ export function normalizeVm(raw) {
     created_at: typeof raw.created_at === "string" ? raw.created_at : "",
   };
   if (state === "error") {
-    const message = cleanText(raw.message);
-    if (message) vm.message = message;
+    const failure = describeVmFailure(raw.message);
+    if (failure) vm.message = failure.message;
+    if (failure?.detail) vm.message_detail = failure.detail;
   }
   return vm;
 }
@@ -203,6 +204,8 @@ const FALLBACK_MESSAGES = Object.freeze({
   invalid_credentials: "用户名或密码不正确。",
   username_taken: "该用户名已被使用。",
   vm_not_found: "虚拟机不存在或无权访问。",
+  not_found: "请求的内容不存在。",
+  forbidden: "没有权限执行此操作。",
   invalid_input: "输入内容无效，请检查后重试。",
   invalid_content_type: "请求格式不受支持。",
   vm_limit: "已达到虚拟机数量上限。",
@@ -227,10 +230,37 @@ function codeForStatus(status) {
 }
 
 export function fallbackMessage(code, status = 0) {
+  // Own keys only: a code such as "constructor" must not pick up an Object.prototype member.
   return (
-    FALLBACK_MESSAGES[code] ||
+    (Object.hasOwn(FALLBACK_MESSAGES, code) && FALLBACK_MESSAGES[code]) ||
     (status ? `请求失败（HTTP ${status}），请稍后重试。` : "请求失败，请稍后重试。")
   );
+}
+
+// The gateway answers in English and the portal speaks Chinese. Text that is already Chinese (a localized
+// server, or the mock) is shown as sent. English text is replaced by the sentence for its error code; with
+// an unknown code the user gets a generic sentence and the server's own words stay as secondary detail.
+const HAN = /\p{Script=Han}/u;
+
+export function describeProblem(code, message, status = 0) {
+  const text = cleanText(message);
+  if (text && HAN.test(text)) return { message: text };
+  if (Object.hasOwn(FALLBACK_MESSAGES, code)) return { message: FALLBACK_MESSAGES[code] };
+  const generic = fallbackMessage(code, status);
+  return text ? { message: generic, detail: text } : { message: generic };
+}
+
+// A failed VM's message carries no code; these are the gateway's fixed sentences for it.
+const VM_FAILURE_MESSAGES = Object.freeze({
+  "The workspace is unavailable. Open it again to retry.": "虚拟机暂时无法启动，可以重新打开再试。",
+});
+
+export function describeVmFailure(message) {
+  const text = cleanText(message);
+  if (!text) return null;
+  if (HAN.test(text)) return { message: text };
+  if (Object.hasOwn(VM_FAILURE_MESSAGES, text)) return { message: VM_FAILURE_MESSAGES[text] };
+  return { message: "虚拟机启动失败，可以重试。", detail: text };
 }
 
 export class ApiError extends Error {
@@ -402,7 +432,7 @@ function errorView(error) {
   return {
     code: error?.code || "bad_response",
     status: error?.status || 0,
-    message: error?.message || fallbackMessage(error?.code, error?.status),
+    ...describeProblem(error?.code, error?.message, error?.status),
   };
 }
 
@@ -1085,6 +1115,9 @@ export const VM_STATE_LABELS = Object.freeze({
   unknown: "状态未知",
 });
 
+// The overview row's action for each state: a VM that is already starting is only watched, not started again.
+export const VM_ACTION_LABELS = Object.freeze({ ready: "打开", starting: "查看进度", stopped: "启动并打开", error: "启动并打开" });
+
 export const TARGET_STATUS_LABELS = Object.freeze({
   opening: "正在连接",
   starting: "开机中",
@@ -1366,11 +1399,15 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
   // A quiet one-line message with a leading icon; only the text part changes.
   function note(className, iconName, role) {
     const text = h("span");
-    const el = h("div", { class: `note ${className}`, role, hidden: true }, [icon(iconName), text]);
+    const detailText = h("span", { class: "note-detail", hidden: true });
+    const el = h("div", { class: `note ${className}`, role, hidden: true }, [icon(iconName), h("span", { class: "note-body" }, [text, detailText])]);
     return {
       el,
-      set(message) {
+      // detail: the server's own words when they could not be translated, kept small for support.
+      set(message, detail = "") {
         text.textContent = message || "";
+        detailText.textContent = detail || "";
+        detailText.hidden = !detail;
         el.hidden = !message;
       },
     };
@@ -1411,6 +1448,7 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
 
   function buildSessionError() {
     const message = h("p", { class: "hero-text" });
+    const detail = h("p", { class: "hero-detail", hidden: true });
     const retry = h("button", { type: "button", class: "btn btn-primary btn-lg", onclick: () => portal.boot() }, "重新连接");
     const el = h("div", { class: "page" }, [
       pageHeader(),
@@ -1419,6 +1457,7 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
           drawing("unplugged", "art hero-art"),
           h("h1", { id: "session-error-title", class: "hero-title", text: "暂时无法连接门户服务" }),
           message,
+          detail,
           setProse(h("p", { class: "hero-text" }), "这不代表你已退出登录。"),
           h("div", { class: "actions" }, [retry]),
         ]),
@@ -1429,6 +1468,8 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
       el,
       update(state) {
         setProse(message, state.bootError?.message || "请稍后重试。");
+        detail.textContent = state.bootError?.detail || "";
+        detail.hidden = !state.bootError?.detail;
       },
       focus: () => retry.focus(),
     };
@@ -1854,12 +1895,12 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
     function overlaySignature(state) {
       const target = state.target;
       if (!target) {
-        const list = state.vms.map((vm) => `${vm.id}:${vm.state}:${vm.name}:${vm.system_label}:${vm.message || ""}`).join(",");
-        return `home|${state.listStatus}|${state.limit}|${state.listError?.message || ""}|${state.user?.username || ""}|${list}`;
+        const list = state.vms.map((vm) => `${vm.id}:${vm.state}:${vm.name}:${vm.system_label}:${vm.message || ""}:${vm.message_detail || ""}`).join(",");
+        return `home|${state.listStatus}|${state.limit}|${state.listError?.message || ""}|${state.listError?.detail || ""}|${state.user?.username || ""}|${list}`;
       }
       if (target.status === "ready") return `ready|${target.vmId}`;
       const vm = state.vms.find((item) => item.id === target.vmId);
-      return `t|${target.vmId}|${target.status}|${target.warm ? 1 : 0}|${target.frame?.slow ? 1 : 0}|${target.pollFailures}|${target.error?.code || ""}|${target.error?.message || ""}|${vm?.name || ""}|${vm?.system_label || ""}`;
+      return `t|${target.vmId}|${target.status}|${target.warm ? 1 : 0}|${target.frame?.slow ? 1 : 0}|${target.pollFailures}|${target.error?.code || ""}|${target.error?.message || ""}|${target.error?.detail || ""}|${vm?.message_detail || ""}|${vm?.name || ""}|${vm?.system_label || ""}`;
     }
 
     function button(label, { kind = "", focusKey = null, autofocus = false, onclick, iconName = null } = {}) {
@@ -1884,6 +1925,8 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
     }
 
     const text = (value, className = "hero-text") => setProse(h("p", { class: className }), value);
+    // The server's untranslated words, if any: small, muted, plain text.
+    const detailLine = (value) => (value ? h("p", { class: "hero-detail", text: value }) : null);
 
     function steps(current, warm) {
       const labels = ["连接", warm ? "确认" : "开机", "载入工作台"];
@@ -1942,7 +1985,10 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
           art: failedBoot ? "fault" : "unplugged",
           title: failedBoot ? `「${name}」启动失败` : `无法打开「${name}」`,
           role: "alert",
-          lines: [text(error.message || "发生未知错误。", "hero-text error-text")],
+          lines: [
+            text(error.message || "发生未知错误。", "hero-text error-text"),
+            detailLine(error.detail || (error.code === "vm_error" ? vm?.message_detail : "")),
+          ],
           actions: [
             button("重试", { kind: "btn-primary", focusKey: "retry", autofocus: true, onclick: () => portal.retry() }),
             button("返回总览", { focusKey: "home", onclick: () => portal.goHome() }),
@@ -1964,12 +2010,13 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
           h("span", { class: "vm-name", text: displayName(vm) }),
           metaLine,
           vm.state === "error" && vm.message ? h("span", { class: "vm-error", text: vm.message }) : null,
+          vm.state === "error" && vm.message_detail ? h("span", { class: "vm-error-detail", text: vm.message_detail }) : null,
         ]),
         h("span", { class: "chip", "data-state": vm.state }, [
           h("span", { class: "status-dot", "data-state": vm.state, "aria-hidden": "true" }),
           VM_STATE_LABELS[vm.state],
         ]),
-        h("span", { class: "vm-go" }, [h("span", { class: "vm-go-text", text: vm.state === "ready" ? "打开" : "启动并打开" }), icon("chevron")]),
+        h("span", { class: "vm-go" }, [h("span", { class: "vm-go-text", text: VM_ACTION_LABELS[vm.state] || "启动并打开" }), icon("chevron")]),
       ]));
     }
 
@@ -1982,7 +2029,7 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
           art: "unplugged",
           title: "无法加载虚拟机列表",
           role: "alert",
-          lines: [text(state.listError?.message || "请稍后重试。", "hero-text error-text")],
+          lines: [text(state.listError?.message || "请稍后重试。", "hero-text error-text"), detailLine(state.listError?.detail)],
           actions: [button("重试", { kind: "btn-primary", focusKey: "list-retry", autofocus: true, onclick: () => portal.refreshList() })],
         })];
       }
@@ -2227,7 +2274,7 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
         submit.textContent = create.busy ? "正在创建…" : "创建并打开";
         const error = create.error;
         setFieldError(input, nameError, error?.field === "name" ? error.message : "");
-        formError.set(error && !error.field ? error.message : "");
+        formError.set(error && !error.field ? error.message : "", error && !error.field ? error.detail : "");
         if (error?.field === "name" && error !== lastError) input.focus();
         lastError = error;
       },
