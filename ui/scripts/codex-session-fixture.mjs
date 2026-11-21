@@ -105,8 +105,11 @@ export async function codexSessionsRoute(route, request, url, body, state) {
     const last = session.turns.at(-1);
     if (!last || last.status !== "running" || last.id !== body?.request_id) return text(route, 409, "本轮运行状态已变化，请重新读取");
     if (session.owner === "external") return text(route, 409, "这一轮不在 Super Cage 的终端中运行，请在运行它的终端中停止");
+    // The desktop's Codex gets Esc and the server answers at once, with the
+    // turn still running until Codex writes that it stopped.
+    if (session.owner === "desktop") return route.fulfill({ json: view(session) });
     last.status = "stopped";
-    Object.assign(session, { active: false, owner: session.owner === "phone" ? "" : session.owner, running: session.owner === "desktop" });
+    Object.assign(session, { active: false, owner: "", running: false });
     return route.fulfill({ json: view(session) });
   }
   if (action === "archive" || action === "restore") {

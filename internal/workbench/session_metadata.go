@@ -131,7 +131,10 @@ func (s *Server) setSessionArchived(id string, archived bool, requestContext con
 	// A phone turn of a Codex session runs in the guest; archiving stops it.
 	// The guest is asked even when this server has not seen the turn (after
 	// a restart); it stops only a turn of its own.
-	codexRun := archived && record.codex() && record.Connection != ""
+	s.mu.Lock()
+	ready := s.ready && !s.closing
+	s.mu.Unlock()
+	codexRun := archived && record.codex() && record.Connection != "" && ready
 	connection := record.Connection
 	m.mu.Unlock()
 	if requestContext != nil {

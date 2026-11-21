@@ -77,6 +77,9 @@ test("stop, archive and the read-only view", async () => {
   const stopped = await json(state, "POST", "/api/cli/sessions/" + ids[2] + "/stop", { request_id: turn });
   assert.equal(stopped.owner, "");
   assert.equal(stopped.can_send, true);
+  const desk = state.codexSessions[1];
+  const escaped = await json(state, "POST", "/api/cli/sessions/" + ids[1] + "/stop", { request_id: desk.turns.at(-1).id });
+  assert.equal(escaped.turns.at(-1).status, "running", "the desktop's turn stops when Codex says so");
   await call(state, "POST", "/api/cli/sessions/" + ids[1] + "/archive", {});
   assert.equal(state.terminals.length, 0);
   assert.equal((await call(state, "POST", "/api/cli/sessions/" + ids[1] + "/open", {})).status, 410);

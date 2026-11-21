@@ -115,6 +115,9 @@ type mobileRecord struct {
 	CodexAccount string `json:"codex_account,omitempty"`
 	// CodexLease is the guest lease given to the latest desktop terminal.
 	CodexLease string `json:"codex_lease,omitempty"`
+	// DesktopMenu marks a Codex session made by the desktop menu's Codex
+	// entry (the phone's own new sessions are Terminal records too).
+	DesktopMenu bool `json:"desktop_menu,omitempty"`
 }
 
 type claudeExecution struct {
@@ -190,7 +193,7 @@ func (record *mobileRecord) summary() mobileSummary {
 	if record.codex() {
 		view.CodexAccountID = record.CodexAccount
 		view.placeholder = !record.Resume && len(record.Turns) == 0
-		view.menuPlaceholder = view.placeholder && record.Terminal
+		view.menuPlaceholder = view.placeholder && record.DesktopMenu
 	}
 	return view
 }

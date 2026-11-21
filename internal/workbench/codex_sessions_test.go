@@ -485,7 +485,7 @@ func TestCodexDesktopListingIsOptIn(t *testing.T) {
 	// on the desktop until it has a terminal again.
 	placeholder := uuid.NewString()
 	if _, err := s.mobileCLI.createProvider(s.profile, project, placeholder, codexProvider, func(record *mobileRecord) {
-		record.Terminal, record.Connection, record.GuestWorkspace = true, uuid.NewString(), root
+		record.Terminal, record.DesktopMenu, record.Connection, record.GuestWorkspace = true, true, uuid.NewString(), root
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -498,8 +498,8 @@ func TestCodexDesktopListingIsOptIn(t *testing.T) {
 	}
 	// The phone hides it too, but keeps a new session of its own.
 	mine := uuid.NewString()
-	if _, err := s.mobileCLI.createProvider(s.profile, project, mine, codexProvider, nil); err != nil {
-		t.Fatal(err)
+	if w := request(s, "POST", "/api/mobile/cli/sessions", s.origin, `{"id":"`+mine+`","workspace":"`+project+`","provider":"codex"}`, true); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
 	}
 	if sessions, _ := codexSessions(t, s); slices.ContainsFunc(sessions, func(row mobileSummary) bool { return row.ID == placeholder }) ||
 		!slices.ContainsFunc(sessions, func(row mobileSummary) bool { return row.ID == mine }) {
@@ -923,6 +923,22 @@ func TestCodexArchiveClosesTheTerminalAndStopsThePhoneTurn(t *testing.T) {
 	if stops := guest.calls("stop"); len(stops) != 1 || stops[0]["connection"] != record.Connection || stops[0]["reason"] != "archive" || stops[0]["request_id"] != nil {
 		t.Fatal("archive stop", stops)
 	}
+	// With the environment stopped the archive does not wait on the guest.
+	idle := listedCodexSession(t, s, guest, project, "环境已停止")
+	idleRecord, _ := s.mobileCLI.record(s.profile, idle.ID)
+	if err := s.codexConnection(idleRecord); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.ready = false
+	s.mu.Unlock()
+	started := time.Now()
+	if err := s.setSessionArchived(idle.ID, true, nil); err != nil || time.Since(started) > 2*time.Second || len(guest.calls("stop")) != 1 {
+		t.Fatal("archive with the environment stopped", err, time.Since(started), guest.calls("stop"))
+	}
+	s.mu.Lock()
+	s.ready = true
+	s.mu.Unlock()
 	// Purge then goes to the guest, which refuses while anything owns the thread.
 	guest.reply("purge", map[string]any{"error": "这段会话正在电脑的 Codex 终端中打开，请先关闭该终端再删除"})
 	if w := request(s, "POST", "/api/cli/sessions/"+phone.ID+"/purge", s.origin, "{\"confirm\":true}", true); w.Code != 400 || !strings.Contains(w.Body.String(), "请先关闭该终端") {

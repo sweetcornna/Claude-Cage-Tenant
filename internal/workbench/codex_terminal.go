@@ -179,7 +179,7 @@ func (s *Server) createCodexSessionLocked(input terminalRequest) (*terminalSessi
 	if record == nil {
 		view, err := s.mobileCLI.createProvider(s.profile, workspace, uuid.NewString(), codexProvider, func(created *mobileRecord) {
 			closed := false
-			created.Terminal, created.CodexAccount = true, selection.ID
+			created.Terminal, created.CodexAccount, created.DesktopMenu = true, selection.ID, true
 			created.Connection, created.GuestWorkspace = uuid.NewString(), root
 			created.CanSend = &closed
 		})
