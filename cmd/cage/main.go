@@ -25,6 +25,7 @@ import (
 	"github.com/sylvinus/agent-vm/internal/hostproxy"
 	"github.com/sylvinus/agent-vm/internal/limaembed"
 	"github.com/sylvinus/agent-vm/internal/managedproxy"
+	"github.com/sylvinus/agent-vm/internal/vsockrelay"
 	"github.com/sylvinus/agent-vm/internal/workbench"
 	"io"
 	"os/signal"
@@ -114,6 +115,11 @@ func run() int {
 	}
 	if args[0] == "agent" {
 		return runAgent(args[1:], os.Stdin, os.Stdout)
+	}
+	// The guest half of cage-tenant -incus-vsock, started through incus exec;
+	// its configuration and secret arrive on stdin and it ends with stdin.
+	if args[0] == "vsock-relay" && len(args) == 1 {
+		return vsockrelay.Main(os.Stdin, os.Stderr)
 	}
 	if args[0] == "verify-web-assets" {
 		if len(args) != 1 {

@@ -149,8 +149,7 @@ func (s *Server) closeService() error {
 		if browser != nil {
 			browser.close()
 		}
-		s.controlSession.close()
-		s.nativeControl.close()
+		s.closeGuestSessions()
 		if s.windowsGuest == nil {
 			s.closeErr = s.closeProxyGate("控制服务正在退出，外网保持关闭")
 		}

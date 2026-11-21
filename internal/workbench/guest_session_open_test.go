@@ -109,3 +109,34 @@ func TestGuestSessionRetryBacksOff(t *testing.T) {
 		t.Fatalf("first retry in %s, want at most %s", retry, guestSessionRetry)
 	}
 }
+
+func TestGuestSessionOpenFailingAfterCloseLeavesNoBackoff(t *testing.T) {
+	lifetime, cancel := context.WithCancel(context.Background())
+	session, starts := &guestSession{}, &atomic.Int32{}
+	t.Cleanup(func() { session.close(); cancel() })
+	// The guest is going down: the open fails, after close() was called.
+	command := func(ctx context.Context) *exec.Cmd {
+		starts.Add(1)
+		return exec.CommandContext(ctx, "sh", "-c", "sleep 0.5; exit 255")
+	}
+	ctx, stop := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer stop()
+	if _, sent, _ := session.run(ctx, lifetime, command, "true"); sent {
+		t.Fatal("script was sent before the connection opened")
+	}
+	session.close()
+	time.Sleep(time.Second)
+	session.mu.Lock()
+	failures, retryAt := session.failures, session.retryAt
+	session.mu.Unlock()
+	if failures != 0 || !retryAt.IsZero() {
+		t.Fatalf("an open begun before close() set the new session's back-off: %d failures, retry at %v", failures, retryAt)
+	}
+	// The next caller opens at once instead of using a connection of its own.
+	ctx, stop = context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer stop()
+	session.run(ctx, lifetime, command, "true")
+	if starts.Load() != 2 {
+		t.Fatalf("%d opens: the session backed off after close()", starts.Load())
+	}
+}

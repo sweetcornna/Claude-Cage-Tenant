@@ -398,7 +398,7 @@ func runScienceStart(t *testing.T, env ...string) scienceStartResult {
 	}
 	write("claude-science", "#!/bin/sh\nif [ \"$1\" = status ]; then if [ -f \"$TEST_DIR/started\" ]; then printf '%s' \"$TEST_STATUS\"; else printf '%s' \"$TEST_BEFORE\"; fi; fi\n")
 	write("systemctl", "#!/bin/sh\ncase \"$1\" in\n  is-active) [ \"$TEST_ACTIVE\" = active ] ;;\n  is-failed) [ -f \"$TEST_DIR/started\" ] && [ \"$TEST_FAILS\" = 1 ] ;;\n  *) exit 1 ;;\nesac\n")
-	write("sudo", "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$TEST_DIR/requests\"\nif [ \"$1 $2\" = 'systemctl start' ]; then touch \"$TEST_DIR/started\"; fi\nif [ \"$1\" = journalctl ]; then printf 'listening on http://localhost:47800/?nonce=0123456789abcdef0123456789abcdef\\nsandbox: bwrap failed\\n'; fi\n")
+	write("sudo", "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$TEST_DIR/requests\"\nif [ \"$1 $2\" = 'systemctl start' ]; then touch \"$TEST_DIR/started\"; fi\nif [ \"$1\" = journalctl ]; then printf 'listening on http://localhost:47800/?nonce=0123456789abcdef0123456789abcdef\\nGET /oauth/callback?code=fedcba9876543210code&state=fedcba9876543210state HTTP/1.1\\ncage-claude-science.service: Main process exited, code=exited, status=1/FAILURE\\nsandbox: bwrap failed\\n'; fi\n")
 	write("ss", "#!/bin/sh\nif [ -n \"$TEST_LISTENER\" ]; then printf 'LISTEN 0 511 127.0.0.1:47800 0.0.0.0:*\\n'; fi\n")
 	script := strings.ReplaceAll(claudeScienceStart, "/home/cage/.local/bin/claude-science", filepath.Join(dir, "claude-science"))
 	cmd := exec.Command("bash", "-c", script)
@@ -447,6 +447,12 @@ func TestClaudeScienceStart(t *testing.T) {
 		}
 		if strings.Contains(r.out, "0123456789abcdef") {
 			t.Fatal("sign-in link leaked into the job log")
+		}
+		if strings.Contains(r.out, "fedcba9876543210") || !strings.Contains(r.out, "callback?code=…&state=…") {
+			t.Fatalf("an OAuth code or state leaked into the job log: %s", r.out)
+		}
+		if !strings.Contains(r.out, "code=exited, status=1/FAILURE") {
+			t.Fatalf("systemd's exit line was redacted: %s", r.out)
 		}
 	})
 	t.Run("not-installed", func(t *testing.T) {

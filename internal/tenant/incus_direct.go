@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -15,17 +16,29 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/sylvinus/agent-vm/internal/vsockrelay"
 )
 
 // The direct path.
 //
 // By default every connection to a workbench starts "incus exec ... socat" and
 // relays its bytes through incusd and the guest agent. With IncusConfig.Vsock
-// the gateway starts one long-lived socat per workspace through that same
-// exec. It listens on a vsock port of the VM and forwards each connection to
-// the workbench's loopback port, and the gateway dials the VM's vsock address
-// directly: a new connection costs a socket connect instead of a process
+// the gateway starts one long-lived relay per workspace through that same
+// exec ("cage vsock-relay", internal/vsockrelay). It listens on a random vsock
+// port of the VM and forwards each connection to the workbench's loopback
+// port, and the gateway dials the VM's vsock address directly: a new
+// connection costs a socket connect and a handshake instead of a process
 // start, and the bytes bypass incusd.
+//
+// Trust: the gateway hands each relay a secret of its own on the exec's stdin
+// (never argv or the environment), and every connection, pooled ones too,
+// proves that secret both ways before any HTTP byte. So the gateway sends a
+// request or the launcher token only to a relay it started in this process,
+// the relay serves only the gateway (and, on Linux, only the host's vsock
+// address), and nothing in the VM, its sandbox or a nested guest can use the
+// relay or stand in for it. A listener that answers without the secret puts
+// the instance on exec. The relay ends with its stdin, so with the gateway.
 //
 // The path is an optimisation with three safeguards:
 //
@@ -34,7 +47,7 @@ import (
 //     repeated over exec, and only if that works is the path blamed;
 //   - a failed direct dial falls back to exec inside the same dial, so no
 //     request or stream sees the failure;
-//   - a path that cannot work (the guest's socat has no vsock, nothing ever
+//   - a path that cannot work (the guest's cage has no relay, nothing ever
 //     listens, several dials in a row fail) is dropped, and the instance is
 //     not tried again for directRetry, so a guest that cannot do vsock costs
 //     one failed attempt rather than one per connection. A workbench that is
@@ -54,6 +67,9 @@ var directWait = 5 * time.Second
 // directDialFailures is how many dials in a row may fail before a workspace
 // drops the vsock path. Each failed dial still falls back to exec.
 const directDialFailures = 3
+
+// relayCommand is the guest's relay; workspace templates carry cage there.
+const relayCommand = "/usr/local/bin/cage"
 
 var (
 	// errDirectUnsupported marks a failure that will repeat: the instance stays
@@ -114,6 +130,12 @@ func (g *guestDialer) dial(ctx context.Context) (net.Conn, error) {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
+		// A listener that does not prove the secret is not the gateway's relay.
+		if errors.Is(err, vsockrelay.ErrUnauthenticated) {
+			g.runtime.skipDirect(g.instance)
+			path.fail(err)
+			return g.runtime.dialExec(ctx, g.instance, g.port)
+		}
 		// One failed dial proves little (a burst of connections can overrun the
 		// listener's backlog); this one is served over exec.
 		if path.failures.Add(1) >= directDialFailures {
@@ -129,14 +151,30 @@ type directPath struct {
 	runtime   *IncusRuntime
 	instance  string
 	cid, port uint32
+	secret    []byte // this bridge's, known only to this process and its relay
 	dead      atomic.Bool
 	// failures counts the dials that failed since the last one that worked.
 	failures atomic.Int32
 	reported sync.Once
 }
 
+// dial connects to the relay and authenticates it, and it the gateway; only
+// then is the connection used.
 func (p *directPath) dial(ctx context.Context) (net.Conn, error) {
-	return p.runtime.dialVsock(ctx, p.cid, p.port)
+	conn, err := p.runtime.dialVsock(ctx, p.cid, p.port)
+	if err != nil {
+		return nil, err
+	}
+	stop := context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Now()) })
+	err = vsockrelay.Authenticate(conn, p.secret)
+	if !stop() && err == nil {
+		err = ctx.Err() // the caller left; its deadline may be on the connection
+	}
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return conn, nil
 }
 
 // fail retires the path and says so once.
@@ -148,25 +186,23 @@ func (p *directPath) fail(reason error) {
 }
 
 // openDirect prepares the vsock path of a workspace: it finds the VM's vsock
-// address, reuses a listener that is already there or starts the bridge, and
-// proves with a plain HTTP exchange that the listener reaches the workbench.
-// The bridge ends with the workspace. The error says whether the path may be
-// tried again: errDirectUnsupported does not, errDirectNotReady and any other
-// error do not count against it.
+// address, starts the bridge with a configuration of its own, and proves with
+// an authenticated plain HTTP exchange that the relay reaches the workbench.
+// A listener the gateway did not start is never used. The bridge ends with
+// the workspace. The error says whether the path may be tried again:
+// errDirectUnsupported does not, errDirectNotReady and any other error do not
+// count against it.
 func (r *IncusRuntime) openDirect(ctx context.Context, workspace *Workspace, instance string, port int) (path *directPath, err error) {
 	id := strings.TrimPrefix(instance, "local:cage-")
 	cid, err := r.vsockID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	path = &directPath{runtime: r, instance: instance, cid: cid, port: uint32(port)}
-	switch connected, err := path.probe(ctx, port); {
-	case err == nil:
-		// A bridge from an earlier gateway process is still listening.
-		return path, nil
-	case connected:
-		return nil, errDirectNotReady
+	config, err := vsockrelay.NewConfig(port)
+	if err != nil {
+		return nil, err
 	}
+	path = &directPath{runtime: r, instance: instance, cid: cid, port: config.Listen, secret: config.Secret}
 	// A bridge that did not become usable ends at once, not with the workspace.
 	bridge, stopBridge := context.WithCancel(workspace.ctx)
 	defer func() {
@@ -174,7 +210,7 @@ func (r *IncusRuntime) openDirect(ctx context.Context, workspace *Workspace, ins
 			stopBridge()
 		}
 	}()
-	exited, err := r.startBridge(bridge, instance, port)
+	exited, err := r.startBridge(bridge, instance, config)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +218,8 @@ func (r *IncusRuntime) openDirect(ctx context.Context, workspace *Workspace, ins
 	defer cancel()
 	for {
 		connected, probeErr := path.probe(wait, port)
-		if probeErr == nil {
+		switch {
+		case probeErr == nil:
 			go func() {
 				<-exited
 				if workspace.ctx.Err() == nil {
@@ -192,29 +229,33 @@ func (r *IncusRuntime) openDirect(ctx context.Context, workspace *Workspace, ins
 				}
 			}()
 			return path, nil
-		}
-		if connected {
+		case errors.Is(probeErr, vsockrelay.ErrUnauthenticated):
+			return nil, fmt.Errorf("%w: a listener on the bridge's port is not the bridge (%v)", errDirectUnsupported, probeErr)
+		case connected:
 			return nil, errDirectNotReady
 		}
 		select {
 		case <-exited:
-			return nil, fmt.Errorf("%w: the bridge in the guest ended at once, its socat may lack vsock support", errDirectUnsupported)
+			return nil, fmt.Errorf("%w: the bridge in the guest ended at once, its cage may have no vsock relay", errDirectUnsupported)
 		case <-wait.Done():
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			return nil, fmt.Errorf("%w: nothing listened on the vsock port within %s", errDirectUnsupported, directWait)
+			return nil, fmt.Errorf("%w: nothing answered as the bridge on the vsock port within %s", errDirectUnsupported, directWait)
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
 }
 
-// probe sends one request through the path and accepts any HTTP answer: that
-// proves the bytes reach an HTTP server on the workbench's port. connected
-// tells whether a connection was made at all, which separates a missing
-// listener from a workbench that does not answer.
+// probe sends one request through the authenticated path and accepts any
+// HTTP answer: that proves the bytes reach an HTTP server on the workbench's
+// port. connected tells whether the relay answered at all, which separates a
+// relay that is not listening yet from a workbench that does not answer.
 func (p *directPath) probe(ctx context.Context, port int) (connected bool, err error) {
 	conn, err := p.dial(ctx)
+	if errors.Is(err, vsockrelay.ErrNotReady) {
+		return true, err
+	}
 	if err != nil {
 		return false, err
 	}
@@ -241,14 +282,22 @@ func (p *directPath) probe(ctx context.Context, port int) (connected bool, err e
 	return true, response.Body.Close()
 }
 
-// startBridge runs the guest's vsock-to-loopback relay through exec. The
-// returned channel closes when the process ends; cancelling ctx stops it.
-func (r *IncusRuntime) startBridge(ctx context.Context, instance string, port int) (<-chan struct{}, error) {
-	command := r.command(ctx, "exec", instance, "--mode=non-interactive", "--", "/usr/bin/socat",
-		fmt.Sprintf("VSOCK-LISTEN:%d,fork,reuseaddr,backlog=128", port), fmt.Sprintf("TCP4:127.0.0.1:%d,connect-timeout=5", port))
+// startBridge runs the guest's relay through exec and hands it its
+// configuration on stdin, which stays open while the bridge runs: the relay
+// ends when it closes. The returned channel closes when the process ends;
+// cancelling ctx stops it.
+func (r *IncusRuntime) startBridge(ctx context.Context, instance string, config vsockrelay.Config) (<-chan struct{}, error) {
+	command := r.command(ctx, "exec", instance, "--mode=non-interactive", "--", relayCommand, "vsock-relay")
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		return nil, errors.New("the vsock bridge could not be started")
+	}
 	// The incus client forwards SIGTERM to the process in the guest, which ends
 	// the listener; the client is killed if it does not leave in time.
-	command.Cancel = func() error { return command.Process.Signal(syscall.SIGTERM) }
+	command.Cancel = func() error {
+		_ = stdin.Close()
+		return command.Process.Signal(syscall.SIGTERM)
+	}
 	if err := command.Start(); err != nil {
 		return nil, errors.New("the vsock bridge could not be started")
 	}
@@ -257,6 +306,8 @@ func (r *IncusRuntime) startBridge(ctx context.Context, instance string, port in
 		_ = command.Wait()
 		close(exited)
 	}()
+	// A failed write means the process already ended; its exit says so.
+	_, _ = io.WriteString(stdin, config.Line())
 	return exited, nil
 }
 
