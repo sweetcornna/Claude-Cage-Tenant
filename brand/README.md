@@ -24,6 +24,7 @@ Colours: ink #1F1E1D, cream #F3EFE5, clay #D97757. Pick the cut by pixel size: u
 ```
 CAGE_PLAYWRIGHT_MODULE=<playwright module> CAGE_TEST_BROWSER_PATH=<Chrome> node brand/generate.mjs
 node brand/generate.mjs --check     # fail when a checked-in output is stale
+node brand/generate.mjs --check-text # same for SVG/XML/JSON outputs only, no browser (mobile/build.sh runs it)
 node --test brand/generate.test.mjs # browser-free checks
 node brand/final.mjs                # redraw the masters (rarely needed)
 ```

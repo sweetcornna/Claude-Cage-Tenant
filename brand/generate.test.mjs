@@ -65,6 +65,9 @@ test("checked-in vector outputs match the masters", () => {
   const mono = files.get(PATHS.drawables + "/cage_icon_monochrome.xml");
   assert.deepEqual([...new Set([...mono.matchAll(/fillColor="([^"]*)"/g)].map((m) => m[1]))], ["#FFFFFFFF"]);
   assert.doesNotMatch(mono, /4A3329|D97757/);
+  // aapt2 stores each attribute as one string; stay well under its 32767 byte cap.
+  for (const [path, text] of files)
+    if (path.endsWith(".xml")) for (const m of text.matchAll(/android:pathData="([^"]*)"/g)) assert.ok(Buffer.byteLength(m[1]) < 32767, path + " has a pathData of " + m[1].length + " bytes");
   const logo = files.get(PATHS.drawables + "/cage_logo.xml");
   assert.match(logo, /\?attr\/cageInk/);
   assert.match(logo, /\?attr\/cageGlow/);

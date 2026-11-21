@@ -4,6 +4,8 @@
 //
 //   node brand/generate.mjs           write every output (see brand/README.md)
 //   node brand/generate.mjs --check   exit 1 when a checked-in output differs from a fresh render
+//   node brand/generate.mjs --check-text   the same for SVG, XML and JSON outputs only; needs no browser
+//                                     (mobile/build.sh runs it)
 //
 // Needs Node 22+, and for the PNG outputs a Chrome/Chromium reachable through Playwright:
 //   CAGE_PLAYWRIGHT_MODULE=<playwright module path>  (default: "playwright")
@@ -459,21 +461,21 @@ function validateIconset() {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const mode = process.argv[2];
-  if (mode && mode !== "--check") { console.error("Usage: node brand/generate.mjs [--check]"); process.exit(2); }
+  if (mode && mode !== "--check" && mode !== "--check-text") { console.error("Usage: node brand/generate.mjs [--check | --check-text]"); process.exit(2); }
   try {
     const stale = [];
     let written = 0;
-    const outputs = await allOutputs();
+    const outputs = mode === "--check-text" ? textOutputs(loadMasters()) : await allOutputs();
     for (const [rel, data] of [...outputs].sort(([a], [b]) => (a < b ? -1 : 1))) {
       const path = join(root, rel), bytes = Buffer.isBuffer(data) ? data : Buffer.from(data);
       if (existsSync(path) && readFileSync(path).equals(bytes)) continue;
-      if (mode === "--check") { stale.push(rel); continue; }
+      if (mode) { stale.push(rel); continue; }
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, bytes);
       written++;
     }
     if (stale.length) { console.error("Stale brand outputs; run node brand/generate.mjs:\n" + stale.join("\n")); process.exit(1); }
-    console.log(mode === "--check" ? outputs.size + " outputs are up to date" : outputs.size + " outputs, " + written + " written; " + validateIconset());
+    console.log(mode ? outputs.size + " outputs are up to date" : outputs.size + " outputs, " + written + " written; " + validateIconset());
   } catch (error) {
     console.error("brand/generate.mjs: " + error.message);
     process.exit(1);
