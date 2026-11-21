@@ -130,6 +130,34 @@ export const aboutCheck = (now) => ({
   release: { status: "current", version: "v0.1.15", prerelease: false },
 });
 
+export function claudeAccounts(seconds) {
+  return [
+    { id: "p1", label: "林间工作室 · 主力账号", email: "studio@linjian.example", plan: "Max", enabled: true, status: "ready", handoff_group: "工作室",
+      quota: { observed_at: seconds - 120, five_hour: { used_percentage: 42, resets_at: seconds + 5400, observed_at: seconds - 120 },
+        seven_day: { used_percentage: 71, resets_at: seconds + 260000, observed_at: seconds - 120 } }, usage_status: "reported", usage_checked_at: seconds - 120 },
+    { id: "p2", label: "备用账号（周末与夜间自动化任务专用，额度用完后自动切换）", email: "night.shift.automation.long-address@example.test",
+      plan: "Pro", enabled: true, status: "signed_out" },
+    { id: "p3", label: "设计评审", email: "review@example.test", plan: "Team", enabled: false, status: "ready",
+      quota: { observed_at: seconds - 4000, five_hour: { used_percentage: 96, resets_at: seconds + 1200, observed_at: seconds - 4000 },
+        seven_day: { used_percentage: 15, resets_at: seconds + 400000, observed_at: seconds - 4000 } }, usage_status: "reported", usage_checked_at: seconds - 4000 },
+    { id: "p4", label: "新账号", enabled: true, status: "pending" },
+  ];
+}
+
+export function codexAccounts(seconds) {
+  return [
+    { id: "a".repeat(24), label: "工作账号", email: "work@linjian.example", plan: "pro", enabled: true, status: "ready",
+      quota: { primary: { used_percentage: 42, resets_at: seconds + 3600, window_minutes: 300, observed_at: seconds - 30 },
+        secondary: { used_percentage: 7, resets_at: seconds + 86400 * 3, window_minutes: 10080, observed_at: seconds - 30 }, observed_at: seconds - 30 },
+      usage_status: "reported", usage_checked_at: seconds - 30 },
+    { id: "b".repeat(24), label: "备用账号 · 夜间批处理与发布脚本审阅专用", email: "spare.batch.reviews@example.invalid", enabled: true, status: "signed_out" },
+    { id: "c".repeat(24), label: "实验账号", email: "lab@example.invalid", plan: "plus", enabled: false, status: "ready",
+      quota: { primary: { used_percentage: 88, resets_at: seconds + 900, window_minutes: 300, observed_at: seconds - 600 },
+        secondary: { used_percentage: 55, resets_at: seconds + 86400, window_minutes: 10080, observed_at: seconds - 600 }, observed_at: seconds - 600 },
+      usage_status: "reported", usage_checked_at: seconds - 600 },
+  ];
+}
+
 // Registers the routes. Playwright tries the last registered route first, so
 // these answer before the generic fixture handler.
 export async function routeModulePages(page, state, options = {}) {
@@ -175,5 +203,19 @@ export async function routeModulePages(page, state, options = {}) {
     if (variant() === "error") return failed(route, "无法连接 GitHub：主机网络与 Super Cage 代理均未能完成请求");
     return json(route, aboutCheck(now));
   });
+  const seconds = Math.floor(now / 1000);
+  await page.route("**/api/claude-accounts*", (route) => {
+    if (variant() === "error") return json(route, { accounts: claudeAccounts(seconds).slice(0, 2), detection_status: "signed_out",
+      detection_error: "无法检测普通终端的登录：Claude Code 没有响应，请稍后重试", login_notice: "", usage_panel_running: false,
+      usage_unavailable_reason: "额度查询暂不可用：当前代理拒绝了 claude.ai 的请求", scheduling: { mode: "balanced", switch_policy: "ask" } });
+    return json(route, { accounts: variant() === "empty" ? [] : claudeAccounts(seconds), detection_status: "signed_out", detection_error: "",
+      login_notice: "", usage_panel_running: false, usage_unavailable_reason: "", scheduling: { mode: "balanced", switch_policy: "ask" } });
+  });
+  await page.route("**/api/codex-accounts*", (route) => json(route, { accounts: variant() === "empty" ? [] : codexAccounts(seconds),
+    scheduling: { mode: "balanced", switch_policy: "ask" }, guest_supported: true, detection_status: "ready",
+    detected: variant() === "empty" ? { identity: "f".repeat(64), email: "default@linjian.example", plan: "plus", checked_at: seconds } : undefined }));
+  await page.route(/\/api\/cli\/sessions\/[^/]+\/account$/, (route) => json(route, { supported: true, switch_policy: "ask",
+    session: { id: "s1", account_id: "p1", account_label: "林间工作室 · 主力账号", account_failure: variant() === "error" ? "rate_limit" : "" },
+    candidates: [{ id: "p3", label: "设计评审" }, { id: "p2", label: "备用账号（周末与夜间自动化任务专用）" }] }));
   for (const extra of options.extraRoutes || []) await extra(page, state, { now, variant });
 }
