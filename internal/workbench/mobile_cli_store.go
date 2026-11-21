@@ -43,6 +43,15 @@ type mobileSummary struct {
 	Deleting      bool      `json:"deleting,omitempty"`
 	Revision      uint64    `json:"revision"`
 	UpdatedAt     time.Time `json:"updated_at"`
+	// Owner is who writes a Codex session's thread now: "" (nobody), "desktop"
+	// (a terminal of this server), "phone" (a phone turn) or "external" (any
+	// other process). Codex sessions only.
+	Owner string `json:"owner,omitempty"`
+	// CodexAccountID is the Codex account the session is pinned to; empty is
+	// the environment's own ~/.codex login.
+	CodexAccountID string `json:"codex_account_id,omitempty"`
+	// placeholder marks a Codex session that never reached a thread.
+	placeholder bool
 }
 type mobileTurn struct {
 	Tools       []cliconversation.ToolActivity `json:"tools,omitempty"`
@@ -102,6 +111,8 @@ type mobileRecord struct {
 	// CodexAccount is the Codex account whose CODEX_HOME holds the thread;
 	// empty means the environment's own ~/.codex.
 	CodexAccount string `json:"codex_account,omitempty"`
+	// CodexLease is the guest lease given to the latest desktop terminal.
+	CodexLease string `json:"codex_lease,omitempty"`
 }
 
 type claudeExecution struct {
@@ -142,6 +153,9 @@ type mobileCLIStore struct {
 	running    map[string]bool // Fresh guest process observation, never restored from disk.
 	desktop    map[string]bool // Claude Desktop ownership from the same live observation.
 	codexLive  map[string]bool // Codex process observation from the latest Codex discovery.
+	// codexOwner is the guest's latest owner of each Codex session's thread;
+	// the server's own bound terminals take precedence (codexOwner()).
+	codexOwner map[string]string
 	generation string
 }
 
@@ -170,11 +184,18 @@ func (record *mobileRecord) changed() {
 func (record *mobileRecord) summary() mobileSummary {
 	view := record.mobileSummary
 	view.AccountID = record.Account.ID
+	if record.codex() {
+		view.CodexAccountID = record.CodexAccount
+		view.placeholder = !record.Resume && len(record.Turns) == 0
+	}
 	return view
 }
 func (record *mobileRecord) snapshot() mobileSession {
 	view := record.mobileSession
 	view.AccountID = record.Account.ID
+	if record.codex() {
+		view.CodexAccountID = record.CodexAccount
+	}
 	if sw := record.Switch; sw != nil {
 		view.AccountSwitch = &claudeSwitchView{ID: sw.ID, Phase: sw.Phase, TargetLabel: sw.TargetLabel, Error: sw.Error}
 	}

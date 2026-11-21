@@ -455,6 +455,7 @@ func (s *Server) sessionListAnswer(granted map[string]bool, archived, phone bool
 			sessions[i].Active = false
 		}
 	}
+	s.codexRows(sessions)
 	if !phone {
 		sessions = slices.DeleteFunc(sessions, func(item mobileSummary) bool { return item.Provider == codexProvider })
 	}

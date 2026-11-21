@@ -122,7 +122,7 @@ func TestCodexSessionsDiscoveryViewAndMessages(t *testing.T) {
 	root := guestPath(project)
 	thread := "0199a213-81c0-7800-8aa1-bbab2a035a53"
 	guest.reply("discover", []map[string]any{
-		{"thread_id": thread, "account": "default", "workspace": root + "/service", "title": "Codex 标题", "updated_at": 1763600000.5, "running": true},
+		{"thread_id": thread, "account": "default", "workspace": root + "/service", "title": "Codex 标题", "updated_at": 1763600000.5, "running": true, "owner": "external"},
 		{"thread_id": uuid.NewString(), "account": "default", "workspace": "/elsewhere", "title": "outside"},
 	})
 	sessions, notice := codexSessions(t, s)
@@ -196,7 +196,7 @@ func TestCodexSessionsDiscoveryViewAndMessages(t *testing.T) {
 	}
 
 	view["turns"] = []any{turn, map[string]any{"id": requestID, "prompt": "继续", "text": "", "status": "running"}}
-	view["running"], view["active"], view["can_send"] = true, true, false
+	view["running"], view["active"], view["can_send"], view["owner"] = true, true, false, "phone"
 	guest.reply("view", view)
 	guest.reply("stop", map[string]any{"ok": true})
 	body, _ = json.Marshal(map[string]string{"request_id": requestID})
@@ -286,7 +286,7 @@ func TestCodexNewSessionUsesAllocatedAccountAndBindsItsThread(t *testing.T) {
 	}
 
 	thread := "0199a213-81c0-7800-8aa1-bbab2a035a54"
-	guest.reply("discover", []map[string]any{{"thread_id": thread, "account": account.ID, "connection": record.Connection, "workspace": guestPath(project), "title": "开始", "running": true, "active": true}})
+	guest.reply("discover", []map[string]any{{"thread_id": thread, "account": account.ID, "connection": record.Connection, "workspace": guestPath(project), "title": "开始", "running": true, "active": true, "owner": "phone"}})
 	sessions, _ := codexSessions(t, s)
 	if len(sessions) != 1 || sessions[0].ID != id || !sessions[0].Running || !sessions[0].Active || sessions[0].Title != "开始" {
 		t.Fatal("first turn did not bind the new session", sessions)
@@ -312,13 +312,13 @@ func TestCodexSessionBlocksProjectRemovalWhileRunning(t *testing.T) {
 	s.browserControl = browserClientForTest(t, s, browserTransport(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"tabs":[]}`))}, nil
 	}))
-	session := map[string]any{"thread_id": uuid.NewString(), "account": "default", "workspace": guestPath(project), "title": "busy", "running": true, "active": true}
+	session := map[string]any{"thread_id": uuid.NewString(), "account": "default", "workspace": guestPath(project), "title": "busy", "running": true, "active": true, "owner": "phone"}
 	guest.reply("discover", []any{session})
 	if sessions, _ := codexSessions(t, s); len(sessions) != 1 || !sessions[0].Running {
 		t.Fatal("running Codex session not listed", sessions)
 	}
 	removeProjectRequest(t, s, project, 409)
-	session["running"], session["active"] = false, false
+	session["running"], session["active"], session["owner"] = false, false, ""
 	guest.reply("discover", []any{session})
 	removeProjectRequest(t, s, project, 200)
 }
@@ -343,6 +343,75 @@ func TestCodexSessionsBootstrapRunsShippedHelper(t *testing.T) {
 	var failure codexConversation
 	if err := s.runCodexSessions(ctx, "view", map[string]any{"thread": "not-a-thread", "account": "default"}, &failure); err != nil || failure.Error == "" {
 		t.Fatal("invalid request did not return a message", failure, err)
+	}
+}
+
+// Every owner state keeps terminal_available false: shipped phones open a
+// desktop terminal on their own whenever it is true and can_send is false.
+func TestCodexOwnerStatesKeepTheTerminalUnavailable(t *testing.T) {
+	s, project, guest := newCodexFixture(t)
+	t.Cleanup(s.terminals.close)
+	root := guestPath(project)
+	thread := uuid.NewString()
+	item := map[string]any{"thread_id": thread, "account": "default", "workspace": root, "title": "owned", "updated_at": 1763600000.0}
+	view := map[string]any{"thread_id": thread, "account": "default", "workspace": root, "turns": []any{}, "can_send": true}
+	for _, tc := range []struct {
+		guest string
+		bound bool
+		want  string
+	}{{"", false, ""}, {"phone", false, "phone"}, {"external", false, "external"}, {"desktop", false, "external"}, {"", true, "desktop"}, {"phone", true, "desktop"}} {
+		item["owner"], item["running"], item["active"] = tc.guest, tc.guest != "", tc.guest != ""
+		view["owner"], view["can_send"], view["running"], view["active"] = tc.guest, tc.guest == "", tc.guest != "", tc.guest != ""
+		guest.reply("discover", []any{item})
+		guest.reply("view", view)
+		var terminal *terminalSession
+		if tc.bound {
+			sessions, _ := codexSessions(t, s)
+			var err error
+			if terminal, err = s.terminals.startCodexSession(terminalChildCommand("echo"), project, "codex", codexSelection{}, nil); err != nil {
+				t.Fatal(err)
+			}
+			terminal.mu.Lock()
+			terminal.sharedID = sessions[0].ID
+			terminal.mu.Unlock()
+		}
+		sessions, _ := codexSessions(t, s)
+		if len(sessions) != 1 || sessions[0].Owner != tc.want || sessions[0].Running != (tc.want != "") || sessions[0].Active != (tc.guest != "" && tc.want != "") {
+			t.Fatalf("%+v: listed %+v", tc, sessions)
+		}
+		w := request(s, "GET", "/api/mobile/cli/sessions/"+sessions[0].ID, "", "", true)
+		var session mobileSession
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &session) != nil || strings.Contains(w.Body.String(), "terminal_available") || session.TerminalAvailable {
+			t.Fatalf("%+v: view %d %s", tc, w.Code, w.Body.String())
+		}
+		if session.Owner != tc.want || session.CanSend == nil || *session.CanSend != (tc.want == "") || session.Running != (tc.want != "") {
+			t.Fatalf("%+v: view %s", tc, w.Body.String())
+		}
+		if tc.want == "desktop" && session.ConnectionNotice != codexDesktopNotice {
+			t.Fatalf("%+v: notice %q", tc, session.ConnectionNotice)
+		}
+		if terminal != nil {
+			if summary := terminal.summary(); summary["cli_session_provider"] != codexProvider || summary["cli_session_id"] != sessions[0].ID {
+				t.Fatal("bound terminal summary", summary)
+			}
+			// The server's own terminal refuses the phone before the guest is asked.
+			guest.reply("send", map[string]any{"ok": true})
+			body, _ := json.Marshal(map[string]string{"request_id": uuid.NewString(), "text": "从手机"})
+			if w := request(s, "POST", "/api/mobile/cli/sessions/"+sessions[0].ID+"/messages", s.origin, string(body), true); w.Code != 409 || !strings.Contains(w.Body.String(), "电脑的 Codex 终端") {
+				t.Fatal("phone message while the desktop owns the thread", w.Code, w.Body.String())
+			}
+			if sent := guest.calls("send"); len(sent) != 0 {
+				t.Fatal("the guest was asked to send", sent)
+			}
+			s.terminals.remove(terminal.id)
+		}
+	}
+	plain, err := s.terminals.startCodexSession(terminalChildCommand("echo"), project, "codex", codexSelection{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := plain.summary()["cli_session_provider"]; ok {
+		t.Fatal("a plain Codex terminal claims a session")
 	}
 }
 

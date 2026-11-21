@@ -164,6 +164,25 @@ func (m *terminalManager) get(id string) *terminalSession {
 	return m.sessions[id]
 }
 
+// boundCodex is the live Codex terminal of this server bound to a session.
+// While it runs, the desktop owns the session's thread.
+func (m *terminalManager) boundCodex(id string) *terminalSession {
+	if id == "" {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, session := range m.sessions {
+		session.mu.Lock()
+		bound := session.kind == "codex" && session.sharedID == id && !session.closed
+		session.mu.Unlock()
+		if bound {
+			return session
+		}
+	}
+	return nil
+}
+
 func (m *terminalManager) forConversation(connection string) *terminalSession {
 	m.mu.Lock()
 	defer m.mu.Unlock()
