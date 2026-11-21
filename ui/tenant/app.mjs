@@ -1376,6 +1376,14 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
     };
   }
 
+  // Chinese text may break between any two characters, so a balanced line can still split a word ("工/作台").
+  // Each clause becomes an inline-block, so lines break between clauses and only split one that is too long.
+  function setProse(el, value) {
+    const clauses = String(value || "").match(/[^，。；：！？]+[，。；：！？]*|[，。；：！？]+/g) || [];
+    el.replaceChildren(...clauses.map((clause) => h("span", { class: "clause", text: clause })));
+    return el;
+  }
+
   function focusByKey(container, key) {
     if (!key) return false;
     const match = [...container.querySelectorAll("[data-focus-key]")].find((el) => el.dataset.focusKey === key);
@@ -1411,7 +1419,7 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
           drawing("unplugged", "art hero-art"),
           h("h1", { id: "session-error-title", class: "hero-title", text: "暂时无法连接门户服务" }),
           message,
-          h("p", { class: "hero-text", text: "这不代表你已退出登录。" }),
+          setProse(h("p", { class: "hero-text" }), "这不代表你已退出登录。"),
           h("div", { class: "actions" }, [retry]),
         ]),
       ]),
@@ -1420,7 +1428,7 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
       phase: "session-error",
       el,
       update(state) {
-        message.textContent = state.bootError?.message || "请稍后重试。";
+        setProse(message, state.bootError?.message || "请稍后重试。");
       },
       focus: () => retry.focus(),
     };
@@ -1501,7 +1509,7 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
     const backToLogin = h("button", { type: "button", class: "btn btn-primary btn-lg btn-block", "data-focus-key": "back-to-login", onclick: () => portal.setAuthMode("login") }, "返回登录");
     const closedPanel = h("section", { class: "closed-panel", role: "alert", hidden: true }, [
       h("h2", { class: "closed-title", text: "暂未开放自助注册" }),
-      h("p", { text: "这个门户的账户由管理员开通，请联系管理员获取。" }),
+      setProse(h("p"), "这个门户的账户由管理员开通，请联系管理员获取。"),
       backToLogin,
     ]);
     const el = h("div", { class: "page auth-screen" }, [
@@ -1538,7 +1546,7 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
         if (!closed && lastClosed && (focusWasInPanel || doc.activeElement === doc.body)) userInput.focus();
         lastClosed = closed;
         title.textContent = register ? "创建门户账户" : "登录 Super Cage 门户";
-        lead.textContent = register ? "注册后就能创建自己的虚拟机。" : "打开你的虚拟机，工作台一直在服务器上运行。";
+        setProse(lead, register ? "注册后就能创建自己的虚拟机。" : "打开你的虚拟机，工作台一直在服务器上运行。");
         lead.hidden = closed;
         loginTab.setAttribute("aria-pressed", String(!register));
         registerTab.setAttribute("aria-pressed", String(register));
@@ -1773,7 +1781,7 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
       if (banner.dataset.kind !== kind) bannerIcon.replaceChildren(icon(kind === "info" ? "info" : "alert"));
       banner.dataset.kind = kind;
       banner.setAttribute("role", info.kind === "info" ? "status" : "alert");
-      bannerText.textContent = info.message;
+      setProse(bannerText, info.message);
       bannerAction.hidden = info.action !== "logout";
       if (info.action === "logout") {
         bannerAction.textContent = "重试退出";
@@ -1851,7 +1859,7 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
       ]);
     }
 
-    const text = (value, className = "hero-text") => h("p", { class: className, text: value });
+    const text = (value, className = "hero-text") => setProse(h("p", { class: className }), value);
 
     function steps(current, warm) {
       const labels = ["连接", warm ? "确认" : "开机", "载入工作台"];
@@ -1969,7 +1977,7 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
           h("header", { class: "home-hero" }, [
             h("h1", { class: "greeting" }, [h("span", { text: `${greetingWord()}，${username}` }), drawing(daytime ? "sun" : "moon", "art greeting-art")]),
             drawing("squiggle", "art greeting-underline"),
-            h("p", { class: "home-lead", text: overviewSummary(state.vms) }),
+            setProse(h("p", { class: "home-lead" }), overviewSummary(state.vms)),
           ]),
           h("div", { class: "list-head" }, [
             h("h2", { id: "home-title", text: "我的虚拟机" }),
@@ -2123,7 +2131,7 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
     const form = h("form", { class: "dialog-form", novalidate: true }, [
       h("div", { class: "dialog-head" }, [
         heading,
-        h("p", { id: ids.lead, class: "dialog-lead", text: "创建后会自动开机并打开工作台，系统由管理员预设。" }),
+        setProse(h("p", { id: ids.lead, class: "dialog-lead" }), "创建后会自动开机并打开工作台，系统由管理员预设。"),
       ]),
       h("div", { class: "field" }, [
         h("label", { for: ids.name, text: "名称" }),

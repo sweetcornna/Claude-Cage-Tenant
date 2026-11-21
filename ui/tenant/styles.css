@@ -135,6 +135,10 @@ button {
   font-family: var(--mono);
 }
 
+.clause {
+  display: inline-block;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -166,13 +170,8 @@ button {
   color: var(--ink);
 }
 
-.art .k-fill {
+.art .k-clay {
   fill: var(--clay);
-  stroke: var(--clay);
-}
-
-.art .k-stroke {
-  stroke: var(--clay);
 }
 
 /* Brand mark: a symbol sprite in index.html. Rules for the light and glow must match the symbol's own paths
@@ -626,7 +625,7 @@ button {
 
 .field input:focus-visible {
   outline: none;
-  border-color: var(--clay-ink);
+  border-color: var(--clay);
   box-shadow: 0 0 0 3px var(--clay-soft);
 }
 
@@ -1015,7 +1014,7 @@ button {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-left: 4px;
+  margin-left: auto;
   padding-left: 12px;
   border-left: 1px solid var(--line);
   flex: none;
@@ -1425,6 +1424,10 @@ button {
     margin-left: 0;
     padding-left: 4px;
     border-left: 0;
+  }
+
+  .contextbar[hidden] + .account {
+    margin-left: auto;
   }
 
   .user-chip {
