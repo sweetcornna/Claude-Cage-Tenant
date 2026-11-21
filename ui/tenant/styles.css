@@ -219,8 +219,11 @@ button {
   transition: background-color 0.15s var(--ease), border-color 0.15s var(--ease), color 0.15s var(--ease), opacity 0.15s var(--ease);
 }
 
-.btn:hover {
-  background: var(--soft);
+/* Hover styles only where a pointer can hover, so a tap on a phone does not leave a button stuck looking hovered. */
+@media (hover: hover) {
+  .btn:hover {
+    background: var(--soft);
+  }
 }
 
 .btn-primary {
@@ -229,9 +232,11 @@ button {
   color: var(--paper);
 }
 
-.btn-primary:hover {
-  border-color: color-mix(in srgb, var(--ink) 84%, var(--paper));
-  background: color-mix(in srgb, var(--ink) 84%, var(--paper));
+@media (hover: hover) {
+  .btn-primary:hover {
+    border-color: color-mix(in srgb, var(--ink) 84%, var(--paper));
+    background: color-mix(in srgb, var(--ink) 84%, var(--paper));
+  }
 }
 
 /* The one clay call to action a view may have. Ink text keeps 5:1 contrast on clay. */
@@ -241,9 +246,11 @@ button {
   color: #1f1e1d;
 }
 
-.btn-clay:hover {
-  border-color: #e0876a;
-  background: #e0876a;
+@media (hover: hover) {
+  .btn-clay:hover {
+    border-color: #e0876a;
+    background: #e0876a;
+  }
 }
 
 .btn-ghost {
@@ -252,9 +259,11 @@ button {
   color: var(--muted);
 }
 
-.btn-ghost:hover {
-  background: var(--soft);
-  color: var(--ink);
+@media (hover: hover) {
+  .btn-ghost:hover {
+    background: var(--soft);
+    color: var(--ink);
+  }
 }
 
 .btn-sm {
@@ -293,9 +302,11 @@ button {
   transition: background-color 0.15s var(--ease), color 0.15s var(--ease);
 }
 
-.icon-btn:hover {
-  background: var(--soft);
-  color: var(--ink);
+@media (hover: hover) {
+  .icon-btn:hover {
+    background: var(--soft);
+    color: var(--ink);
+  }
 }
 
 [aria-disabled="true"] {
@@ -303,12 +314,16 @@ button {
   cursor: not-allowed;
 }
 
-.btn[aria-disabled="true"]:hover {
-  background: var(--surface);
+@media (hover: hover) {
+  .btn[aria-disabled="true"]:hover {
+    background: var(--surface);
+  }
 }
 
-.btn-primary[aria-disabled="true"]:hover {
-  background: var(--ink);
+@media (hover: hover) {
+  .btn-primary[aria-disabled="true"]:hover {
+    background: var(--ink);
+  }
 }
 
 /* ---- Status ---- */
@@ -569,8 +584,10 @@ button {
   transition: background-color 0.15s var(--ease), color 0.15s var(--ease);
 }
 
-.seg:hover {
-  color: var(--ink);
+@media (hover: hover) {
+  .seg:hover {
+    color: var(--ink);
+  }
 }
 
 .seg[aria-pressed="true"] {
@@ -615,8 +632,10 @@ button {
   color: var(--faint);
 }
 
-.field input:hover {
-  border-color: color-mix(in srgb, var(--line-strong) 60%, var(--muted));
+@media (hover: hover) {
+  .field input:hover {
+    border-color: color-mix(in srgb, var(--line-strong) 60%, var(--muted));
+  }
 }
 
 .field input[aria-invalid="true"] {
@@ -967,9 +986,11 @@ button {
   transition: background-color 0.15s var(--ease), color 0.15s var(--ease);
 }
 
-.tab:hover {
-  background: var(--soft);
-  color: var(--ink);
+@media (hover: hover) {
+  .tab:hover {
+    background: var(--soft);
+    color: var(--ink);
+  }
 }
 
 .tab[aria-selected="true"] {
@@ -1086,8 +1107,10 @@ button {
   color: var(--ink);
 }
 
-.banner .icon-btn:hover {
-  background: color-mix(in srgb, var(--ink) 8%, transparent);
+@media (hover: hover) {
+  .banner .icon-btn:hover {
+    background: color-mix(in srgb, var(--ink) 8%, transparent);
+  }
 }
 
 .stage {
@@ -1234,8 +1257,10 @@ button {
   border-radius: 13px;
 }
 
-.vm-card:hover {
-  background: color-mix(in srgb, var(--soft) 60%, var(--surface));
+@media (hover: hover) {
+  .vm-card:hover {
+    background: color-mix(in srgb, var(--soft) 60%, var(--surface));
+  }
 }
 
 .vm-card:focus-visible {
@@ -1289,8 +1314,10 @@ button {
   font-weight: 500;
 }
 
-.vm-card:hover .vm-go {
-  color: var(--ink);
+@media (hover: hover) {
+  .vm-card:hover .vm-go {
+    color: var(--ink);
+  }
 }
 
 .list-foot {

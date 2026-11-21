@@ -1378,8 +1378,8 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
 
   // Chinese text may break between any two characters, so a balanced line can still split a word ("工/作台").
   // Each clause becomes an inline-block, so lines break between clauses and only split one that is too long.
-  function setProse(el, value) {
-    const clauses = String(value || "").match(/[^，。；：！？]+[，。；：！？]*|[，。；：！？]+/g) || [];
+  function setProse(el, value, pattern = /[^，。；：！？]+[，。；：！？]*|[，。；：！？]+/g) {
+    const clauses = String(value || "").match(pattern) || [];
     el.replaceChildren(...clauses.map((clause) => h("span", { class: "clause", text: clause })));
     return el;
   }
@@ -1853,7 +1853,8 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
     function hero({ art, title, lines = [], actions = [], role = null }) {
       return h("section", { class: "hero", role }, [
         drawing(art, "art hero-art"),
-        h("h2", { class: "hero-title", text: title }),
+        // Titles keep a quoted 「name」 together with what follows it rather than splitting the name.
+        setProse(h("h2", { class: "hero-title" }), title, /[^「]+|「[^」]*」[^「]*/g),
         ...lines,
         actions.length ? h("div", { class: "actions" }, actions) : null,
       ]);
@@ -1872,7 +1873,9 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
       const target = state.target;
       if (!target) return buildHome(state);
       const vm = state.vms.find((item) => item.id === target.vmId);
-      const name = displayName(vm);
+      // Headings quote the name; a very long one is clipped there (the tab title and the list keep it whole).
+      const chars = Array.from(displayName(vm));
+      const name = chars.length > 16 ? `${chars.slice(0, 15).join("")}…` : chars.join("");
       if (target.status === "ready") return [];
       if (target.status === "opening") {
         return [hero({ art: "terminal", title: `正在连接「${name}」`, role: "status", lines: [steps(0, target.warm), text("正在向门户确认虚拟机状态…")] })];
