@@ -314,7 +314,7 @@ func (s *Server) mobileSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if wait > 0 && answer.Revision == after {
-		answer, err = s.awaitSessionList(r.Context(), arrival.Add(wait), after, paths, archived, phone, claudeErr, codexErr)
+		answer, err = s.awaitSessionList(r.Context(), arrival, arrival.Add(wait), after, paths, archived, phone, claudeErr, codexErr)
 		if r.Context().Err() != nil {
 			return
 		}
@@ -333,8 +333,9 @@ func (s *Server) mobileSessions(w http.ResponseWriter, r *http.Request) {
 // awaitSessionList holds a list request while its answer equals after. The
 // host catalog is checked every 250 ms; the guest is watched by the resident
 // helper, or looked at every 5 s (the clients' own polling pace) when it
-// cannot be; Codex sessions on the phone are looked at every 5 s.
-func (s *Server) awaitSessionList(ctx context.Context, deadline time.Time, after string, paths []string, archived, phone bool, claudeErr, codexErr error) (sessionListAnswer, error) {
+// cannot be; Codex sessions on the phone are looked at every 5 s. observed is
+// when the request's first look began.
+func (s *Server) awaitSessionList(ctx context.Context, observed, deadline time.Time, after string, paths []string, archived, phone bool, claudeErr, codexErr error) (sessionListAnswer, error) {
 	// Each look ends at the deadline; share then gives the newest finished
 	// observation, and the answer follows at once.
 	look, cancel := holdContext(ctx, deadline)
@@ -357,17 +358,25 @@ func (s *Server) awaitSessionList(ctx context.Context, deadline time.Time, after
 		}
 		return set
 	}
+	// The watch replaces the channel it closes, so a change it saw while this
+	// request was inside a discovery shows only in its time.
+	seen, now := observed, make(chan struct{})
+	close(now)
 	for {
 		changed, changedAt, watching := changes()
 		claude, codex := false, false
 		arrival := time.Now()
+		if changedAt.After(seen) {
+			changed = now
+		}
 		select {
 		case <-ctx.Done():
 			return sessionListAnswer{}, ctx.Err()
 		case <-end.C:
 			return s.sessionListAnswer(granted(), archived, phone, claudeErr, codexErr)
 		case <-changed:
-			claude, arrival = true, changedAt
+			_, changedAt, _ = changes() // the change that closed it
+			claude, arrival, seen = true, changedAt, changedAt
 		case <-slow.C:
 			claude, codex = !watching, phone
 		case <-host.C:
