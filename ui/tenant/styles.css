@@ -642,15 +642,13 @@ button {
   border-color: var(--error);
 }
 
+/* Inputs keep the one focus ring, drawn over their own border instead of 2px outside it, so it never doubles up. */
 .field input:focus-visible {
-  outline: none;
-  border-color: var(--clay);
-  box-shadow: 0 0 0 3px var(--clay-soft);
+  outline-offset: -1px;
 }
 
 .field input[aria-invalid="true"]:focus-visible {
-  border-color: var(--error);
-  box-shadow: 0 0 0 3px var(--error-soft);
+  outline-color: var(--error);
 }
 
 .field input[readonly] {
@@ -960,6 +958,7 @@ button {
   min-width: 0;
   padding: 4px;
   overflow-x: auto;
+  scroll-padding-inline: 40px;
   scrollbar-width: none;
 }
 
@@ -998,6 +997,13 @@ button {
   background: var(--surface);
   color: var(--ink);
   font-weight: 600;
+}
+
+.shell[data-view="home"] .tab[aria-selected="true"] {
+  border-color: transparent;
+  background: none;
+  color: var(--muted);
+  font-weight: 500;
 }
 
 .tab-name {

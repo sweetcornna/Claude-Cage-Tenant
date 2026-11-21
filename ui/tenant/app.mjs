@@ -1693,14 +1693,21 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
       tabs[next].scrollIntoView?.({ block: "nearest", inline: "nearest" });
     });
 
-    // Fade whichever edge of the tab strip has more tabs scrolled out of view.
+    // Fade an edge of the tab strip only while a tab actually reaches past it (measured on the tabs, not on
+    // scrollLeft, so the strip's own padding never leaves a fade over a fully visible selected tab).
     function updateTabFade() {
-      const max = tablist.scrollWidth - tablist.clientWidth;
-      tablist.dataset.fadeStart = String(max > 1 && tablist.scrollLeft > 1);
-      tablist.dataset.fadeEnd = String(max > 1 && tablist.scrollLeft < max - 1);
+      const tabs = tablist.querySelectorAll("[role=tab]");
+      const strip = tablist.getBoundingClientRect();
+      const first = tabs[0]?.getBoundingClientRect();
+      const last = tabs[tabs.length - 1]?.getBoundingClientRect();
+      tablist.dataset.fadeStart = String(!!first && first.left < strip.left - 1);
+      tablist.dataset.fadeEnd = String(!!last && last.right > strip.right + 1);
     }
     tablist.addEventListener("scroll", updateTabFade, { passive: true });
     win.addEventListener("resize", updateTabFade, { signal: shellListeners.signal });
+    // The strip also changes width when the context bar appears or the banner shows, without a window resize.
+    const tabResize = typeof win.ResizeObserver === "function" ? new win.ResizeObserver(updateTabFade) : null;
+    tabResize?.observe(tablist);
 
     function createTab(id) {
       const dot = h("span", { class: "status-dot", "aria-hidden": "true" });
@@ -2061,9 +2068,11 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
       // With no VMs yet the empty overview carries the create action; a lone "+" in the bar would only repeat it.
       switcher.hidden = !state.vms.length;
       barRule.hidden = !state.vms.length;
+      // On the overview the remembered VM keeps aria-selected for the tab pattern, but should not look open.
+      el.dataset.view = state.target ? "vm" : "home";
       updateTabs(state);
-      updateTabFade();
       updateContext(state);
+      updateTabFade();
       updateBanner(state);
       updateFrame(state);
       updateOverlay(state);
@@ -2101,6 +2110,7 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
       },
       destroy() {
         shellListeners.abort();
+        tabResize?.disconnect();
         unmountFrame();
         if (ticker !== null) win.clearInterval(ticker);
         ticker = null;
