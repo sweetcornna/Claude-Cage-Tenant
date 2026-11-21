@@ -647,7 +647,6 @@ private struct FinderCorners: Shape {
 private struct QRScannerScreen: View {
     let result: (String?) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var sweeping = false
     @State private var hint = "将 Super Cage 配对二维码放入框内\n在电脑「设置 → 远程连接」中生成"
     private let accent = CageStyle.clay
     private let night = Color(red: 0x1F / 255, green: 0x1E / 255, blue: 0x1D / 255)
@@ -673,12 +672,19 @@ private struct QRScannerScreen: View {
                 FinderCorners().stroke(accent, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                     .frame(width: side, height: side).position(x: box.midX, y: box.midY)
                     .allowsHitTesting(false)
-                VStack(spacing: 0) {
-                    LinearGradient(colors: [accent.opacity(0), accent.opacity(0.22)], startPoint: .top, endPoint: .bottom).frame(height: 26)
-                    Capsule().fill(accent).frame(height: 2)
-                }.frame(width: side - 24)
-                    .position(x: box.midX, y: reduceMotion ? box.midY : box.minY + 24 + (sweeping ? side - 48 : 0))
-                    .animation(reduceMotion ? nil : .linear(duration: 2.4).repeatForever(autoreverses: true), value: sweeping)
+                // The sweep follows the clock instead of an implicit repeating animation, so a box that is still
+                // moving (sheet push, navigation bar) never leaves a stale animation behind. Clipped to the box.
+                TimelineView(.animation(paused: reduceMotion)) { context in
+                    // Linear ping-pong 0…1…0, 2.4 s each way.
+                    let cycle = (context.date.timeIntervalSinceReferenceDate / 2.4).truncatingRemainder(dividingBy: 2)
+                    let phase = reduceMotion ? 0.5 : CGFloat(cycle < 1 ? cycle : 2 - cycle)
+                    VStack(spacing: 0) {
+                        LinearGradient(colors: [accent.opacity(0), accent.opacity(0.22)], startPoint: .top, endPoint: .bottom).frame(height: 26)
+                        Capsule().fill(accent).frame(height: 2)
+                    }.frame(width: side - 24)
+                        .position(x: side / 2, y: 24 + phase * (side - 48))
+                }.frame(width: side, height: side).clipShape(RoundedRectangle(cornerRadius: 18))
+                    .position(x: box.midX, y: box.midY)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
                 VStack(spacing: 12) {
@@ -687,7 +693,7 @@ private struct QRScannerScreen: View {
                     Text(simulatorPreviewEnabled ? "模拟器预览 · 即将进入示例工作台" : "仅识别 Super Cage 配对码")
                         .font(.caption).foregroundStyle(Color(red: 0xAB / 255, green: 0xA5 / 255, blue: 0x97 / 255))
                 }.foregroundStyle(cream).padding(.horizontal, 24).padding(.bottom, 24).allowsHitTesting(false).accessibilityElement(children: .combine)
-            }.background(night).onAppear {sweeping = true}
+            }.background(night)
                 .task {
                     #if targetEnvironment(simulator)
                     do {try await Task.sleep(for: .seconds(2))} catch {return}
