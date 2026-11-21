@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sylvinus/agent-vm/internal/cage"
@@ -119,9 +120,11 @@ const (
 // amd64 to x86_64 and arm64 to aarch64). Tests replace it.
 var scienceHostArch = runtime.GOARCH
 
-// Guest facts, read as the guest user. Cheap enough for polling: the 170 MB
-// binary runs only for "status" while the unit is active, and for --version
-// once per installed file (cached by size and mtime).
+// Guest facts, read as the guest user. Cheap enough for polling: one
+// systemctl and one ss process. The 170 MB binary runs for "status" once per
+// run of the unit, when its port first listens (kept by the unit's
+// InvocationID), and for --version once per installed file (cached by size
+// and mtime).
 const claudeScienceSnapshot = `python3 - <<'CAGE_SCIENCE_STATE'
 import json, os, re, shutil, subprocess
 from pathlib import Path
@@ -149,17 +152,38 @@ if not facts['installed']:
         candidate = re.search(r'Candidate:\s*([0-9]+)\.([0-9]+)', run(['apt-cache', 'policy', 'bubblewrap']))
         facts['bubblewrap'] = 'unknown' if not candidate else 'old' if (int(candidate.group(1)), int(candidate.group(2))) < (0, 8) else 'ok'
 unit = 'cage-claude-science.service'
-facts['unit'] = run(['systemctl', 'is-active', unit])
+state = {}
+for line in run(['systemctl', 'show', '--property=ActiveState', '--property=Result', '--property=InvocationID', unit]).splitlines():
+    key, _, value = line.partition('=')
+    state[key] = value
+facts['unit'] = state.get('ActiveState', '')
 if facts['unit'] == 'failed':
-    facts['result'] = run(['systemctl', 'show', '--property=Result', '--value', unit])
+    facts['result'] = state.get('Result', '')
+listening = bool(run(['ss', '-Hltn', 'sport = :47800']))
 if facts['installed']:
-    if facts['unit'] in ('active', 'activating', 'reloading', 'deactivating'):
+    if facts['unit'] in ('active', 'activating', 'reloading', 'deactivating') and listening:
+        invocation = state.get('InvocationID', '')
+        cache = home / '.cache/cage/claude-science-status.json'
         try:
-            daemon = json.loads(run([str(binary), 'status']) or '{}')
-        except ValueError:
-            daemon = {}
+            saved = json.loads(cache.read_text())
+        except Exception:
+            saved = {}
+        daemon = saved.get('daemon') if invocation and saved.get('invocation') == invocation else None
+        if not isinstance(daemon, dict):
+            try:
+                daemon = json.loads(run([str(binary), 'status']) or '{}')
+            except ValueError:
+                daemon = {}
+            if isinstance(daemon, dict):
+                daemon = {k: daemon[k] for k in ('running', 'port', 'started_at', 'version') if k in daemon}
+                if invocation and daemon.get('running') is True:
+                    try:
+                        cache.parent.mkdir(parents=True, exist_ok=True)
+                        cache.write_text(json.dumps({'invocation': invocation, 'daemon': daemon}))
+                    except OSError:
+                        pass
         if isinstance(daemon, dict):
-            facts['daemon'] = {k: daemon[k] for k in ('running', 'port', 'started_at', 'version') if k in daemon}
+            facts['daemon'] = daemon
             facts['version'] = version(str(daemon.get('version', '')))
     if not facts.get('version'):
         info = binary.stat()
@@ -179,7 +203,7 @@ if facts['installed']:
             except OSError:
                 pass
 if facts['unit'] != 'active':
-    facts['port_in_use'] = bool(run(['ss', '-Hltn', 'sport = :47800']))
+    facts['port_in_use'] = listening
 try:
     facts['disk_free_mb'] = shutil.disk_usage(home).free // (1024 * 1024)
 except OSError:
@@ -309,7 +333,20 @@ func (s *Server) claudeScienceStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.vmRunning() {
+		s.scienceLast.set(nil)
 		http.Error(w, "请先启动 Super Cage 环境", http.StatusConflict)
+		return
+	}
+	// A poll is a lock-free guest call: while a job owns the guest, or it is
+	// not ready, the last state read stands, with the job's operation.
+	if !s.guestAdmitsLockFreeCalls() {
+		state, ok := s.scienceLast.get()
+		if !ok {
+			http.Error(w, "环境正在处理其他操作，完成后再查看 Claude Science。", http.StatusConflict)
+			return
+		}
+		state.Operation = s.claudeScienceOperation()
+		jsonReply(w, state)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
@@ -326,8 +363,35 @@ func (s *Server) claudeScienceStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := claudeScienceFromGuest(guest, cage.ClaudeSciencePin().Version)
+	s.scienceLast.set(&state)
 	state.Operation = s.claudeScienceOperation()
 	jsonReply(w, state)
+}
+
+// claudeScienceLast is the last state a status poll read from the guest.
+type claudeScienceLast struct {
+	mu    sync.Mutex
+	state *claudeScienceState
+}
+
+func (l *claudeScienceLast) set(state *claudeScienceState) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if state == nil {
+		l.state = nil
+		return
+	}
+	saved := *state
+	l.state = &saved
+}
+
+func (l *claudeScienceLast) get() (claudeScienceState, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.state == nil {
+		return claudeScienceState{}, false
+	}
+	return *l.state, true
 }
 
 func (s *Server) claudeScienceAction(w http.ResponseWriter, r *http.Request) {

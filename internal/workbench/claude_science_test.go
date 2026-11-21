@@ -154,12 +154,13 @@ func TestClaudeScienceUnsupportedNativeGuests(t *testing.T) {
 }
 
 type scienceSnapshotCase struct {
-	arch, unit, result, status, version, candidate, fsType string
-	installed, conda, listener, bwrapOld                   bool
+	arch, unit, result, status, version, candidate, fsType, invocation string
+	installed, conda, listener, bwrapOld                               bool
 }
 
-// The snapshot runs as written, with the guest's commands replaced on PATH.
-func runScienceSnapshot(t *testing.T, home string, tc scienceSnapshotCase) (claudeScienceGuest, string) {
+// scienceGuest replaces the guest's commands on PATH for the snapshot. It
+// returns the snapshot as the guest runs it and the environment to run it in.
+func scienceGuest(t *testing.T, home string, tc scienceSnapshotCase) (string, []string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("snapshot executes in the Linux guest")
@@ -176,8 +177,8 @@ func runScienceSnapshot(t *testing.T, home string, tc scienceSnapshotCase) (clau
 			t.Fatal(err)
 		}
 	}
-	write(filepath.Join(bin, "uname"), "#!/bin/sh\necho \"$TEST_ARCH\"\n")
-	write(filepath.Join(bin, "systemctl"), "#!/bin/sh\nif [ \"$1\" = is-active ]; then echo \"$TEST_UNIT\"; else echo \"$TEST_RESULT\"; fi\n")
+	write(filepath.Join(bin, "uname"), "#!/bin/sh\necho x >> \"$HOME/snapshot-runs\"\necho \"$TEST_ARCH\"\n")
+	write(filepath.Join(bin, "systemctl"), "#!/bin/sh\nif [ \"$1\" = is-active ]; then echo \"$TEST_UNIT\"; exit 0; fi\nfor arg; do if [ \"$arg\" = --value ]; then echo \"$TEST_RESULT\"; exit 0; fi; done\nprintf 'ActiveState=%s\\nResult=%s\\nInvocationID=%s\\n' \"$TEST_UNIT\" \"$TEST_RESULT\" \"$TEST_INVOCATION\"\n")
 	write(filepath.Join(bin, "ss"), "#!/bin/sh\nif [ -n \"$TEST_LISTENER\" ]; then echo 'LISTEN 0 511 127.0.0.1:47800 0.0.0.0:*'; fi\n")
 	write(filepath.Join(bin, "apt-cache"), "#!/bin/sh\nprintf 'bubblewrap:\\n  Installed: (none)\\n  Candidate: %s\\n' \"$TEST_CANDIDATE\"\n")
 	write(filepath.Join(bin, "bwrap"), "#!/bin/sh\nif [ -n \"$TEST_BWRAP_OLD\" ]; then echo 'bwrap: Unknown option --disable-userns' >&2; exit 1; fi\n")
@@ -188,7 +189,7 @@ func runScienceSnapshot(t *testing.T, home string, tc scienceSnapshotCase) (clau
 	}
 	binary := filepath.Join(home, ".local", "bin", "claude-science")
 	if _, err := os.Stat(binary); tc.installed && err != nil {
-		write(binary, "#!/bin/sh\ncase \"$1\" in\n  status) printf '%s' \"$TEST_STATUS\" ;;\n  --version) echo x >> \"$HOME/version-runs\"; echo \"claude-science $TEST_VERSION (release, public)\" ;;\nesac\n")
+		write(binary, "#!/bin/sh\ncase \"$1\" in\n  status) echo x >> \"$HOME/status-runs\"; printf '%s' \"$TEST_STATUS\" ;;\n  --version) echo x >> \"$HOME/version-runs\"; echo \"claude-science $TEST_VERSION (release, public)\" ;;\nesac\n")
 	}
 	if tc.conda {
 		if err := os.MkdirAll(filepath.Join(home, ".claude-science", "conda"), 0755); err != nil {
@@ -200,7 +201,6 @@ func runScienceSnapshot(t *testing.T, home string, tc scienceSnapshotCase) (clau
 		bwrap = filepath.Join(bin, "bwrap")
 	}
 	script := strings.NewReplacer("/usr/bin/bwrap", bwrap, "/lib/libc.musl-x86_64.so.1", filepath.Join(home, "no-musl")).Replace(claudeScienceSnapshot)
-	cmd := exec.Command("sh", "-c", script)
 	listener, old := "", ""
 	if tc.listener {
 		listener = "1"
@@ -208,8 +208,16 @@ func runScienceSnapshot(t *testing.T, home string, tc scienceSnapshotCase) (clau
 	if tc.bwrapOld {
 		old = "1"
 	}
-	cmd.Env = append(os.Environ(), "HOME="+home, "PATH="+bin+":"+os.Getenv("PATH"), "TEST_ARCH="+tc.arch, "TEST_UNIT="+tc.unit, "TEST_RESULT="+tc.result,
-		"TEST_STATUS="+tc.status, "TEST_VERSION="+tc.version, "TEST_CANDIDATE="+tc.candidate, "TEST_LISTENER="+listener, "TEST_BWRAP_OLD="+old, "TEST_FSTYPE="+fsType)
+	return script, []string{"HOME=" + home, "PATH=" + bin + ":" + os.Getenv("PATH"), "TEST_ARCH=" + tc.arch, "TEST_UNIT=" + tc.unit, "TEST_RESULT=" + tc.result,
+		"TEST_STATUS=" + tc.status, "TEST_VERSION=" + tc.version, "TEST_CANDIDATE=" + tc.candidate, "TEST_LISTENER=" + listener, "TEST_BWRAP_OLD=" + old, "TEST_FSTYPE=" + fsType, "TEST_INVOCATION=" + tc.invocation}
+}
+
+// The snapshot runs as written, with the guest's commands replaced on PATH.
+func runScienceSnapshot(t *testing.T, home string, tc scienceSnapshotCase) (claudeScienceGuest, string) {
+	t.Helper()
+	script, env := scienceGuest(t, home, tc)
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Env = append(os.Environ(), env...)
 	out, err := cmd.CombinedOutput()
 	var guest claudeScienceGuest
 	if err != nil || json.Unmarshal(out, &guest) != nil {
@@ -241,7 +249,7 @@ func TestClaudeScienceSnapshot(t *testing.T) {
 		{"not-installed", scienceSnapshotCase{arch: "x86_64", unit: "inactive", candidate: "0.11.0-2"}, func(s claudeScienceState) bool {
 			return s.Supported && !s.Installed && s.DiskRequiredMB == 11264 && s.DiskFreeMB > 0 && !s.Running && s.FailureReason == ""
 		}},
-		{"running", scienceSnapshotCase{arch: "x86_64", unit: "active", installed: true, status: running, conda: true}, func(s claudeScienceState) bool {
+		{"running", scienceSnapshotCase{arch: "x86_64", unit: "active", installed: true, status: running, conda: true, listener: true, invocation: "run-1"}, func(s claudeScienceState) bool {
 			return s.Supported && s.Installed && s.Version == pinned && !s.UpdateAvailable && s.Running && s.Ready && s.Port == 47800 &&
 				s.StartedAt == "2026-11-20T09:30:00.000Z" && s.DiskRequiredMB == 1024 && s.SignedIn == nil && s.UpdateRequired == nil
 		}},
@@ -292,6 +300,45 @@ func TestClaudeScienceSnapshotCachesVersion(t *testing.T) {
 	tc.version = "0.1.73"
 	if guest, _ := runScienceSnapshot(t, home, tc); guest.Version != "0.1.73" {
 		t.Fatalf("stale version %q", guest.Version)
+	}
+}
+
+// Polls do not run the 170 MB binary: the unit state comes from systemctl,
+// the daemon's port from ss, and its status is read once per run of the unit.
+func TestClaudeScienceSnapshotReadsTheDaemonOncePerRun(t *testing.T) {
+	pinned := cage.ClaudeSciencePin().Version
+	home := t.TempDir()
+	tc := scienceSnapshotCase{arch: "x86_64", unit: "active", installed: true, listener: true, invocation: "run-1",
+		status: `{"running":true,"port":47800,"version":"` + pinned + `","started_at":"2026-11-20T09:30:00.000Z"}`}
+	runs := func() int {
+		data, _ := os.ReadFile(filepath.Join(home, "status-runs"))
+		return strings.Count(string(data), "x")
+	}
+	for range 3 {
+		guest, raw := runScienceSnapshot(t, home, tc)
+		if state := claudeScienceFromGuest(guest, pinned); !state.Ready || state.Port != 47800 || state.StartedAt != "2026-11-20T09:30:00.000Z" || state.Version != pinned {
+			t.Fatalf("%+v from %s", state, raw)
+		}
+	}
+	if runs() != 1 {
+		t.Fatalf("status ran %d times for three polls of one daemon run", runs())
+	}
+	// A new run of the unit is read again.
+	tc.invocation = "run-2"
+	runScienceSnapshot(t, home, tc)
+	if runs() != 2 {
+		t.Fatalf("status ran %d times; a restarted daemon was not read", runs())
+	}
+	// While the daemon starts (nothing listens yet) it is not asked at all.
+	tc.invocation, tc.listener, tc.version = "run-3", false, pinned
+	for range 2 {
+		guest, raw := runScienceSnapshot(t, home, tc)
+		if state := claudeScienceFromGuest(guest, pinned); !state.Running || state.Ready || state.Version != pinned {
+			t.Fatalf("%+v from %s", state, raw)
+		}
+	}
+	if runs() != 2 {
+		t.Fatalf("status ran %d times while the daemon was starting", runs())
 	}
 }
 

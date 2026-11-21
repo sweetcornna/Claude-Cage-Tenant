@@ -389,9 +389,8 @@ func (s *Server) watchGuestSessions(ctx context.Context) {
 		input, known := d.lastInput, d.lastHash
 		d.mu.Unlock()
 		epoch, unlocked := s.account.access()
-		s.mu.Lock()
-		ready := s.ready && !s.closing
-		s.mu.Unlock()
+		// The rule of lock-free guest calls: no watch while a job owns the guest.
+		ready := s.guestAdmitsLockFreeCalls()
 		var reply json.RawMessage
 		outcome := residentUnavailable
 		// A stopped guest is not watched; held lists look at it every 5 s.

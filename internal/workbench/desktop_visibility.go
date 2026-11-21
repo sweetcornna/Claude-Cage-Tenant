@@ -3,6 +3,7 @@ package workbench
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"strconv"
 	"sync"
 	"time"
@@ -26,6 +27,18 @@ type displayViewDemand struct {
 	settling     bool                    // a background worker is applying demand; guarded by mu
 	again        bool                    // demand changed while that worker ran; guarded by mu
 	retryDelay   func(int) time.Duration // tests only; guarded by mu
+	admit        func() bool             // retries wait while it says no; guarded by mu
+}
+
+// errDisplayRetryWaits is a retry that waited for the guest to admit it.
+var errDisplayRetryWaits = errors.New("the guest is not ready for display changes")
+
+// retryWhen makes failed changes wait, without asking the guest, while admit
+// says no: a retry is a lock-free guest call, unlike the viewer's own change.
+func (d *displayViewDemand) retryWhen(admit func() bool) {
+	d.mu.Lock()
+	d.admit = admit
+	d.mu.Unlock()
 }
 
 func (d *displayViewDemand) apply(update func(bool) error) error {
@@ -89,7 +102,8 @@ func displayRetryDelay(n int) time.Duration {
 // reported once per streak and retried, at most every five seconds, for as
 // long as some viewer still wants the display shown: a client that connects
 // while the guest is unavailable must not be left looking at a hidden window
-// when the guest returns. A failed hide is left to the idle timer, as before.
+// when the guest returns. While admit says no (a job owns the guest) retries
+// do not reach the guest. A failed hide is left to the idle timer, as before.
 func (d *displayViewDemand) settle(ctx context.Context, update func(bool) error, failed func(error)) {
 	d.mu.Lock()
 	d.again = true
@@ -104,8 +118,14 @@ func (d *displayViewDemand) settle(ctx context.Context, update func(bool) error,
 		for {
 			d.mu.Lock()
 			d.again = false
+			admit := d.admit
 			d.mu.Unlock()
-			err := d.apply(update)
+			var err error
+			if failures > 0 && admit != nil && !admit() {
+				err = errDisplayRetryWaits
+			} else {
+				err = d.apply(update)
+			}
 			if err == nil {
 				failures = 0
 			} else {
@@ -315,6 +335,7 @@ func (s *Server) joinDesktopView() *displayViewer {
 	if s.windowsGuest != nil || s.macosGuest != nil {
 		return nil
 	}
+	s.desktopViews.retryWhen(s.guestAdmitsLockFreeCalls)
 	return s.desktopViews.join(s.lifetimeContext(), s.changeDesktopVisibility, nil)
 }
 
