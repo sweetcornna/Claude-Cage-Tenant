@@ -149,6 +149,12 @@ func TestGuestShortAdvice(t *testing.T) {
 	if !status.Short || status.LimitedBy != "maximum" || status.Advice == nil || status.Advice.Message != "可以把内存调到 6 GB，需要重启环境。" || !status.Advice.RestartRequired || status.Advice.MemoryBytes != 6*gib {
 		t.Fatalf("advice %+v %+v", status, status.Advice)
 	}
+	// The guest then stops answering: the advice stays.
+	failed := p
+	explain(&status, failed.plan(guestInput{now: now, machine: linuxMachine(8*gib, 4*gib)}), 3*gib, 6*gib, false, 1)
+	if !status.Short || status.Advice == nil || status.Advice.MemoryBytes != 6*gib || status.Reason != "sample_failed_hold" || status.NextAction != status.Advice.Message {
+		t.Fatalf("advice lost on a failed sample %+v", status)
+	}
 	explain(&status, plan, 3*gib, 6*gib, true, 0)
 	if status.Advice == nil || !strings.Contains(status.Advice.Message, "改为自动（推荐）") {
 		t.Fatalf("manual advice %+v", status.Advice)

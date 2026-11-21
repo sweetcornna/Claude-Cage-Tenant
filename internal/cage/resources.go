@@ -238,7 +238,12 @@ func gb(size uint64) string {
 // explicitly chosen allocation, possible is the automatic maximum.
 func explain(status *ResourceStatus, plan guestPlan, maximum, possible uint64, manual bool, failures int) {
 	status.Capacity, status.Demand, status.Wanted, status.Reason, status.Failures = plan.capacity, plan.demand, plan.wanted, plan.reason, failures
-	status.Short, status.LimitedBy, status.Advice = plan.short, "", nil
+	failed := plan.reason == "sample_failed_hold" || plan.reason == "sample_failed_grow"
+	if !failed {
+		// A failed sample keeps the last reading's shortage and advice: a
+		// guest out of memory also fails to answer the probe.
+		status.Short, status.LimitedBy, status.Advice = plan.short, "", nil
+	}
 	target := gb(plan.target)
 	switch plan.reason {
 	case "guest_needs":
@@ -263,6 +268,12 @@ func explain(status *ResourceStatus, plan guestPlan, maximum, possible uint64, m
 		status.Summary, status.NextAction = fmt.Sprintf("持续读不到环境的内存用量（连续 %d 次），已逐步放宽到 %s。", failures, target), "无需操作，恢复读取后自动继续调整。"
 	default:
 		status.Summary, status.NextAction = "环境内存充足（分配 "+target+"，需要 "+gb(plan.demand)+"）。", "无需操作。"
+	}
+	if failed {
+		if status.Advice != nil {
+			status.NextAction = status.Advice.Message
+		}
+		return
 	}
 	if !plan.short {
 		return

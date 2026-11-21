@@ -2,6 +2,7 @@ package cage
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -10,6 +11,8 @@ import (
 var (
 	machineMeminfo = "/proc/meminfo"
 	machineVmstat  = "/proc/vmstat"
+	machineBlocks  = "/sys/devices/system/memory"
+	machineBalloon = "/sys/bus/virtio/drivers/virtio_balloon"
 )
 
 func platformMachine() MachineMemory {
@@ -39,8 +42,51 @@ func platformMachine() MachineMemory {
 	if !reading.Measured {
 		reading.Available = 0
 	}
-	reading.Boot = reading.Total + balloonBytes()
+	keeps, known := balloonKeepsMemTotal()
+	reading.Boot = bootBytes(reading.Total, balloonBytes(), memoryBlocks(), keeps, known)
 	return reading
+}
+
+// balloonKeepsMemTotal reports whether the virtio balloon negotiated
+// VIRTIO_BALLOON_F_DEFLATE_ON_OOM (feature bit 2), with which the kernel
+// keeps ballooned pages in MemTotal; known is false without a balloon device.
+func balloonKeepsMemTotal() (keeps, known bool) {
+	matches, _ := filepath.Glob(filepath.Join(machineBalloon, "virtio*", "features"))
+	for _, path := range matches {
+		data, err := os.ReadFile(path)
+		if features := strings.TrimSpace(string(data)); err == nil && len(features) > 2 && strings.Trim(features, "01") == "" {
+			return features[2] == '1', true
+		}
+	}
+	return false, false
+}
+
+// memoryBlocks is the memory the kernel has online in hotplug blocks, which a
+// balloon does not change; zero when the kernel does not report them.
+func memoryBlocks() uint64 {
+	data, err := os.ReadFile(filepath.Join(machineBlocks, "block_size_bytes"))
+	if err != nil {
+		return 0
+	}
+	size, err := strconv.ParseUint(strings.TrimSpace(string(data)), 16, 64)
+	if err != nil || size == 0 || size > 1<<40 {
+		return 0
+	}
+	entries, err := os.ReadDir(machineBlocks)
+	if err != nil {
+		return 0
+	}
+	var online uint64
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "memory") {
+			continue
+		}
+		state, err := os.ReadFile(filepath.Join(machineBlocks, entry.Name(), "online"))
+		if err == nil && strings.TrimSpace(string(state)) == "1" {
+			online++
+		}
+	}
+	return online * size
 }
 
 // balloonBytes is what a virtio balloon of an outer level holds in this

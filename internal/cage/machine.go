@@ -77,9 +77,29 @@ func machineReserve(role string, boot uint64) uint64 {
 }
 
 // machineBootGiB is the machine's boot memory in whole GiB: host.MemGiB, which
-// tests replace, plus what an outer balloon holds now.
+// tests replace, without an outer balloon; with one, the boot size of the
+// Linux reading, rounded down once, so that the balloon moving memory
+// between MemTotal and itself never moves the result.
 func machineBootGiB() int {
-	return host.MemGiB() + int(balloonBytes()>>30)
+	if balloonBytes() == 0 {
+		return host.MemGiB()
+	}
+	return int(platformMachine().Boot >> 30)
+}
+
+// bootBytes is a ballooned machine's boot memory: MemTotal plus the balloon
+// on kernels that take ballooned pages out of MemTotal, MemTotal alone on
+// kernels that keep it and count ballooned pages as used (the balloon
+// negotiated deflate-on-oom). keeps is that feature as the balloon driver
+// reports it; without it (known false) the memory blocks the kernel has
+// online tell (zero when unknown): MemTotal of an unballooned kernel is below
+// them, so the sum reaches them only when MemTotal kept the ballooned pages.
+func bootBytes(total, balloon, blocks uint64, keeps, known bool) uint64 {
+	switch {
+	case known && keeps, !known && blocks > 0 && total+balloon >= blocks:
+		return total
+	}
+	return total + balloon
 }
 
 // AutomaticLimits is the automatic allocation of a ballooned Linux guest: the
@@ -88,14 +108,17 @@ func machineBootGiB() int {
 // quarter (at least two) on a desktop. The balloon target, not this ceiling,
 // decides what the guest holds.
 func AutomaticLimits() (memoryGiB, cpus int) {
-	role := machineRole()
-	boot := uint64(max(machineBootGiB(), 0)) << 30
+	return automaticLimits(machineRole(), uint64(max(machineBootGiB(), 0))<<30, host.CPUs())
+}
+
+// automaticLimits is AutomaticLimits for a machine of role with boot bytes
+// of memory and n CPUs.
+func automaticLimits(role string, boot uint64, n int) (memoryGiB, cpus int) {
 	memoryGiB = 4
 	if boot > 0 {
 		memoryGiB = int((boot - min(boot, machineReserve(role, boot))) >> 30)
 	}
 	memoryGiB = min(max(memoryGiB, 2), AutomaticMemoryCapGiB)
-	n := host.CPUs()
 	if n <= 0 {
 		return memoryGiB, 2
 	}
