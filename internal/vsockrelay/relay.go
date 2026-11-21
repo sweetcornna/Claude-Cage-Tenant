@@ -55,9 +55,14 @@ const (
 )
 
 var (
-	// ErrUnauthenticated: whatever answered on the port did not prove the
-	// bridge's secret. Nothing but the handshake was sent to it.
+	// ErrUnauthenticated: whatever answered on the port spoke, but not as the
+	// bridge: it did not greet as a relay or did not prove the bridge's
+	// secret. Nothing but the handshake was sent to it.
 	ErrUnauthenticated = errors.New("the vsock listener did not prove the bridge secret")
+	// ErrNoAnswer: the listener closed the connection or stayed silent during
+	// the handshake, as a relay that is busy or slow can. It proves nothing
+	// either way. Nothing but the handshake was sent to it.
+	ErrNoAnswer = errors.New("the vsock listener did not finish the handshake")
 	// ErrNotReady: the relay proved itself but could not reach the workbench.
 	ErrNotReady = errors.New("the vsock relay could not reach the workbench")
 )
@@ -141,8 +146,12 @@ func Authenticate(conn net.Conn, secret []byte) error {
 	_ = conn.SetDeadline(time.Now().Add(HandshakeTimeout))
 	defer conn.SetDeadline(time.Time{})
 	hello := make([]byte, helloSize)
-	if _, err := io.ReadFull(conn, hello); err != nil {
-		return fmt.Errorf("%w: %v", ErrUnauthenticated, err)
+	if n, err := io.ReadFull(conn, hello); err != nil {
+		// A start that is not a relay's greeting is an answer, and a wrong one.
+		if got := string(hello[:n]); !strings.HasPrefix(helloPrefix, got) && !strings.HasPrefix(got, helloPrefix) {
+			return fmt.Errorf("%w: not a relay greeting", ErrUnauthenticated)
+		}
+		return fmt.Errorf("%w: %v", ErrNoAnswer, err)
 	}
 	encoded, ok := strings.CutPrefix(string(hello), helloPrefix)
 	relayNonce, err := hex.DecodeString(strings.TrimSuffix(encoded, "\n"))
@@ -155,11 +164,11 @@ func Authenticate(conn net.Conn, secret []byte) error {
 	}
 	message := hex.EncodeToString(gatewayNonce) + " " + string(proof(secret, labelGateway, relayNonce, gatewayNonce))
 	if _, err := io.WriteString(conn, message); err != nil {
-		return fmt.Errorf("%w: %v", ErrUnauthenticated, err)
+		return fmt.Errorf("%w: %v", ErrNoAnswer, err)
 	}
 	answer := make([]byte, proofSize)
 	if _, err := io.ReadFull(conn, answer); err != nil {
-		return fmt.Errorf("%w: %v", ErrUnauthenticated, err)
+		return fmt.Errorf("%w: %v", ErrNoAnswer, err)
 	}
 	switch {
 	case hmac.Equal(answer, proof(secret, labelRelay, relayNonce, gatewayNonce)):

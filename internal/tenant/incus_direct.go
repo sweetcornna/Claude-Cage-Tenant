@@ -241,7 +241,7 @@ func (r *IncusRuntime) openDirect(ctx context.Context, workspace *Workspace, ins
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			return nil, fmt.Errorf("%w: nothing listened on the vsock port within %s", errDirectUnsupported, directWait)
+			return nil, fmt.Errorf("%w: nothing answered as the bridge on the vsock port within %s", errDirectUnsupported, directWait)
 		case <-time.After(100 * time.Millisecond):
 		}
 	}

@@ -396,10 +396,10 @@ VM 内嵌套运行的 Super Cage 客机（QEMU 5.1 及以上；仅 Linux 宿主�
 - 中继监听起来后，网关先经已认证的 vsock 连接发一个普通 HTTP 请求，确认到达工作台的 HTTP 服务；随后工作区握手（`/api/launch`、`/api/session`、`/api/client/about`）也走 vsock。
 - 来宾侧的监听早于工作台启动。中继已在监听、但连不上工作台时，它用单独的标签回答「未就绪」，这次配备用 exec，不记为 vsock 的失败；中继随之结束，下一个工作区再试 vsock。
 - 握手经 vsock 失败时，网关用同一个启动令牌改经 exec 再握手一次；只有 exec 成功、vsock 不成功，才认定是 vsock 的问题，该实例 5 分钟内不再尝试 vsock。
-- 某次 vsock 连接失败时，在同一次拨号里改用 exec，请求和流看不到失败；单次失败不影响后面的连接（中继的监听队列是 128，同时在握手的连接最多 32 条）。连续 3 次失败后该工作区不再试 vsock，该实例 5 分钟内不再尝试。连接的对方没能证明密钥时立刻放弃该路径。
+- 某次 vsock 连接失败时，在同一次拨号里改用 exec，请求和流看不到失败；单次失败不影响后面的连接（中继的监听队列是 128，同时在握手的连接最多 32 条）。连续 3 次失败后该工作区不再试 vsock，该实例 5 分钟内不再尝试。对方回应了却不是中继（问候不对，或证明不了密钥）时立刻放弃该路径；对方不出声或在握手中挂断（中继忙或慢时也会这样）只算一次普通的失败。
 - 来宾的 `cage` 没有 `vsock-relay`（中继进程立刻退出）、监听 5 秒内没有出现、`volatile.vsock_id` 缺失，该实例 5 分钟内不再尝试。网关进程的 systemd 限制了 `AF_VSOCK` 时，每次拨号失败并改用 exec，连续 3 次后放弃。以上都只是回退，不影响工作区可用。
 
-日志每个工作区一行：`dials its workbench through vsock (CID …, port …)` 表示在用直连；`uses incus exec; the vsock path is unavailable: …` 给出回退原因（`is not the bridge` 表示端口上有一个没能证明密钥的监听）；`the vsock path ended (…)` 表示运行中退回 exec。回退不会让工作区报错，所以要靠这些日志确认直连真的在用。
+日志每个工作区一行：`dials its workbench through vsock (CID …, port …)` 表示在用直连；`uses incus exec; the vsock path is unavailable: …` 给出回退原因（`is not the bridge` 表示端口上的监听回应了却证明不了密钥，`nothing answered as the bridge` 表示 5 秒内没有监听完成握手）；`the vsock path ended (…)` 表示运行中退回 exec。回退不会让工作区报错，所以要靠这些日志确认直连真的在用。
 
 **在 KVM 宿主上逐项验证**（这一轮没有在真实宿主上跑过）：
 
@@ -408,8 +408,8 @@ VM 内嵌套运行的 Super Cage 客机（QEMU 5.1 及以上；仅 Linux 宿主�
 3. 加 `-incus-vsock` 重启网关，打开一个工作区，日志出现 `dials its workbench through vsock`。宿主上 `ps -eo args | grep -c 'exec .* vsock-relay'` 对每个工作区为 1；`ps -eo args | grep vsock-relay` 里看不到任何十六进制密钥，`sudo cat /proc/<incus exec 的 pid>/environ | tr '\0' '\n' | grep -ci secret` 为 0。
 4. 反复打开和关闭终端标签、刷新页面：`ps -eo args | grep -c 'socat STDIO'` 保持不变。默认路径下每个新连接都会让它加 1。
 5. 延迟：浏览器 Network 面板里，WebSocket 升级的「等待服务器响应」时间应比默认路径少约一次 `time incus --force-local --project cage-tenant exec cage-<id> -- true` 的耗时。再对比宿主 incusd 的 CPU：浏览器画面流动时应下降。
-6. 宿主上的其他进程用不了中继：在宿主上以普通用户执行 `python3 -c 'import socket; s=socket.socket(socket.AF_VSOCK); s.connect((<CID>, <端口>)); print(s.recv(64)); s.send(b"0"*98); print(s.recv(65))'`（端口取日志里那一行），第一行打印问候 `CAGE-VSOCK 1 …`，随后连接被关闭（第二个 `recv` 为空），VM 里 `ss -tnp | grep <工作台端口>` 不出现新的连接。
+6. 宿主上的其他进程用不了中继：在宿主上以普通用户执行 `python3 -c 'import socket; s=socket.socket(socket.AF_VSOCK); s.connect((<CID>, <端口>)); print(s.recv(64)); s.send(b"0"*98); print(s.recv(65))'`（端口取日志里那一行），第一行打印问候 `CAGE-VSOCK 1 …`，随后连接被关闭（第二个 `recv` 为空），VM 里 `ss -tnp | grep <工作台端口>` 不出现新的连接。再只连接、不发送：`python3 -c 'import socket,time; s=socket.socket(socket.AF_VSOCK); s.connect((<CID>, <端口>)); s.recv(64); t=time.time(); print(s.recv(1), round(time.time()-t,1))'` 约 3 秒后打印 `b'' 3.0`（中继在 vsock 套接字上的握手超时生效）。
 7. VM 里的进程用不了中继：在 VM 内（以及工作区的内层沙箱里，如果它能建 AF_VSOCK 套接字）执行 `python3 -c 'import socket; s=socket.socket(socket.AF_VSOCK); s.connect((1, <端口>)); print(s.recv(64))'` 和把 1 换成 VM 自己的 CID，都应当立刻被关闭（打印 `b''`）或连接失败，得不到问候。另一台租户 VM 连目标 VM 的 CID 和端口必须失败。
-8. 冒充中继：在 VM 里先让中继退出（`pkill -f 'cage vsock-relay'`），再用 `python3 -c 'import socket; s=socket.socket(socket.AF_VSOCK); s.bind((socket.VMADDR_CID_ANY, <端口>)); s.listen(); c,_=s.accept(); print(c.recv(4096))'` 占住同一端口，在网关侧打开新终端：python 打印 `b''` 或只等到超时（没有收到任何字节），网关日志出现 `the vsock path ended`，工作台照常经 exec 可用。
+8. 中继退出后不会冒充：在 VM 里让中继退出（`pkill -f 'cage vsock-relay'`），网关日志马上出现 `the vsock path ended (the bridge process ended)`；再用 `python3 -c 'import socket; s=socket.socket(socket.AF_VSOCK); s.bind((socket.VMADDR_CID_ANY, <端口>)); s.listen(); s.settimeout(60); c,_=s.accept(); print(c.recv(4096))'` 占住同一端口，在网关侧打开新终端并刷新页面：python 在 60 秒后以 `socket.timeout` 结束（网关不再连这个端口，更不会发任何字节），工作台照常经 exec 可用。关闭再打开该工作区时，网关启动一个新端口、新密钥的中继。
 9. 冻结和解冻：让工作区空闲到冻结（第 7 节），再打开工作台；网关恢复实例后新连接仍走 vsock（`ps` 里中继还在），已有的流在冻结时由网关断开、浏览器自动重连，这是已有行为。
 10. 网关重启：重启（包括 `kill -9`）后旧中继随标准输入关闭而退出（VM 里 `pgrep -fc 'cage vsock-relay'` 回到每个工作区 1 个），新网关用新的端口和密钥启动自己的中继；VM 关机时中继随之消失。

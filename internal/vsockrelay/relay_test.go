@@ -102,7 +102,9 @@ func TestRelayNeverReachesTheWorkbenchWithoutTheSecret(t *testing.T) {
 		gateway, guest := net.Pipe()
 		done := make(chan struct{})
 		go func() { relay.ServeConn(guest, attempt.peer); close(done) }()
-		if err := Authenticate(gateway, attempt.secret); !errors.Is(err, ErrUnauthenticated) {
+		// The relay hangs up without a word: the caller learns nothing
+		// either way and never gets a connection.
+		if err := Authenticate(gateway, attempt.secret); !errors.Is(err, ErrNoAnswer) {
 			t.Fatalf("peer %d: %v", attempt.peer, err)
 		}
 		gateway.Close()
@@ -168,8 +170,14 @@ func TestGatewaySendsNothingButTheHandshakeToAnImpostor(t *testing.T) {
 		conn := impostor(t, behave)
 		err := Authenticate(conn, config.Secret)
 		conn.Close()
-		if !errors.Is(err, ErrUnauthenticated) {
-			t.Fatalf("%s: %v", name, err)
+		// Silence proves nothing either way (a busy relay is silent too);
+		// anything that speaks without the secret is not the bridge.
+		want := ErrUnauthenticated
+		if name == "silent" {
+			want = ErrNoAnswer
+		}
+		if !errors.Is(err, want) || (want == ErrNoAnswer && errors.Is(err, ErrUnauthenticated)) {
+			t.Fatalf("%s: %v, want %v", name, err, want)
 		}
 		switch name {
 		case "silent", "garbage":
@@ -181,6 +189,19 @@ func TestGatewaySendsNothingButTheHandshakeToAnImpostor(t *testing.T) {
 				t.Fatalf("%s: the gateway sent %d bytes, want only its %d-byte proof", name, conn.written.Len(), gatewaySize)
 			}
 		}
+	}
+}
+
+// A relay that sheds a connection during a burst has not been impersonated:
+// the gateway must count it as an ordinary failed dial, not drop the path.
+func TestAConnectionTheRelayShedsIsNoAnswer(t *testing.T) {
+	config := testConfig(t)
+	gateway, relay := net.Pipe()
+	go func() { _ = relay.Close() }()
+	err := Authenticate(gateway, config.Secret)
+	gateway.Close()
+	if !errors.Is(err, ErrNoAnswer) || errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("a shed connection: %v", err)
 	}
 }
 

@@ -35,6 +35,9 @@ type directFixture struct {
 	vsock     atomic.Int32
 	execs     atomic.Int32
 	vsockFail atomic.Bool
+	// shed makes the next vsock dials reach a relay that drops them during the
+	// handshake, as one with too many handshakes in flight does.
+	shed atomic.Int32
 	// notReady makes the relay fail to reach the workbench, as while nothing
 	// listens on the workbench's port yet.
 	notReady atomic.Bool
@@ -69,6 +72,12 @@ func newDirectFixture(t *testing.T, vsock bool) *directFixture {
 		if !ok {
 			return nil, errors.New("connection refused")
 		}
+		if f.shed.Add(-1) >= 0 {
+			client, server := net.Pipe()
+			server.Close()
+			return client, nil
+		}
+		f.shed.Store(0)
 		if cid != 42 || port != relay.Listen || relay.Target != 45001 {
 			t.Errorf("vsock dial to %d:%d for a relay on %d to %d, want CID 42", cid, port, relay.Listen, relay.Target)
 		}
@@ -230,6 +239,24 @@ func TestIncusDirectPathSurvivesAStrayDialFailure(t *testing.T) {
 	}
 	if !f.runtime.directAllowed(f.instance) {
 		t.Fatal("one failed dial put the instance on exec")
+	}
+}
+
+// A relay that sheds one connection of a burst has not been impersonated: the
+// dial is served over exec and the path stays.
+func TestIncusDirectPathSurvivesAShedHandshake(t *testing.T) {
+	f := newDirectFixture(t, true)
+	workspace := f.connect()
+	requests(t, workspace, 1)
+	f.shed.Store(1)
+	requests(t, workspace, 1)
+	before := f.vsock.Load()
+	requests(t, workspace, 3)
+	if f.execs.Load() != 1 || f.vsock.Load() != before+3 {
+		t.Fatalf("exec dials %d, vsock dials %d -> %d: want one fallback and vsock again afterwards", f.execs.Load(), before, f.vsock.Load())
+	}
+	if !f.runtime.directAllowed(f.instance) {
+		t.Fatal("one shed handshake put the instance on exec")
 	}
 }
 
