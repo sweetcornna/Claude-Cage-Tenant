@@ -3,6 +3,7 @@ package tenant
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"io"
 	"log"
@@ -10,16 +11,21 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/sylvinus/agent-vm/internal/vsockrelay"
 )
 
 // directFixture is a VM-mode runtime whose incus CLI is a script and whose
 // vsock and exec dials reach one fixture guest, so the connection logic runs
-// without Incus. The script's bridge branch stands in for the guest socat: it
-// leaves "started" and "stopped" marker files.
+// without Incus. The script's bridge branch stands in for the guest's
+// "cage vsock-relay": it keeps the configuration the gateway wrote on its
+// stdin, leaves "started" and "stopped" marker files and ends with its stdin.
+// Each vsock dial then reaches the real relay code, as the guest would run it.
 type directFixture struct {
 	t         *testing.T
 	runtime   *IncusRuntime
@@ -29,10 +35,8 @@ type directFixture struct {
 	vsock     atomic.Int32
 	execs     atomic.Int32
 	vsockFail atomic.Bool
-	// listening makes the vsock dial succeed even before any bridge runs.
-	listening atomic.Bool
-	// notReady makes the bridge accept a connection and drop it, as socat does
-	// while nothing listens on the workbench's port yet.
+	// notReady makes the relay fail to reach the workbench, as while nothing
+	// listens on the workbench's port yet.
 	notReady atomic.Bool
 	// brokenRelay makes vsock connections reach a server that answers HTTP but
 	// is not the workbench, so the probe passes and the handshake fails.
@@ -50,31 +54,34 @@ func newDirectFixture(t *testing.T, vsock bool) *directFixture {
 	f.dir = t.TempDir()
 	started := filepath.Join(f.dir, "started")
 	stopped := filepath.Join(f.dir, "stopped")
+	config := filepath.Join(f.dir, "relay-config")
 	f.runtime, f.calls = fakeIncus(t, `"--force-local --project cage-tenant exec local:cage-`+id+` --mode=non-interactive -- /usr/bin/head -c 8193 -- `+control+`") echo '{"port":45001,"token":"`+fixtureLauncher+`"}' ;;
 "--force-local query local:/1.0/instances/cage-`+id+`?project=cage-tenant") echo '{"name":"cage-`+id+`","type":"virtual-machine","config":{"user.cage-tenant.id":"`+id+`","volatile.vsock_id":"42"}}' ;;
-*"exec local:cage-`+id+` --mode=non-interactive -- /usr/bin/socat VSOCK-LISTEN:45001,fork,reuseaddr,backlog=128 TCP4:127.0.0.1:45001,connect-timeout=5") echo started >> '`+started+`'; trap "echo stopped >> '`+stopped+`'; exit 0" TERM; sleep 30 & wait ;;`)
+*"exec local:cage-`+id+` --mode=non-interactive -- /usr/local/bin/cage vsock-relay") IFS= read -r line; printf '%s\n' "$line" > '`+config+`'; echo started >> '`+started+`'; trap "echo stopped >> '`+stopped+`'; exit 0" TERM; exec 3<&0; cat <&3 >/dev/null & wait; echo stopped >> '`+stopped+`' ;;`)
 	f.runtime.cfg.ControlPath = control
 	f.runtime.cfg.Vsock = vsock
 	f.runtime.vsockDial = func(ctx context.Context, cid, port uint32) (net.Conn, error) {
 		f.vsock.Add(1)
-		if cid != 42 || port != 45001 {
-			t.Errorf("vsock dial to %d:%d, want 42:45001", cid, port)
-		}
 		if f.vsockFail.Load() {
 			return nil, errors.New("connection reset by peer")
 		}
-		if _, err := os.Stat(started); err != nil && !f.listening.Load() {
+		relay, ok := f.relayConfig()
+		if !ok {
 			return nil, errors.New("connection refused")
 		}
-		if f.notReady.Load() {
-			client, server := net.Pipe()
-			server.Close()
-			return client, nil
+		if cid != 42 || port != relay.Listen || relay.Target != 45001 {
+			t.Errorf("vsock dial to %d:%d for a relay on %d to %d, want CID 42", cid, port, relay.Listen, relay.Target)
 		}
-		if f.brokenRelay.Load() {
-			return f.relay.dial(ctx)
+		target := func() (net.Conn, error) { return guest.dial(ctx) }
+		switch {
+		case f.notReady.Load():
+			target = func() (net.Conn, error) { return nil, errors.New("connection refused") }
+		case f.brokenRelay.Load():
+			target = func() (net.Conn, error) { return f.relay.dial(ctx) }
 		}
-		return guest.dial(ctx)
+		client, server := net.Pipe()
+		go (&vsockrelay.Relay{Secret: relay.Secret, Target: target}).ServeConn(server, vsockrelay.HostCID)
+		return client, nil
 	}
 	f.runtime.execDial = func(ctx context.Context, instance string, port int) (net.Conn, error) {
 		f.execs.Add(1)
@@ -96,6 +103,26 @@ func (f *directFixture) connect() *Workspace {
 	}
 	f.t.Cleanup(workspace.close)
 	return workspace
+}
+
+// relayConfig is what the gateway wrote on the running relay's stdin.
+func (f *directFixture) relayConfig() (vsockrelay.Config, bool) {
+	count := func(name string) int {
+		data, _ := os.ReadFile(filepath.Join(f.dir, name))
+		return strings.Count(string(data), "\n")
+	}
+	if count("started") <= count("stopped") {
+		return vsockrelay.Config{}, false // no bridge runs
+	}
+	line, err := os.ReadFile(filepath.Join(f.dir, "relay-config"))
+	if err != nil {
+		return vsockrelay.Config{}, false
+	}
+	config, err := vsockrelay.ParseConfig(string(line))
+	if err != nil {
+		f.t.Errorf("the relay got an invalid configuration: %v", err)
+	}
+	return config, err == nil
 }
 
 func (f *directFixture) marker(name string) bool {
@@ -128,9 +155,17 @@ func TestIncusDirectPathDialsWithoutExec(t *testing.T) {
 	if !f.marker("started") {
 		t.Fatal("the guest bridge was not started")
 	}
+	relay, ok := f.relayConfig()
+	if !ok {
+		t.Fatal("the relay has no configuration")
+	}
+	secret := hex.EncodeToString(relay.Secret)
 	for _, call := range readCalls(t, f.calls) {
 		if strings.Contains(call, "socat STDIO") {
 			t.Fatalf("a per-connection exec was started: %q", call)
+		}
+		if strings.Contains(call, secret) || strings.Contains(call, strconv.Itoa(int(relay.Listen))) {
+			t.Fatalf("the bridge's secret or port reached the command line: %q", call)
 		}
 	}
 	// The bridge ends with the workspace.
@@ -149,16 +184,6 @@ func TestIncusDirectPathIsOffByDefault(t *testing.T) {
 		if strings.Contains(call, "/1.0/instances/cage-") {
 			t.Fatalf("the vsock address was looked up without the option: %q", call)
 		}
-	}
-}
-
-func TestIncusDirectPathReusesAListenerThatIsAlreadyThere(t *testing.T) {
-	f := newDirectFixture(t, true)
-	f.listening.Store(true)
-	workspace := f.connect()
-	requests(t, workspace, 2)
-	if f.marker("started") || f.execs.Load() != 0 {
-		t.Fatalf("a second bridge was started (%v) or exec used (%d) although a listener answered", f.marker("started"), f.execs.Load())
 	}
 }
 
@@ -238,8 +263,8 @@ func TestIncusDirectPathLatchesOffAfterSeveralDialFailures(t *testing.T) {
 
 func TestIncusDirectPathWaitsForAWorkbenchThatIsNotUpYet(t *testing.T) {
 	f := newDirectFixture(t, true)
-	// During boot the guest side listens before the workbench does: the bridge
-	// accepts and drops. That is not held against the path.
+	// During boot the guest side listens before the workbench does: the relay
+	// answers that it cannot reach it. That is not held against the path.
 	f.notReady.Store(true)
 	first := f.connect()
 	requests(t, first, 2)
