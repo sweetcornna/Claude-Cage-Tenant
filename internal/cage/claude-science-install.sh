@@ -45,6 +45,15 @@ cage_install_claude_science() (
       exit 0
     fi
   fi
+  # The daemon refuses a data directory on tmpfs, overlayfs or ramfs (lost
+  # on restart) unless started with --allow-ephemeral-data-dir; Cage never
+  # passes it. Filesystem magic numbers as stat -f prints them.
+  case "$(stat -f -c %t "$HOME" 2>/dev/null)" in
+    1021994 | 794c7630 | 858458f6)
+      printf '%s\n' '这个客机的用户目录位于重启后会清空的临时文件系统（tmpfs、overlayfs 或 ramfs），Claude Science 拒绝把项目和会话保存在这里，因此无法安装。请使用带持久磁盘的环境。' >&2
+      exit 1
+      ;;
+  esac
   # The first start sets up Python and R environments of about 10 GB in the
   # data directory; an update only needs room for the download and its copy.
   required_mb=11264

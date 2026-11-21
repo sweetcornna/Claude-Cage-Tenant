@@ -9,7 +9,7 @@ import http from "node:http";
 import { auditBrowser } from "./browser-audit.mjs";
 import { BrowserVault } from "./browser-vault.mjs";
 import { LoginBrowser } from "./browser-login.mjs";
-import { isScienceURL, publicScienceURL, readScienceConfig, scienceLink, scienceTitle } from "./browser-science.mjs";
+import { isScienceURL, publicScienceURL, readScienceConfig, scienceLink, scienceTabReusable, scienceTitle } from "./browser-science.mjs";
 import { PrivateBrowser } from "./browser-private.mjs";
 import { browserCookies } from "./browser-cookies.mjs";
 import { BrowserExtensions, extensionUploadLimit } from "./browser-extensions.mjs";
@@ -630,9 +630,10 @@ async function restartEditor(workspace) {
 }
 // Claude Science (phase 1) opens in an ordinary tab, kind "science". The
 // tab given the last link is remembered with the daemon start it was for.
-// While that daemon runs, the tab is only brought forward, wherever it is
-// (during sign-in it is on claude.ai). A newer daemon has a new session, so
-// a tab on the daemon's origin gets the new link, or a new tab is opened.
+// While that daemon runs, that tab is only brought forward if it shows the
+// app or is signing in (scienceTabReusable). Otherwise a tab on the daemon's
+// origin gets the new link (a newer daemon has a new session), or a new tab
+// is opened; a tab the user took to another site is left alone.
 let scienceTab = { id: "", startedAt: "" };
 function sciencePort() {
   return readScienceConfig()?.port;
@@ -644,7 +645,8 @@ async function openScience({ url, started_at: startedAt = "", fresh = false }) {
   const link = scienceLink(url, sciencePort());
   if (typeof startedAt !== "string" || startedAt.length > 64) throw new Error("Claude Science 状态无效");
   const remembered = targets.get(scienceTab.id);
-  if (remembered && !remembered.login && !remembered.incognito && fresh !== true && startedAt && startedAt === scienceTab.startedAt) {
+  if (remembered && !remembered.login && !remembered.incognito && fresh !== true && startedAt && startedAt === scienceTab.startedAt &&
+      scienceTabReusable(remembered.url, sciencePort())) {
     await activate(remembered.targetId, true);
     return { id: remembered.targetId, kind: "science", title: scienceTitle, reused: true };
   }

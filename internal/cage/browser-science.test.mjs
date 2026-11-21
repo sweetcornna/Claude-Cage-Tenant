@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { isScienceURL, publicScienceURL, readScienceConfig, scienceLink } from "./browser-science.mjs";
+import { isScienceURL, publicScienceURL, readScienceConfig, scienceLink, scienceTabReusable } from "./browser-science.mjs";
 
 const port = 47800;
 const nonce = "0123456789abcdef0123456789abcdef";
@@ -12,13 +12,17 @@ const good = `http://localhost:${port}/?nonce=${nonce}`;
 test("the link the daemon prints is accepted unchanged", () => {
   assert.equal(scienceLink(good, port), good);
   assert.equal(scienceLink(`http://localhost:${port}/?nonce=AZaz09_-AZaz09_-`, port), `http://localhost:${port}/?nonce=AZaz09_-AZaz09_-`);
+  // Printed when another program holds [::1] on the port; still guest loopback.
+  assert.equal(scienceLink(`http://127.0.0.1:${port}/?nonce=${nonce}`, port), `http://127.0.0.1:${port}/?nonce=${nonce}`);
 });
 
 test("only the provisioned loopback port and host are accepted", () => {
   const refused = [
     // wrong or non-loopback host
-    `http://127.0.0.1:${port}/?nonce=${nonce}`,
     `http://[::1]:${port}/?nonce=${nonce}`,
+    `http://127.0.0.2:${port}/?nonce=${nonce}`,
+    `http://127.1:${port}/?nonce=${nonce}`,
+    `http://2130706433:${port}/?nonce=${nonce}`,
     `http://0.0.0.0:${port}/?nonce=${nonce}`,
     `http://10.0.2.2:${port}/?nonce=${nonce}`,
     `http://example.com:${port}/?nonce=${nonce}`,
@@ -105,4 +109,28 @@ test("Science tabs are recognized by origin and lose their secrets in public sta
   // Other sites keep their address; masking is not configured without a port.
   assert.equal(publicScienceURL("https://claude.ai/oauth/authorize?state=x", port), "https://claude.ai/oauth/authorize?state=x");
   assert.equal(publicScienceURL(good, undefined), good);
+});
+
+test("the tab given the last link is brought forward only while it shows the app or signs in", () => {
+  for (const value of [
+    `http://localhost:${port}/`,
+    `http://localhost:${port}/projects/1?view=plot`,
+    `http://localhost:${port}/oauth/code/callback?code=x&state=y`,
+    "https://claude.ai/oauth/authorize?client_id=x",
+    "https://claude.ai/login",
+    "https://platform.claude.com/v1/oauth/token",
+  ]) assert.equal(scienceTabReusable(value, port), true, value);
+  for (const value of [
+    good,
+    `http://localhost:${port}/?nonce=expired0123456789`,
+    `http://localhost:${port}/api/auth/nonce`,
+    "https://www.bing.com/",
+    "http://claude.ai/",
+    "https://evil.example/claude.ai",
+    "https://user@claude.ai/",
+    "about:blank",
+    "chrome://newtab/",
+    `http://localhost:47801/`,
+    "not a url",
+  ]) assert.equal(scienceTabReusable(value, port), false, value);
 });

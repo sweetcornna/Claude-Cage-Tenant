@@ -38,6 +38,7 @@ func TestClaudeSciencePinMatchesInstaller(t *testing.T) {
 
 type scienceInstallCase struct {
 	arch, free, candidate, active string
+	fsType                        string
 	installed                     []string
 	bwrapOld                      bool
 	payload, payloadVersion       string
@@ -71,6 +72,7 @@ func runScienceInstall(t *testing.T, home string, tc scienceInstallCase) science
 	write("dpkg", "#!/bin/sh\n[ \"$1\" = --compare-versions ] || exit 2\nexec python3 -c 'import re, sys\nkey = lambda v: [int(x) for x in re.findall(r\"[0-9]+\", v.split(\"-\")[0])]\na, op, b = sys.argv[1:4]\nsys.exit(0 if {\"gt\": key(a) > key(b), \"ge\": key(a) >= key(b), \"lt\": key(a) < key(b), \"le\": key(a) <= key(b), \"eq\": key(a) == key(b)}[op] else 1)' \"$2\" \"$3\" \"$4\"\n")
 	write("df", "#!/bin/sh\nprintf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/vda1 41943040 1000 %s 1%% /\\n' \"$TEST_FREE_KB\"\n")
 	write("bwrap", "#!/bin/sh\nif [ \"$TEST_BWRAP_OLD\" = 1 ]; then echo 'bwrap: Unknown option --disable-userns' >&2; exit 1; fi\nexit 0\n")
+	write("stat", "#!/bin/sh\nif [ \"$1\" = -f ]; then echo \"$TEST_FSTYPE\"; exit 0; fi\nexit 2\n")
 	if _, err := exec.LookPath("shasum"); err == nil {
 		write("sha256sum", "#!/bin/sh\nexec shasum -a 256 \"$@\"\n")
 	}
@@ -108,12 +110,16 @@ func runScienceInstall(t *testing.T, home string, tc scienceInstallCase) science
 	if installed == nil {
 		installed = []string{"ca-certificates", "curl", "bubblewrap", "socat", "python3"}
 	}
+	fsType := tc.fsType
+	if fsType == "" {
+		fsType = "ef53"
+	}
 	bwrapOld := "0"
 	if tc.bwrapOld {
 		bwrapOld = "1"
 	}
 	cmd.Env = append(os.Environ(), "HOME="+home, "PATH="+bin+":"+os.Getenv("PATH"), "TEST_ARCH="+arch, "TEST_FREE_KB="+free, "TEST_CANDIDATE="+tc.candidate,
-		"TEST_INSTALLED="+strings.Join(installed, " "), "TEST_BWRAP_OLD="+bwrapOld, "TEST_ACTIVE="+tc.active, "TEST_PAYLOAD="+payload, "TEST_PAYLOAD_VERSION="+tc.payloadVersion)
+		"TEST_INSTALLED="+strings.Join(installed, " "), "TEST_BWRAP_OLD="+bwrapOld, "TEST_ACTIVE="+tc.active, "TEST_FSTYPE="+fsType, "TEST_PAYLOAD="+payload, "TEST_PAYLOAD_VERSION="+tc.payloadVersion)
 	out, err := cmd.CombinedOutput()
 	downloads, _ := os.ReadFile(filepath.Join(home, "downloads"))
 	apt, _ := os.ReadFile(filepath.Join(home, "apt-requests"))
@@ -151,6 +157,8 @@ func TestClaudeScienceInstallRefusesBeforeChanges(t *testing.T) {
 		{"aarch64", scienceInstallCase{arch: "aarch64"}, "暂无 Linux arm64 官方版本"},
 		{"other-architecture", scienceInstallCase{arch: "riscv64"}, "只提供 x86-64 Linux 版本"},
 		{"low-disk", scienceInstallCase{free: "1048576"}, "磁盘空间不足"},
+		{"tmpfs-home", scienceInstallCase{fsType: "1021994"}, "临时文件系统"},
+		{"overlay-home", scienceInstallCase{fsType: "794c7630"}, "临时文件系统"},
 		{"running", scienceInstallCase{active: "active"}, "请先关闭 Claude Science"},
 		{"old-bubblewrap-candidate", scienceInstallCase{installed: []string{"curl"}, candidate: "0.6.1-1ubuntu0.1"}, "bubblewrap 0.8"},
 		{"old-bubblewrap-installed", scienceInstallCase{bwrapOld: true}, "bubblewrap 0.8"},

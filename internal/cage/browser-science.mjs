@@ -31,8 +31,9 @@ export function readScienceConfig(file = scienceConfigFile) {
 }
 
 // The exact text the daemon prints, checked before any URL parsing so that no
-// normalization (case, default ports, dot segments, IDNA) can widen it.
-const linkPattern = /^http:\/\/localhost:([1-9][0-9]{3,4})\/\?nonce=([A-Za-z0-9_-]{16,128})$/;
+// normalization (case, default ports, dot segments, IDNA) can widen it. The
+// host is localhost, or 127.0.0.1 when another program holds [::1] there.
+const linkPattern = /^http:\/\/(?:localhost|127\.0\.0\.1):([1-9][0-9]{3,4})\/\?nonce=([A-Za-z0-9_-]{16,128})$/;
 
 export function scienceLink(value, port) {
   if (!Number.isInteger(port)) throw new Error("Claude Science 尚未安装或配置");
@@ -65,4 +66,24 @@ export function publicScienceURL(value, port) {
   if (!privateParameters.some(name => url.searchParams.has(name))) return value;
   for (const name of privateParameters) url.searchParams.delete(name);
   return url.href;
+}
+
+// Hosts of the documented sign-in hop; the tab passes through them.
+const signInHosts = ["claude.ai", "claude.com", "console.anthropic.com", "platform.claude.com", "platform.anthropic.com"];
+
+// Whether the tab given the last link can simply be brought forward: it shows
+// the app, or is in the middle of signing in. A tab left on a link or on the
+// link's form needs a fresh link (single-use, ~3 minutes); a tab the user
+// took elsewhere is left alone.
+export function scienceTabReusable(value, port) {
+  if (isScienceURL(value, port)) {
+    const url = new URL(value);
+    return !url.searchParams.has("nonce") && url.pathname !== "/api/auth/nonce";
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password && signInHosts.includes(url.hostname);
+  } catch {
+    return false;
+  }
 }

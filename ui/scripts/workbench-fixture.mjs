@@ -1,6 +1,7 @@
 // Isolated browser fixture. No request from this page reaches the running Cage service.
 import { createRequire } from "node:module";
 import { defaultAppearance, presets } from "../src/appearance-state.mjs";
+import { claudeScienceRoute } from "./claude-science-fixture.mjs";
 const require = createRequire(import.meta.url);
 export async function createWorkbench({
   viewport = { width: 1280, height: 850 },
@@ -18,6 +19,8 @@ export async function createWorkbench({
   startupFailure = false,
   waitForReady = true,
   initialization = { required: false },
+  // A name from claude-science-fixtures.json: what GET /api/claude-science returns.
+  claudeScience = "not-installed",
   clientContext = { mode: "local", connection_id: "local", client_platform: "darwin", server_platform: "darwin", connection: { state: "disconnected" } },
 } = {}) {
   const engines = require(
@@ -80,6 +83,7 @@ export async function createWorkbench({
     },
     tabs: [],
     terminals: [],
+    claudeScience,
     active: "",
     sequence: 0,
   };
@@ -156,6 +160,7 @@ export async function createWorkbench({
     }
     if (!state.account.unlocked && !["/session", "/launch", "/appearance"].includes(path)) return route.fulfill({ status: 423, body: "Super Cage 已锁定，请先登录" });
     if (browserRequest && path.startsWith("/browser/") && path !== "/browser/events") return browserRequest(route, path, body);
+    if (path === "/claude-science" || path.startsWith("/claude-science/")) return claudeScienceRoute(route, request, path, body, state);
     if (path.startsWith("/cli/")) {
       if (cliRequest) return cliRequest(route, path, body);
       const account = path.match(/^\/cli\/sessions\/([^/]+)\/account$/);
