@@ -33,7 +33,9 @@ try {
   });
   await open.waitFor();
   const position = await open.boundingBox(), browserPosition = await page.getByRole("button", { name: "打开浏览器", exact: true }).boundingBox();
-  assert.ok(position.y > browserPosition.y && position.y < browserPosition.y + browserPosition.height * 2 + 8);
+  // Tailscale opens the connections group, right after the work group (工作台 · 浏览器 · Claude Desktop).
+  const desktopPosition = await page.getByRole("button", { name: "Claude Desktop", exact: true }).boundingBox();
+  assert.ok(position.y > browserPosition.y && position.y > desktopPosition.y && position.y < desktopPosition.y + desktopPosition.height * 2 + 8);
   await open.focus(); await page.keyboard.press("Enter"); await panel.getByText("已断开", { exact: true }).waitFor();
   assert.equal(await open.getAttribute("aria-current"), "page");
   assert.equal(await page.getByRole("dialog").count(), 0);

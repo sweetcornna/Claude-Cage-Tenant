@@ -380,7 +380,7 @@
   .sidebar-tab.active > button[role="tab"] {
     font-weight: 550;
   }
-  .sidebar-tab > button[role="tab"] > span {
+  .sidebar-tab > button[role="tab"] > span:not(.provider-mark) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -392,15 +392,45 @@
   .sidebar-tab.active > :is(button[role="tab"], .sidebar-session) svg {
     color: var(--strong);
   }
+  /* Provider slot: 16 px square; the account pill hangs off its corner and
+     is ringed in the row's own background so it reads as cut out. */
   .provider-mark {
+    --provider-ring: var(--chrome);
+    position: relative;
+    display: inline-flex;
     flex: none;
-    overflow: visible;
     color: var(--muted);
   }
-  .provider-mark-badge {
-    fill: var(--surface);
-    stroke: currentColor;
-    stroke-width: 1.3;
+  .provider-mark > svg {
+    display: block;
+  }
+  .provider-mark[data-number]::after {
+    content: attr(data-number);
+    position: absolute;
+    right: -3px;
+    bottom: -4px;
+    min-width: 11px;
+    height: 11px;
+    padding: 0 2px;
+    border-radius: var(--r-pill);
+    background: var(--muted);
+    box-shadow: 0 0 0 1.5px var(--provider-ring);
+    color: var(--surface);
+    font: 700 9px/11px var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+  .sidebar-tab:hover .provider-mark {
+    --provider-ring: var(--hover);
+  }
+  .sidebar-tab.active .provider-mark {
+    --provider-ring: var(--selected);
+  }
+  .home-row .provider-mark {
+    --provider-ring: var(--surface);
+  }
+  button.home-row:hover:not(:disabled) .provider-mark {
+    --provider-ring: var(--soft);
   }
   .sidebar-tab.ended > button[role="tab"] {
     color: var(--muted);

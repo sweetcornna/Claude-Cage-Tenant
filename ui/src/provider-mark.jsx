@@ -8,23 +8,23 @@ const codex = "M12 3v3M2 11v5m20-5v5M8 6h8a4 4 0 0 1 4 4v7a4 4 0 0 1-4 4H8a4 4 0
 
 const names = { claude: "Claude", codex: "Codex" };
 
-// The provider slot at the start of a session row. One prop picks the
-// provider; an account number, when there is one, sits in a small badge.
+// The provider slot at the start of a session row: a fixed square, so a row
+// lays out the same whichever provider fills it. One prop picks the provider.
+// An account number, when there is one, sits in a small pill on the corner,
+// outside the layout box. It is drawn by CSS from data-number, so it stays
+// crisp text at 1x and never joins the row's textContent.
 export function ProviderMark({ provider = "claude", accountNumber, size = 16, className = "", decorative = false }) {
   const number = Number.isInteger(accountNumber) && accountNumber > 0 ? String(accountNumber) : "";
   const label = (names[provider] || provider) + (number ? ` · 账号 ${number}` : "");
   return (
-    <svg className={`provider-mark provider-mark-${provider}${className ? " " + className : ""}`} width={size} height={size}
-      viewBox="0 0 24 24" role={decorative ? undefined : "img"} aria-label={decorative ? undefined : label}
-      aria-hidden={decorative || undefined} focusable="false">
-      {provider === "codex"
-        ? <path d={codex} fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
-        : <path d={claude} fill="currentColor" transform={number ? "translate(-1 -1) scale(.86)" : undefined} />}
-      {number && <>
-        <circle className="provider-mark-badge" cx="18.5" cy="18.5" r="6.5" />
-        <text x="18.5" y="18.8" dominantBaseline="central" textAnchor="middle" fill="currentColor"
-          fontFamily="var(--font-sans, system-ui, sans-serif)" fontSize={number.length > 1 ? 7.5 : 10} fontWeight="700">{number}</text>
-      </>}
-    </svg>
+    <span className={`provider-mark provider-mark-${provider}${className ? " " + className : ""}`}
+      style={{ width: size, height: size }} data-number={number || undefined}
+      role={decorative ? undefined : "img"} aria-label={decorative ? undefined : label} aria-hidden={decorative || undefined}>
+      <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        {provider === "codex"
+          ? <path d={codex} fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+          : <path d={claude} fill="currentColor" />}
+      </svg>
+    </span>
   );
 }

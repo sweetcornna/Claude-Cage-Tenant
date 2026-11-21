@@ -228,7 +228,7 @@ export function WorkbenchHome({
                           disabled={busy || opening || elsewhere}
                           title={elsewhere ? "其他窗口占用中，退出原会话后可接续" : session.title}
                           onClick={() => onSessionOpen(session)}>
-                          <ProviderMark provider="claude" className="home-row-icon" />
+                          <ProviderMark provider="claude" accountNumber={session.claudeAccountNumber} className="home-row-icon" />
                           <span className="list-row-text">
                             <span className="list-row-title">{session.title}</span>
                             <span className="list-row-meta">

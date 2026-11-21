@@ -1260,6 +1260,8 @@ function App() {
   }
   const claudeLabels = new Map(claudeProfiles.accounts?.map((account) => [account.id, account.label || account.email]));
   const claudeNumbers = new Map(claudeProfiles.accounts?.map((account, index) => [account.id, index + 1]));
+  const numberedSessions = cliSessions.sessions.map((session) => ({ ...session,
+    claudeAccountNumber: claudeNumbers.get(session.account_id) }));
   const terminalAccountName = (tab) => claudeLabels.get(tab.claude_account_id) ||
     (tab.terminalKind === "claude-login" ? "新账号登录" : tab.claude_account_id ? "Claude 账号" : "");
   const displayTabs = orderedTabs(tabs, metadata).map((tab) =>
@@ -1526,8 +1528,7 @@ function App() {
             projects={projects}
             projectGroups={groups}
             tabs={displayTabs}
-            sessions={cliSessions.sessions.map(session => ({ ...session,
-              claudeAccountNumber: claudeNumbers.get(session.account_id) }))}
+            sessions={numberedSessions}
             sessionError={cliSessions.error}
             sessionRefreshing={cliSessions.loading}
             onSessionRefresh={cliSessions.refresh}
@@ -1747,7 +1748,7 @@ function App() {
                 contentWorkspace={contentWorkspace}
                 groups={groups}
                 projects={projects}
-                sessions={cliSessions.sessions}
+                sessions={numberedSessions}
                 tabs={tabs}
                 openingSession={openingSession}
                 onSessionOpen={openSessionTerminal}

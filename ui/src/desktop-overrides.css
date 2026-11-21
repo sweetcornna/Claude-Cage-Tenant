@@ -22,6 +22,11 @@
   font-weight: 400;
 }
 
+/* The provider slot's account pill hangs outside its box (shell.css). */
+:root .sidebar-session > .provider-mark {
+  overflow: visible;
+}
+
 :root .inline-select-trigger {
   justify-content: space-between;
   gap: 8px;
