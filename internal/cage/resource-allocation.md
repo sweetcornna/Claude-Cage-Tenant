@@ -39,6 +39,8 @@ All sizes in bytes, rounded to 256 MiB units (unit) unless stated.
 
 ## 2. Level A — gateway host <-> workspace VMs (internal/tenant)
 
+(Sections 2-6 are the design as first written; section 7 records what was built and supersedes them.)
+
 Pure function: tenant.AllocateMemory(AllocationInput) -> []Allocation{ID, From, To, Demand, Fair, Reason}.
 
 Inputs per round (every -memory-interval, default 15 s): host total H, available Ha, PSI stall Hs; reserve
@@ -338,7 +340,8 @@ internal/tenant/replay_test.go (simulator).
 - Failed samples: hold 2, then +1 GiB per failure within K; when the machine has no room the step is asked
   of the gateway (short_bytes, kept through failures - never withdrawn by a failed sample).
 - The class limits are computed for size min(M, max(K, d)) and prefixed to the next probe as a shell
-  snippet that writes /run/cage-resources/limits when that directory is writable (level C).
+  snippet that writes /run/cage-resources/in/limits when that directory is writable (level C), with every
+  probe.
 - Status keeps short/limited_by/advice of the last good sample through failed samples.
 
 ### 7.4 Status fields
@@ -376,6 +379,10 @@ Built (declarative or fail-open), in guest-services.sh, guest-memory.sh, guest.g
   (root-owned dir, 0644). Exits 0 (no restart) without the unified hierarchy. Skipped in containers.
 - The host agent sends the limits with every probe (they are ~200 bytes), so a stale file means the host
   agent is gone or older.
+Ubuntu guests: snap Chromium runs in a scope under the browser user's slice in user.slice. The governor
+counts user.slice/user-<cage-browser uid>.slice as browser (use, stall, MemoryHigh/MemoryMax), subtracts it
+from the sessions, takes the sessions' stall from user-<cage uid>.slice and sets that slice's MemoryLow
+equal to user.slice's, so no protection is left over for the browser user's slice.
 Not built (moved to the follow-up with the browser-agent endpoint): the chromium.d hook, Delegate= and
 agent/chromium leaves, adoption of sessions into cage-sessions.slice (no single spawn point owned here:
 terminals, claude and codex arrive by several SSH paths), memory.high on the sessions.
@@ -446,8 +453,10 @@ Machine out of memory: 0 s in every trace.
 - Guests: the component revision changes, so every Linux guest asks for a component update; applying it
   restarts the browser (needed to move it into its slice) and starts the governor. zram's new size needs an
   environment restart. macOS and Windows guests and container mode: sizing unchanged (macOS LegacyLimits,
-  Windows code untouched); level C is skipped in containers (systemd-detect-virt) and not provisioned on
-  macOS/Windows guests; the browser slice unit is harmless there.
+  Windows code untouched); level C is not provisioned on macOS/Windows guests. In containers the governor
+  and zram are skipped (systemd-detect-virt), but the browser unit's Slice=, CPU/IO weights,
+  OOMScoreAdjust=200 and OOMPolicy=continue apply there too (systemd creates the slice; no limits are set
+  on it; raising an OOM score is allowed unprivileged).
 
 ### 7.11 Rollback state (complete)
 Gateway: only instance-local limits.memory (exact MiB, 1 GiB..ceiling) - accepted by 0.1.15. Nothing else.
@@ -474,3 +483,103 @@ caller can test them without advice. memoryNote in network_recovery.go should re
 and Possible vs Maximum; status.Pressure now means the protected classes stall (a contained browser is
 BrowserPressure, not Pressure). Against an older host agent (no such fields) the workbench can compare
 cage.AutomaticLimits() with lima.yaml's memory.
+
+### 7.13 Rejected alternatives
+- Proportional shares or demand-proportional split at level A: not max-min fair (a large demand starves a
+  small one) and not monotone; water-filling over held demand is exact, fair and work-conserving.
+- Growing a guest to its demand past what the machine backs (first B version, "a guest OOM is worse"):
+  the machine's OOM killer would take QEMU, the whole guest; the guest's own OOM order takes one browser
+  process. Replaced by publishing the shortfall to the gateway.
+- Counting a nested shortfall as a shortage always: under host pressure, shrink-into-headroom and
+  regrowth oscillated; only a nested guest under pressure counts (pressure flag in machine-memory.json).
+- Keeping MemTotal/2 as the guest ceiling, or a three-eighths rule: the evidence machine had half its
+  memory idle; the balloon target, not the ceiling, protects the machine.
+- Rewriting old-default settings files to automatic: a read path that writes races with saves and cannot
+  prove nobody chose the values; classify and offer instead.
+- Session adoption into cage-sessions.slice through PID 1's private socket, Delegate= and leaf cgroups in
+  the browser unit, the chromium.d hook: not checkable without a guest; deferred (7.6).
+- memory.high on the sessions: the probes share their cgroup; throttling sessions would throttle the
+  probes.
+- Applying cgroup limits by writing cgroupfs directly: systemd rewrites them on daemon-reload;
+  set-property --runtime goes through systemd and vanishes at reboot.
+- A new gateway flag for the legacy policy: cmd/cage-tenant is outside this change; an environment
+  variable selects it.
+- A faster gateway round while a nested guest is short: would change the silent-round counting; left as
+  an open decision (7.8).
+
+### 7.14 Change list (origin/super-cage-redesign..resource-allocation)
+internal/tenant: allocation.go (new, level A rule), allocation_test.go (new), memory.go (wiring, legacy
+switch, new InstanceMemory fields), incus_memory.go (PSI, pswpin, machine-memory.json in one exec),
+incus_memory_test.go, replay_test.go (new, simulator).
+internal/cage: machine.go, machine_linux.go, machine_darwin.go, machine_windows.go, machine_other.go (new:
+machine reading, roles, automatic sizing, boot size), machine_test.go, machine_linux_test.go (new),
+guest_allocation.go (new: target rule, class limits, governor report parsing, simulation API),
+guest_allocation_test.go (new), resources.go (probe, status fields, manager loop, machine-memory.json),
+resources_test.go, resource_limits.go (origin, chosen marker, manual range, LegacyLimits),
+resource-governor.py, resource-governor.test.py, resource_governor_test.go (new), guest-memory.sh (zram,
+swappiness), guest-services.sh (browser slice and unit properties, editor OOM score), guest.go (governor
+install), guest_memory_container_test.go, resource-allocation.md (this document).
+internal/workbench: resources.go (API fields, apply, chosen), resources_test.go, macos_resources.go
+(LegacyLimits). internal/vm: macos_resources.go (LegacyLimits), macos_resources_test.go.
+Merged: origin/super-cage-redesign at b213406 (merge commit d79716b; the branch is not linear).
+
+### 7.15 Test commands and results (macOS arm64 host, 2026-11-21)
+- go vet ./internal/cage ./internal/tenant ./internal/workbench ./internal/vm, and the same with GOOS=linux
+  and GOOS=windows: clean (only the linker's duplicate -lobjc warning).
+- go test -race -count=1 -p 2 ./internal/cage ./internal/tenant ./internal/workbench ./internal/vm:
+  ok cage 220.4 s, tenant 32.7 s, workbench 299.2 s, vm 1.7 s (after level C; before the Ubuntu governor
+  change, which was then tested with python3 -I internal/cage/resource-governor.test.py: 8 tests OK, and
+  go test ./internal/cage -run 'ResourceGovernor|ContainerMemory': ok).
+- go test -race -count=20 -p 2 on the new tests (cage: GuestPlan|GuestDemand|GuestShort|GuestClass|
+  Governor|AutomaticSize|Automatic|Legacy|ResourceManagerSends|AgentProfile|StatusStaysWithin|
+  ResourceGovernorPython|ContainerMemory; tenant: Replay|Allocation|WaterFill|GuestMemoryReading;
+  workbench: the two resource tests): ok cage 169.9 s, tenant 32.0 s, workbench 3.8 s.
+- Replay table: go test ./internal/tenant -run Replay -v (7.7).
+- Never executed here: machine_linux_test.go (Linux only; vetted with GOOS=linux), and nothing in a real
+  guest, workspace VM or Incus host.
+
+### 7.16 Verification on a real Linux guest (not done here)
+1. Start the environment with this build; accept "环境组件需要更新" (restarts the browser).
+2. In the guest: systemctl status cage-resource-governor; cat /run/cage-resources/state (fresh "governor 1"
+   stamp, three class lines); cat /run/cage-resources/in/limits (rewritten every 2 s); ls -ld
+   /run/cage-resources /run/cage-resources/in (root 0755; cage 0755); id cage (the probe user is cage).
+3. systemctl show cage-browser.slice -p MemoryHigh -p MemoryMax; systemctl show system.slice user.slice
+   user-$(id -u cage).slice -p MemoryLow; grep cgroup2 /proc/mounts (memory_recursiveprot present);
+   ls /run/systemd/system.control.
+4. systemctl show cage-browser.service -p Slice -p OOMPolicy -p OOMScoreAdjust; cat /proc/<chromium
+   pid>/cgroup (Debian: /cage-browser.slice/cage-browser.service; Ubuntu: under
+   user.slice/user-<cage-browser uid>.slice); the probe's own cgroup: run cat /proc/self/cgroup through
+   the same SSH path the host agent uses (expected user.slice/user-<cage uid>.slice/session-*.scope).
+5. After an environment restart: cat /proc/swaps; cat /sys/block/zram*/disksize (min(MemTotal/2, 4 GiB));
+   sysctl vm.swappiness (100).
+6. Containment: sudo systemd-run --slice=cage-browser.slice --uid=cage-browser python3 -c
+   "a=bytearray(int(8e9))" - expect throttling then an OOM kill of that process only; the browser
+   service stays active; cage-resources.json keeps a fresh updated_at.
+7. Host side: <profile>/state/lima/<instance>/cage-resources.json: capacity_bytes, demand_bytes, reason,
+   summary, classes; GET /api/environment/resources: allocation_origin, automatic_memory_gib, notice.
+   The host agent's profile: tr '\0' '\n' < /proc/<hostagent pid>/environ | grep CLAUDE_CAGE_CONFIG
+   (otherwise the <profile>/state/lima/<instance> layout is used).
+
+### 7.17 Verification on an Incus gateway host (not done here)
+1. Install the new cage-tenant; journalctl -u <unit> | grep "elastic VM memory" shows "max-min fair over
+   held demand" (CAGE_TENANT_MEMORY_POLICY=legacy in the unit's environment selects the old policy).
+2. incus config show cage-<id> --expanded | grep limits.memory; incus config get cage-<id> limits.memory
+   (instance-local value, exact MiB).
+3. In a workspace VM: cat /sys/bus/virtio/drivers/virtio_balloon/virtio*/features (character 3 = bit 2,
+   deflate-on-oom); grep MemTotal /proc/meminfo before and after incus config set cage-<id>
+   limits.memory=<smaller>; GET /api/environment/resources automatic_memory_gib stays the same.
+4. While the nested guest is short: cat /home/cage/.claude-cage/machine-memory.json (fresh updated_at,
+   short_bytes, pressure); the gateway log shows "nested guest needs memory".
+5. Rollback drill: stop the new cage-tenant, start 0.1.15, check that every VM still starts and the old
+   balancer accepts the instance-local limits.memory.
+
+### 7.18 Unverified
+- machine_linux.go (meminfo, vmstat balloon, memory blocks, virtio features) has only been compiled.
+- Whether Incus negotiates deflate-on-oom and whether MemTotal moves with limits.memory in a workspace VM.
+- Everything in the guest: set-property --runtime on the slices, memory_recursiveprot, the browser in its
+  slice with OOMPolicy=continue, snap Chromium's cgroup on Ubuntu, zram size after restart, the probe
+  user and group being cage, the probe's cgroup being user.slice, the host agent's profile path for
+  machine-memory.json.
+- The simulator's kernel model and its fitted numbers (7.7).
+- On a Linux test machine with an inflated virtio balloon, tests that stub host.MemGiB read the real
+  /proc/vmstat through machineBootGiB and are not deterministic.
