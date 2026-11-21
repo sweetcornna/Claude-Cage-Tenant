@@ -28,6 +28,7 @@ type mobileSummary struct {
 	AccountLabel  string    `json:"account_label,omitempty"`
 	Generation    string    `json:"generation"`
 	ID            string    `json:"id"`
+	Provider      string    `json:"provider,omitempty"` // "codex"; empty for Claude Code.
 	Workspace     string    `json:"workspace"`
 	Title         string    `json:"title"`
 	CustomTitle   string    `json:"custom_title,omitempty"`
@@ -98,6 +99,9 @@ type mobileRecord struct {
 	Switch           *claudeAccountSwitch `json:"switch,omitempty"`
 	Executions       []claudeExecution    `json:"executions,omitempty"`
 	ResumeTranscript string               `json:"resume_transcript,omitempty"`
+	// CodexAccount is the Codex account whose CODEX_HOME holds the thread;
+	// empty means the environment's own ~/.codex.
+	CodexAccount string `json:"codex_account,omitempty"`
 }
 
 type claudeExecution struct {
@@ -137,6 +141,7 @@ type mobileCLIStore struct {
 	catalog    map[string]mobileSummary
 	running    map[string]bool // Fresh guest process observation, never restored from disk.
 	desktop    map[string]bool // Claude Desktop ownership from the same live observation.
+	codexLive  map[string]bool // Codex process observation from the latest Codex discovery.
 	generation string
 }
 
@@ -177,7 +182,7 @@ func (record *mobileRecord) snapshot() mobileSession {
 		view.Active = record.turnActive()
 	}
 	view.mediaWorkingDir = record.GuestWorkspace
-	view.TerminalAvailable = record.Terminal
+	view.TerminalAvailable = record.Terminal && !record.codex()
 	view.DesktopTerminalID = record.TerminalID
 	if record.CustomTitle != "" {
 		view.Title = record.CustomTitle
@@ -273,7 +278,7 @@ func (m *mobileCLIStore) summaries(profile string, granted map[string]bool, arch
 			summary = run.record.summary()
 			summary.Active = run.record.turnActive()
 		}
-		summary.Running = m.running[id]
+		summary.Running = m.running[id] || m.codexLive[id]
 		summary.ClaudeDesktop = summary.Running && m.desktop[id]
 		if granted[summary.Workspace] && !summary.Deleted && summary.Archived == archived {
 			if summary.CustomTitle != "" {
@@ -291,6 +296,12 @@ func (m *mobileCLIStore) summaries(profile string, granted map[string]bool, arch
 	return list, nil
 }
 func (m *mobileCLIStore) create(profile, workspace, id string) (mobileSession, error) {
+	return m.createProvider(profile, workspace, id, "", nil)
+}
+
+// createProvider runs prepare only for a new record. A retried creation ID
+// returns the existing session and never changes its provider.
+func (m *mobileCLIStore) createProvider(profile, workspace, id, provider string, prepare func(*mobileRecord)) (mobileSession, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	record, err := m.record(profile, id)
@@ -301,12 +312,18 @@ func (m *mobileCLIStore) create(profile, workspace, id string) (mobileSession, e
 		if record.Workspace != workspace {
 			return mobileSession{}, errors.New("创建请求已用于其他项目")
 		}
+		if record.Provider != provider {
+			return mobileSession{}, errors.New("创建请求已用于另一类会话")
+		}
 		return record.snapshot(), nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return mobileSession{}, err
 	}
-	record = &mobileRecord{mobileSession: mobileSession{mobileSummary: mobileSummary{ID: id, Workspace: workspace, Title: "新会话"}, Turns: []mobileTurn{}}, CLIID: uuid.NewString()}
+	record = &mobileRecord{mobileSession: mobileSession{mobileSummary: mobileSummary{ID: id, Provider: provider, Workspace: workspace, Title: "新会话"}, Turns: []mobileTurn{}}, CLIID: uuid.NewString()}
+	if prepare != nil {
+		prepare(record)
+	}
 	record.Generation = m.epochLocked()
 	record.changed()
 	err = writePrivate(mobileRecordPath(profile, id), record)
