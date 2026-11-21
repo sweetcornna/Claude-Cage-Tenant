@@ -154,13 +154,106 @@ func (s *Server) attachWindowsGuest() error {
 	return s.attachWindowsGuestContext(s.lifetimeContext())
 }
 
+// windowsGuestStatus is (*Server).windowsStatus; tests replace it.
+var windowsGuestStatus = (*Server).windowsStatus
+
+// observeWindowsGuest checks a ready Windows guest without the operation
+// lock, making the reads attachWindowsGuestContext makes. In steady state it
+// only publishes the fresh status, as refreshWindowsComponents also does
+// without the lock, and sends the browser profile attach sends every round.
+// Any error, and anything attach would act on (network helper, project
+// share, a new session), reports observedChange so the monitor attaches
+// under the lock as before.
+func (s *Server) observeWindowsGuest(parent context.Context) monitorObservation {
+	if s.requireStorageReady() != nil {
+		return observedChange
+	}
+	s.mu.Lock()
+	session := s.windowsState.Session
+	settled := s.ready && s.guestUpdateError == ""
+	s.mu.Unlock()
+	if !settled {
+		return observedChange
+	}
+	ctx, cancel := context.WithTimeout(parent, 15*time.Second)
+	defer cancel()
+	state, err := windowsGuestStatus(s, ctx)
+	if err != nil || state.Session != session {
+		return observedChange
+	}
+	if !s.windowsGuest.Remote() {
+		if s.windowsGuest.NetworkPairingFile != "" && (!state.Browser.NetworkConfigured || !s.windowsNetworkAlive()) {
+			return observedChange
+		}
+		if !s.windowsEnvironmentShareAlive() {
+			return observedChange
+		}
+		if !s.guestAdmitsLockFreeCalls() {
+			return observedChange
+		}
+		profile := guestProfileStamp(s.profile)
+		if s.syncNativeBrowserProfile(ctx) != nil || guestProfileStamp(s.profile) != profile {
+			return observedChange
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// A stop, restart or reconnect meanwhile owns the status.
+	if !s.ready || s.closing || s.storageRecoveryError != "" || s.windowsState.Session != session || s.jobs.snapshot().Running {
+		return observedChange
+	}
+	s.windowsState = state
+	return observedSteady
+}
+
+func (s *Server) windowsNetworkAlive() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.windowsNetwork == nil {
+		return false
+	}
+	select {
+	case <-s.windowsNetwork.done:
+		return false
+	default:
+		return true
+	}
+}
+
+// windowsEnvironmentShareAlive reports whether attach's ensureProjectShare
+// of the environment directory would find its share running and nothing to
+// clear.
+func (s *Server) windowsEnvironmentShareAlive() bool {
+	path, err := validateWorkspace(s.environmentDir(), s.profile)
+	if err != nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, failure := range s.projectErrors {
+		if failure.Path == path {
+			return false
+		}
+	}
+	share := s.projectShares[path]
+	if share == nil {
+		return false
+	}
+	select {
+	case <-share.done:
+		return false
+	default:
+		return true
+	}
+}
+
 func (s *Server) attachWindowsGuestContext(parent context.Context) error {
 	if err := s.requireStorageReady(); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(parent, 15*time.Second)
 	defer cancel()
-	state, err := s.windowsStatus(ctx)
+	state, err := windowsGuestStatus(s, ctx)
 	if s.windowsGuest.Remote() {
 		// Only the authenticated AppContainer home terminal is attached here.
 		// No GUI, host project, safety report or network authorization is implied.
