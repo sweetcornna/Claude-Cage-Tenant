@@ -287,3 +287,72 @@ because the guest manifest revision differs), /usr/local/bin/cage-resource-gover
 chromium leaf exists and is writable). Steps: install 0.1.15; open the environment; accept the component
 update ("环境组件需要更新"), which restarts the browser; restart the environment once so /run is cleared and
 the old -m applies.
+
+
+## 7. As built (supersedes the sections above where they differ)
+
+Branch resource-allocation. The sections above are the design as first written; this section records what
+the code does. Code: internal/tenant/allocation.go (A), internal/cage/machine*.go, guest_allocation.go,
+resources.go, resource_limits.go (B, sizing, status), internal/workbench/resources.go (API),
+internal/tenant/replay_test.go (simulator).
+
+### 7.1 Level A (allocateMemory, unexported; planMemory kept for CAGE_TENANT_MEMORY_POLICY=legacy)
+- Floor of a shrink is max(base, guarantee, roundUp(W + 512 MiB)) (memoryMinHeadroom = 512 MiB, not 256:
+  a shrink into the headroom under pressure must not read as a shortage in the next round).
+- While the host is under pressure only a VM that is short itself grows to its fair share; one that merely
+  lacks headroom waits (otherwise shrink-into-headroom and regrowth oscillate).
+- "Capacity needed" reclaim (above fair share, idle first) runs only when some VM grows or is short.
+- Shortage boost: stall >= 10, pswpin advanced, or available < 256 MiB: d >= L + max(512 MiB, L/4).
+  Nested short_bytes is added to d. machine-memory.json must be fresh within +-45 s of the gateway clock
+  (the clocks of gateway and workspace VM are compared; NTP skew beyond that drops the signal).
+- Reasons in the log: "guest needs memory", "nested guest needs memory", "fair share of a short host",
+  "host memory is low", "others need memory", "idle memory returned", "guest did not answer".
+
+### 7.2 Level B sizing (AutomaticLimits, ManualLimitRange)
+- Root cause confirmed in code: host.MemGiB() floors MemTotal (8 GiB VM -> 7), ResourceLimits() halves it
+  (3), the old AutomaticMemoryGiB took min(share, ...) = 3, and the old Limits() rejected any manual value
+  above the same share: neither the automatic size nor a manual setting could exceed 3 GiB. Every start
+  rewrites lima.yaml .memory from Limits(), hence -m 3072.
+- New: machine boot size Mt = host.MemGiB() without an outer balloon; with one, bootBytes(MemTotal, balloon,
+  memory blocks, deflate-on-oom) rounded down once (MemTotal + balloon on kernels that shrink MemTotal,
+  MemTotal alone when the balloon negotiated deflate-on-oom, as /sys/bus/virtio/drivers/virtio_balloon/
+  virtio*/features bit 2 reports; without that file the online memory blocks decide). Not /proc/zoneinfo.
+- Reserve: dedicated max(1 GiB, Mt/8); desktop max(4 GiB, Mt/4). M = clamp(floorGiB(Mt - reserve), 2, 32).
+  vCPUs: dedicated n-1; desktop min(n, max(2, n - max(2, n/4))). AGENT_VM_HOST_SHARE does not cap the
+  automatic size (it still bounds CLI flags and is part of the manual range).
+- Manual range = max(old share, automatic): on the production machine 2-6 GiB, 1-5 vCPUs (was 2-3, 1-3).
+- macOS guests keep the previous sizing (LegacyLimits) - no balloon. Windows guests: code unchanged.
+- Origin: automatic | user (file has "chosen":"user", written by every save through settings) |
+  legacy_default (no marker, automatic=false, values equal the old formula on this machine).
+  LegacyDefaultAction = "offer" (default): kept, offered in the API status.
+
+### 7.3 Level B target (memoryPolicy.plan)
+- Never grows past what a measured (Linux) machine backs, K, not even when severe: the machine's OOM
+  killer would take QEMU (the whole guest) while the guest's own OOM order takes one browser process. The
+  shortfall goes to the gateway (short_bytes). On macOS/Windows (not measured) a guest in trouble still gets
+  its demand.
+- Machine smaller (P > K, no pressure): target min(P, max(K, floor)), floor = W + 256 MiB rounded up, at
+  least min(2 GiB, M) - may be below the demand d; short_bytes = d - K tells the gateway.
+- wanted for pressure/severe is the geometric step max(d, P + max(2 GiB, P/2)), so short_bytes can ask
+  for more than d; the gateway bounds it (ceiling, max-min water level, 5-minute held demand).
+- Failed samples: hold 2, then +1 GiB per failure within K; when the machine has no room the step is asked
+  of the gateway (short_bytes, kept through failures - never withdrawn by a failed sample).
+- The class limits are computed for size min(M, max(K, d)) and prefixed to the next probe as a shell
+  snippet that writes /run/cage-resources/limits when that directory is writable (level C).
+- Status keeps short/limited_by/advice of the last good sample through failed samples.
+
+### 7.4 Status fields
+cage-resources.json (host agent, ResourceStatus version 1, all additive): capacity_bytes, demand_bytes,
+wanted_bytes, possible_bytes, short, limited_by ("maximum" | "machine"), browser_pressure, reason,
+summary, next_action, advice {message, memory_bytes, restart_required}, machine {...}, classes [...],
+failures. pressure now means: the protected classes stall (guest-wide PSI on guests without the governor).
+/api/environment/resources (Linux guest, additive): allocation_origin, legacy_allocation, notice, offer
+{automatic, memory_gib, cpus, restart_required}, automatic_memory_gib, automatic_cpus,
+possible_memory_bytes, advice; max_memory_gib/max_cpus now the manual range; recommended_* the automatic
+size. POST accepts "apply": true (save, then restart a running environment).
+
+### 7.5 Rollback additions
+- A manual value saved above the old share (e.g. 6 GiB on the 8 GiB machine) makes 0.1.15's Limits()
+  fail and the environment will not start under 0.1.15. Before rolling back a desktop install: set the
+  allocation to automatic in settings (or delete <profile>/resource-limits.json), then install 0.1.15.
+- The "chosen" key is ignored by 0.1.15.
