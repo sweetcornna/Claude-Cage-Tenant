@@ -28,6 +28,8 @@ func (s *Server) mobileCLIRoutes(mux routeRegistrar) {
 	mux.HandleFunc("POST /api/cli/sessions/{id}/archive", s.mobileArchiveSession)
 	mux.HandleFunc("POST /api/cli/sessions/{id}/restore", s.mobileRestoreSession)
 	mux.HandleFunc("POST /api/cli/sessions/{id}/purge", s.mobilePurgeSession)
+	// The desktop stops a Codex turn it can only watch (a phone turn) here.
+	mux.HandleFunc("POST /api/cli/sessions/{id}/stop", s.mobileStop)
 	mux.HandleFunc("GET /api/mobile/cli/projects", s.mobileProjects)
 	mux.HandleFunc("GET /api/mobile/cli/sessions", s.mobileSessions)
 	mux.HandleFunc("POST /api/mobile/cli/sessions", s.mobileNewSession)

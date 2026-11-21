@@ -738,6 +738,75 @@ func mustEval(t *testing.T, path string) string {
 	return resolved
 }
 
+// Stop reaches whoever runs the turn: Esc into the desktop's Codex, the
+// helper's stop for a phone turn.
+func TestCodexStopReachesTheTurnsOwner(t *testing.T) {
+	s, project, guest := newCodexFixture(t)
+	t.Cleanup(s.terminals.close)
+	row := listedCodexSession(t, s, guest, project, "停止")
+	record, _ := s.mobileCLI.record(s.profile, row.ID)
+	if err := s.codexConnection(record); err != nil {
+		t.Fatal(err)
+	}
+	turn := uuid.NewString()
+	running := map[string]any{"thread_id": record.CLIID, "account": "default", "workspace": guestPath(project), "running": true, "active": true, "can_send": false,
+		"turns": []any{map[string]any{"id": turn, "prompt": "长任务", "text": "", "status": "running"}}}
+	stop := func(prefix, id string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]string{"request_id": id})
+		return request(s, "POST", prefix+row.ID+"/stop", s.origin, string(body), true)
+	}
+	// A phone turn: the helper stops it; the desktop route reaches it too.
+	running["owner"] = "phone"
+	guest.reply("view", running)
+	guest.reply("stop", map[string]any{"ok": true})
+	if w := stop("/api/cli/sessions/", turn); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if stops := guest.calls("stop"); len(stops) != 1 || stops[0]["request_id"] != turn {
+		t.Fatal("helper stop", stops)
+	}
+	if w := stop("/api/cli/sessions/", uuid.NewString()); w.Code != 409 {
+		t.Fatal("stale turn", w.Code, w.Body.String())
+	}
+	running["owner"] = "external"
+	guest.reply("view", running)
+	if w := stop("/api/mobile/cli/sessions/", turn); w.Code != 409 || !strings.Contains(w.Body.String(), "运行它的终端") || len(guest.calls("stop")) != 1 {
+		t.Fatal("external turn", w.Code, w.Body.String())
+	}
+	// The desktop's Codex: Esc into its terminal.
+	running["owner"] = "desktop"
+	guest.reply("view", running)
+	terminal, err := s.terminals.startCodexSession(terminalChildCommand("echo"), project, "codex", codexSelection{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal.mu.Lock()
+	terminal.sharedID = row.ID
+	terminal.mu.Unlock()
+	view := terminal.subscribe()
+	defer view.Close()
+	readTerminalUntil(t, view, "terminal-ready")
+	if w := stop("/api/mobile/cli/sessions/", turn); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if len(guest.calls("stop")) != 1 {
+		t.Fatal("the helper was asked to stop the desktop's turn")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		terminal.mu.Lock()
+		history := string(terminal.history)
+		terminal.mu.Unlock()
+		if strings.Contains(history, "^[") || strings.Contains(history, "\x1b") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Esc did not reach the terminal: %q", history)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 type httpResponse struct {
 	code int
 	body string
