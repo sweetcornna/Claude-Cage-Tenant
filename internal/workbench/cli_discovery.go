@@ -69,6 +69,7 @@ const (
 type cliDiscovery struct {
 	mu      sync.Mutex
 	flights map[string]*discoveryFlight
+	results map[string]error // the outcome of the newest finished run of each key
 	// resident is one long-lived helper process on Linux guests, started
 	// through the login shell once instead of per request; see
 	// cli_discovery.py. Only read-only requests use it.
@@ -106,7 +107,8 @@ const discoveryTimeout = 20 * time.Second
 // or after arrival. A run that started earlier may have missed a change the
 // caller has to see, so the caller waits for it to end and then shares or
 // starts the next one. Concurrent callers therefore cost at most two runs,
-// and every answer reflects an observation made after its request arrived.
+// and every answer reflects an observation made after its request arrived,
+// unless the caller's time ran out first.
 func (d *cliDiscovery) share(ctx context.Context, key string, arrival time.Time, run func() (context.Context, context.CancelFunc), discover func(context.Context) error) error {
 	for {
 		d.mu.Lock()
@@ -125,6 +127,10 @@ func (d *cliDiscovery) share(ctx context.Context, key string, arrival time.Time,
 				if d.flights[key] == flight {
 					delete(d.flights, key)
 				}
+				if d.results == nil {
+					d.results = map[string]error{}
+				}
+				d.results[key] = flight.err
 				d.mu.Unlock()
 				close(flight.done)
 			}()
@@ -133,6 +139,13 @@ func (d *cliDiscovery) share(ctx context.Context, key string, arrival time.Time,
 		select {
 		case <-flight.done:
 		case <-ctx.Done():
+			if holdExpired(ctx) {
+				// The request's time is up (session_hold.go): it answers with
+				// the newest observation that finished; this run goes on.
+				d.mu.Lock()
+				defer d.mu.Unlock()
+				return d.results[key]
+			}
 			return ctx.Err()
 		}
 		if !flight.started.Before(arrival) {
@@ -193,6 +206,9 @@ func (s *Server) residentRequest(ctx context.Context, mode string, input any) (j
 	if s.windowsGuest != nil || s.macosGuest != nil || !s.cliDiscovery.usable() {
 		return nil, residentUnavailable
 	}
+	if ctx.Err() != nil {
+		return nil, residentLost // the caller already left
+	}
 	payload, err := json.Marshal(map[string]any{"mode": mode, "input": input})
 	if err != nil {
 		return nil, residentUnavailable
@@ -213,6 +229,8 @@ func (s *Server) residentRequest(ctx context.Context, mode string, input any) (j
 			return nil, residentUnavailable
 		case ctx.Err() != nil && errors.Is(err, context.Canceled):
 			return nil, residentLost // the caller left
+		case err != nil && holdExpired(ctx):
+			return nil, residentLost // the held request's time is up, not the helper's
 		case errors.Is(err, errGuestSessionEnded):
 			return nil, residentLost
 		}
@@ -428,7 +446,8 @@ func (s *Server) awaitSessionView(ctx context.Context, view mobileSession, deadl
 	if !view.Active {
 		pause = 4 * time.Second
 	}
-	if !view.TerminalAvailable && view.Provider != codexProvider {
+	guest := view.TerminalAvailable || view.Provider == codexProvider
+	if !guest {
 		pause = 250 * time.Millisecond // host-run sessions change in this process
 	} else if view.TerminalAvailable {
 		s.cliDiscovery.mu.Lock()
@@ -439,24 +458,42 @@ func (s *Server) awaitSessionView(ctx context.Context, view mobileSession, deadl
 			for key, value := range last.input {
 				request[key] = value
 			}
-			request["key"], request["timeout"] = last.key, remaining.Seconds()
-			waitCtx, cancel := context.WithTimeout(ctx, remaining+5*time.Second)
+			// The guest answers a little before the deadline, so the read that
+			// follows a change has time, and an unchanged hold ends on time.
+			request["key"], request["timeout"] = last.key, max(remaining-viewWaitMargin, 0).Seconds()
+			waitCtx, cancel := context.WithTimeout(ctx, remaining+viewWaitSlack)
 			stop := context.AfterFunc(epoch, cancel)
-			_, outcome := s.residentRequest(waitCtx, "view-wait", request)
+			reply, outcome := s.residentRequest(waitCtx, "view-wait", request)
 			stop()
 			cancel()
-			if outcome == residentAnswered || ctx.Err() != nil {
-				return ctx.Err() == nil
+			var answer struct {
+				Changed bool `json:"changed"`
 			}
+			if ctx.Err() != nil {
+				return false
+			}
+			if outcome == residentAnswered && json.Unmarshal(reply, &answer) == nil {
+				if answer.Changed {
+					return true
+				}
+				pause = remaining // nothing changed: wait out the hold
+			}
+			remaining = time.Until(deadline)
 		}
 	}
-	timer := time.NewTimer(min(pause, remaining))
+	// A guest look needs time before the deadline; one that would start in its
+	// last second is left to the client's next request.
+	look := !guest || pause < remaining-time.Second
+	if !look {
+		pause = remaining
+	}
+	timer := time.NewTimer(max(min(pause, remaining), 0))
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
 		return false
 	case <-timer.C:
-		return true
+		return look
 	}
 }
 

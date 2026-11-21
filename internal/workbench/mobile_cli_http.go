@@ -263,7 +263,9 @@ func (s *Server) mobileProjects(w http.ResponseWriter, r *http.Request) {
 // Freshness: host changes (create, archive, restore, purge, rename, pin) are
 // in every answer at once and reach a held request within 250 ms. Every new
 // request starts from a guest observation made after it arrived, so a held
-// answer is never older than its wait (at most 25 s); on Linux guests the
+// answer is never older than its wait (at most 25 s); a guest too slow to
+// answer within the request's time leaves it the newest finished observation
+// (session_hold.go). On Linux guests the
 // resident helper wakes it about 1 s after a guest change. The running flags
 // may reuse the guest's claude agents --json listing for up to 30 s when the
 // CLI's session registry shows no change. "updated_at" is part of the list,
@@ -294,7 +296,15 @@ func (s *Server) mobileSessions(w http.ResponseWriter, r *http.Request) {
 	// sessions as Claude Code terminals and would offer rows it cannot open.
 	phone := strings.HasPrefix(r.URL.Path, "/api/mobile/")
 	arrival := time.Now()
-	claudeErr, codexErr := s.observeSessions(r.Context(), paths, phone, arrival)
+	// The guest is looked at for no longer than the request may take; see
+	// session_hold.go.
+	limit := arrival.Add(sessionLookLimit)
+	if wait > 0 {
+		limit = arrival.Add(wait)
+	}
+	look, cancel := holdContext(r.Context(), limit)
+	defer cancel()
+	claudeErr, codexErr := s.observeSessions(look, paths, phone, arrival)
 	if r.Context().Err() != nil {
 		return
 	}
@@ -325,6 +335,10 @@ func (s *Server) mobileSessions(w http.ResponseWriter, r *http.Request) {
 // helper, or looked at every 5 s (the clients' own polling pace) when it
 // cannot be; Codex sessions on the phone are looked at every 5 s.
 func (s *Server) awaitSessionList(ctx context.Context, deadline time.Time, after string, paths []string, archived, phone bool, claudeErr, codexErr error) (sessionListAnswer, error) {
+	// Each look ends at the deadline; share then gives the newest finished
+	// observation, and the answer follows at once.
+	look, cancel := holdContext(ctx, deadline)
+	defer cancel()
 	changes, stop := s.subscribeGuestChanges()
 	defer stop()
 	host := time.NewTicker(250 * time.Millisecond)
@@ -335,7 +349,7 @@ func (s *Server) awaitSessionList(ctx context.Context, deadline time.Time, after
 	defer end.Stop()
 	looks := 0
 	key := strings.Join(slices.Sorted(slices.Values(paths)), "\x00")
-	run := func() (context.Context, context.CancelFunc) { return s.discoveryContext(ctx) }
+	run := func() (context.Context, context.CancelFunc) { return s.discoveryContext(look) }
 	granted := func() map[string]bool {
 		set := make(map[string]bool, len(paths))
 		for _, path := range paths {
@@ -367,10 +381,10 @@ func (s *Server) awaitSessionList(ctx context.Context, deadline time.Time, after
 			}
 		}
 		if claude {
-			claudeErr = s.cliDiscovery.share(ctx, "claude\x00"+key, arrival, run, func(ctx context.Context) error { return s.discoverTerminalConversations(ctx, paths) })
+			claudeErr = s.cliDiscovery.share(look, "claude\x00"+key, arrival, run, func(ctx context.Context) error { return s.discoverTerminalConversations(ctx, paths) })
 		}
 		if codex {
-			codexErr = s.cliDiscovery.share(ctx, "codex\x00"+key, arrival, run, func(ctx context.Context) error { return s.discoverCodexConversations(ctx, paths) })
+			codexErr = s.cliDiscovery.share(look, "codex\x00"+key, arrival, run, func(ctx context.Context) error { return s.discoverCodexConversations(ctx, paths) })
 		}
 		if ctx.Err() != nil {
 			return sessionListAnswer{}, ctx.Err()
@@ -616,8 +630,17 @@ func (s *Server) authorizedMobileSessionRecord(w http.ResponseWriter, r *http.Re
 //     first change after a quiet period within about 250 ms, and no polling
 //     while nothing happens.
 func (s *Server) mobileSessionView(w http.ResponseWriter, r *http.Request) {
-	view, ok := s.authorizedMobileSession(w, r)
-	if !ok {
+	arrival := time.Now()
+	// A held read answers by its time whatever the guest does; its first look
+	// gets at least heldReadFirstLook (session_hold.go).
+	var view mobileSession
+	ok, reached := false, true
+	if held, valid := sessionWait(r.URL.Query().Get("wait")); valid && held > 0 && r.URL.Query().Get("after") != "" {
+		view, ok, reached = s.readSessionBy(w, r, arrival.Add(max(held, heldReadFirstLook)))
+	} else {
+		view, ok = s.authorizedMobileSession(w, r)
+	}
+	if r.Context().Err() != nil || !ok && reached {
 		return
 	}
 	if value := r.URL.Query().Get("after"); value != "" {
@@ -636,15 +659,26 @@ func (s *Server) mobileSessionView(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "等待时间无效", 400)
 			return
 		}
+		if !reached {
+			// The first look did not finish in time: nothing is known to
+			// have changed.
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		unchanged := func() bool { return revision == view.Revision && (epoch == "" || epoch == view.Generation) }
 		// Hold the request while the session is unchanged; no lock is held
-		// while waiting, and every look is a full authorized read.
-		// The request context ends with the server, the account lock and
-		// the phone link, which ends a held read too.
-		for deadline := time.Now().Add(wait); unchanged() && s.awaitSessionView(r.Context(), view, deadline); {
-			if view, ok = s.authorizedMobileSession(w, r); !ok {
+		// while waiting, and every look is a full authorized read that ends
+		// at the deadline. The request context ends with the server, the
+		// account lock and the phone link, which ends a held read too.
+		for deadline := arrival.Add(wait); unchanged() && s.awaitSessionView(r.Context(), view, deadline); {
+			next, ok, reached := s.readSessionBy(w, r, deadline)
+			if !reached {
+				break
+			}
+			if !ok {
 				return
 			}
+			view = next
 		}
 		if r.Context().Err() != nil {
 			return
