@@ -2,6 +2,7 @@
 import { createRequire } from "node:module";
 import { defaultAppearance, presets } from "../src/appearance-state.mjs";
 import { claudeScienceRoute } from "./claude-science-fixture.mjs";
+import { codexSessionsRoute } from "./codex-session-fixture.mjs";
 const require = createRequire(import.meta.url);
 export async function createWorkbench({
   viewport = { width: 1280, height: 850 },
@@ -21,6 +22,8 @@ export async function createWorkbench({
   initialization = { required: false },
   // A name from claude-science-fixtures.json: what GET /api/claude-science returns.
   claudeScience = "not-installed",
+  // Serve Codex sessions (one per owner state) from codex-session-fixture.mjs.
+  codexSessions = false,
   clientContext = { mode: "local", connection_id: "local", client_platform: "darwin", server_platform: "darwin", connection: { state: "disconnected" } },
 } = {}) {
   const engines = require(
@@ -163,6 +166,7 @@ export async function createWorkbench({
     if (path === "/claude-science" || path.startsWith("/claude-science/")) return claudeScienceRoute(route, request, path, body, state);
     if (path.startsWith("/cli/")) {
       if (cliRequest) return cliRequest(route, path, body);
+      if (codexSessions) return codexSessionsRoute(route, request, new URL(request.url()), body, state);
       const account = path.match(/^\/cli\/sessions\/([^/]+)\/account$/);
       if (account) return route.fulfill({ json: { session: { id: account[1] }, supported: false, candidates: [] } });
       return route.fulfill({ json: { sessions: [], notice: "" } });
