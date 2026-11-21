@@ -224,8 +224,14 @@ func TestUnconfirmedReadsUntilDeadlineEndWithGateTimer(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+	// Status reports an expired lease as closed before the timer's own
+	// transition runs; wait for that transition, which is what closes the
+	// connections and starts a new epoch.
+	for gate.Status().Epoch == granted.Epoch && time.Now().Before(stop) {
+		time.Sleep(5 * time.Millisecond)
+	}
 	closed := gate.Status()
-	if closed.Mode != cage.GateClosed || closed.Reason != gateLeaseExpired || time.Now().Before(granted.Until) {
+	if closed.Mode != cage.GateClosed || closed.Reason != gateLeaseExpired || closed.Epoch == granted.Epoch || time.Now().Before(granted.Until) {
 		t.Fatalf("the lease did not end by the gate's own timer: %+v", closed)
 	}
 	if len(starts) < 2 || len(starts) > 5 {
