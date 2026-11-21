@@ -356,12 +356,10 @@ func (s *Server) claudeDesktopVNC(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "环境尚未启动", 409)
 		return
 	}
-	release, err := s.acquireDesktopView()
-	if err != nil {
-		http.Error(w, "无法恢复 Claude Desktop 画面，请重新连接", http.StatusBadGateway)
-		return
-	}
-	defer release()
+	// The application's windows are restored in the background, in parallel
+	// with the connection to the display below.
+	viewer := s.joinDesktopView()
+	defer viewer.close()
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	// No extra localhost port or public VNC listener on the host. SSH is bound
@@ -385,5 +383,5 @@ func (s *Server) claudeDesktopVNC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { cancel(); writer.Close(); reader.Close(); _ = cmd.Wait() }()
-	s.streamVNC(w, r, reader, writer, func() { cancel(); _ = writer.Close(); _ = reader.Close() })
+	s.streamDisplay(w, r, reader, writer, func() { cancel(); _ = writer.Close(); _ = reader.Close() }, viewer)
 }
