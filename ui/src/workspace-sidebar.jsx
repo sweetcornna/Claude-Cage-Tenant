@@ -154,7 +154,7 @@ export function WorkspaceSidebar({
             </button>
           </div>
           <button className={`sidebar-link ${desktopOpen ? "selected" : ""}`} onClick={onClaudeDesktop} disabled={!running || busy} title="安装或打开 Claude Desktop"><Monitor size={17} />Claude Desktop</button>
-          <button className={`sidebar-link ${claudeScienceOpen ? "selected" : ""}`} aria-current={claudeScienceOpen ? "page" : undefined} onClick={onClaudeScience} disabled={!running || busy} title="安装或打开 Claude Science"><FlaskConical size={17} />Claude Science</button>
+          <button className={`sidebar-link ${claudeScienceOpen ? "selected" : ""}`} aria-current={claudeScienceOpen ? "page" : undefined} onClick={onClaudeScience} disabled={!running} title="安装或打开 Claude Science"><FlaskConical size={17} />Claude Science</button>
         </div>
         <div className="sidebar-nav-group">
           <button className={`sidebar-link ${tailscaleOpen ? "selected" : ""}`} aria-current={tailscaleOpen ? "page" : undefined} onClick={onTailscale} aria-label="打开 Tailscale"><Network size={17} />Tailscale</button>

@@ -110,7 +110,7 @@ async function walk(mode) {
     await card.getByText("正在下载 Claude Science 0.1.73（62%）", { exact: true }).waitFor({ timeout: 15000 });
     await card.getByLabel("操作日志").getByText("校验 sha256").waitFor();
     assert.equal(await card.locator(".clay").count(), 0, "no call to action while installing");
-    assert.ok(await row.isDisabled(), "the row greys while a job runs, as Claude Desktop's does");
+    assert.ok(await row.isEnabled(), "the row stays reachable while a job runs, so its progress can be reopened");
     await shot("4-installing");
     await button("查看进度").click();
     await page.getByRole("dialog", { name: "操作详情" }).getByText("正在准备 Python 与 R 环境…").waitFor();
