@@ -29,6 +29,13 @@ var (
 // a frame well within the write timeout and the viewer sees steady progress.
 const terminalFrameLimit = 64 << 10
 
+// terminalInputMessageLimit bounds one message from a viewer. A paste is one
+// input message, JSON-escaped, so the limit must be well above the largest
+// paste a person makes: a message over it closes the stream and the paste is
+// lost. The session's input queue bounds what stays held, see
+// terminalInputBudget.
+const terminalInputMessageLimit = 16 << 20
+
 var terminalOffsetPattern = regexp.MustCompile(`^(0|[1-9][0-9]{0,19})$`)
 
 // terminalResumeOffset reads the optional after=<byte offset> of a viewer that
@@ -136,7 +143,7 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer ws.Close()
-	ws.SetReadLimit(1 << 20)
+	ws.SetReadLimit(terminalInputMessageLimit)
 	_ = ws.SetReadDeadline(time.Now().Add(terminalReadTimeout))
 	ws.SetPongHandler(func(string) error { return ws.SetReadDeadline(time.Now().Add(terminalReadTimeout)) })
 	subscription := session.subscribeFrom(after)

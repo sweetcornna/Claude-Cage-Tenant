@@ -232,6 +232,32 @@ func TestTerminalViewerKeepsInputWhilePTYDoesNotRead(t *testing.T) {
 	_ = ws.Close()
 }
 
+// A paste is one input message. A multi-megabyte one must reach the program
+// whole instead of closing the stream for exceeding a frame limit.
+func TestTerminalViewerPasteOfSeveralMegabytesArrivesWhole(t *testing.T) {
+	s := testServer(t)
+	session, file := newGatedInputSession(t)
+	session.id = "paste"
+	s.terminals.sessions = map[string]*terminalSession{session.id: session}
+	t.Cleanup(s.terminals.close)
+	server := httptest.NewServer(s.handler())
+	defer server.Close()
+	s.origin = server.URL
+	ws := connectTerminalViewer(t, s, server, session.id)
+	paste := strings.Repeat("paste line of text\n", (3<<20)/19)
+	if err := ws.WriteJSON(map[string]string{"type": "input", "data": paste}); err != nil {
+		t.Fatalf("sending the paste: %v", err)
+	}
+	file.open()
+	file.awaitInput(t, paste)
+	if err := ws.WriteJSON(map[string]string{"type": "ping"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+	awaitPong(t, ws)
+	_ = ws.Close()
+}
+
 // With the queue over its byte budget the stream holds the viewer back
 // instead of refusing its input: nothing is lost, order is kept, and the
 // viewer is still attached and answered afterwards.
