@@ -105,7 +105,7 @@ func RedeemPair(ctx context.Context, raw, selectedRelay, phonePin string) (strin
 		raw = string(b)
 	}
 	if len(raw) > 4096 || !strings.HasPrefix(raw, "CAGE1:") || json.Unmarshal([]byte(raw[6:]), &p) != nil || !pairPin(phonePin) {
-		return "", errors.New("请扫描 Cage 电脑端的配对码")
+		return "", errors.New("请扫描 Super Cage 电脑端的配对码")
 	}
 	if p.origin() != selectedRelay || !ValidRelayOrigin(selectedRelay) {
 		return "", errors.New("中继与当前设置不符，请检查自建中继地址")

@@ -263,12 +263,12 @@ func (s *Server) phoneSurfaceRequest(surface phoneSurface, w http.ResponseWriter
 	allowed := p.pairedRequestLocked(r)
 	p.mu.Unlock()
 	if !allowed {
-		http.Error(w, "请通过电脑 Cage 的二维码或配对码连接这台主机，再打开"+surface.label()+"。", 403)
+		http.Error(w, "请通过电脑 Super Cage 的二维码或配对码连接这台主机，再打开"+surface.label()+"。", 403)
 		return
 	}
 	epoch, _ := r.Context().Value(accountEpochKey{}).(context.Context)
 	if epoch == nil || epoch.Err() != nil {
-		http.Error(w, "请先解锁 Cage", 423)
+		http.Error(w, "请先解锁 Super Cage", 423)
 		return
 	}
 	op := r.URL.Path[strings.LastIndexByte(r.URL.Path, '/')+1:]
@@ -333,7 +333,7 @@ func (s *Server) phoneSurfaceRequest(surface phoneSurface, w http.ResponseWriter
 	}
 	if !s.phoneSurfaceNetwork(r.Context()) {
 		s.retirePhoneSurface(surface, b)
-		http.Error(w, "请在电脑启动 Cage，并确保网络检查已放行。", 409)
+		http.Error(w, "请在电脑启动 Super Cage，并确保网络检查已放行。", 409)
 		return
 	}
 	if op == "open" && b != nil {
@@ -443,7 +443,7 @@ func (s *Server) phoneSurfaceRequest(surface phoneSurface, w http.ResponseWriter
 	}
 	if (op == "frame" || input.ReturnFrame) && status == 200 && !s.phoneSurfaceNetwork(ctx) {
 		s.retirePhoneSurface(surface, b)
-		http.Error(w, "电脑上的 Cage 网络检查已暂停", 409)
+		http.Error(w, "电脑上的 Super Cage 网络检查已暂停", 409)
 		return
 	}
 	if err != nil || status != 200 {
@@ -456,7 +456,7 @@ func (s *Server) phoneSurfaceRequest(surface phoneSurface, w http.ResponseWriter
 		}
 		if surface == phoneBrowser && (op == "open" || op == "frame") && status == http.StatusServiceUnavailable {
 			s.retirePhoneSurface(surface, b)
-			http.Error(w, "客机浏览器暂时无法启动，请稍后重新打开；若仍失败，请在电脑 Cage 中检查并更新客机组件。", status)
+			http.Error(w, "客机浏览器暂时无法启动，请稍后重新打开；若仍失败，请在电脑 Super Cage 中检查并更新客机组件。", status)
 			return
 		}
 		switch status {
@@ -465,7 +465,7 @@ func (s *Server) phoneSurfaceRequest(surface phoneSurface, w http.ResponseWriter
 			needsUpdate := s.guestUpdateRequired
 			s.mu.Unlock()
 			if op == "open" && needsUpdate {
-				http.Error(w, "请在电脑上更新 Cage 环境后再打开"+surface.label(), 409)
+				http.Error(w, "请在电脑上更新 Super Cage 环境后再打开"+surface.label(), 409)
 			} else {
 				http.Error(w, surface.label()+"操作无效，请检查输入后再试", 400)
 			}
@@ -478,7 +478,7 @@ func (s *Server) phoneSurfaceRequest(surface phoneSurface, w http.ResponseWriter
 		case 410:
 			var native windowsWindowFailure
 			if surface == phoneDesktop && errors.As(err, &native) && native.code == "requires_gui_login" {
-				http.Error(w, "请在电脑的 Cage 中解锁已绑定的 Windows 客机账户，再从手机重新打开 Claude Desktop。", 410)
+				http.Error(w, "请在电脑的 Super Cage 中解锁已绑定的 Windows 客机账户，再从手机重新打开 Claude Desktop。", 410)
 			} else {
 				http.Error(w, surface.label()+"会话已结束，请重新打开", 410)
 			}
@@ -486,17 +486,17 @@ func (s *Server) phoneSurfaceRequest(surface phoneSurface, w http.ResponseWriter
 			http.Error(w, "当前客机未提供"+surface.label()+"，请在电脑上更新环境", 409)
 		case 403:
 			if surface == phoneDesktop && s.macosGuest != nil {
-				http.Error(w, "请在电脑的 Cage 中完成虚拟 Mac 的屏幕录制和辅助功能授权，再重新打开。", 403)
+				http.Error(w, "请在电脑的 Super Cage 中完成虚拟 Mac 的屏幕录制和辅助功能授权，再重新打开。", 403)
 			} else {
 				http.Error(w, "客机拒绝此次访问", 403)
 			}
 		case 426:
-			http.Error(w, "请在电脑的 Cage 中更新 Windows 客机组件，再从手机打开 Claude Desktop。", http.StatusUpgradeRequired)
+			http.Error(w, "请在电脑的 Super Cage 中更新 Windows 客机组件，再从手机打开 Claude Desktop。", http.StatusUpgradeRequired)
 		case 501:
 			if surface == phoneDesktop {
-				http.Error(w, "请先在电脑的 Cage 中安装 Claude Desktop，再从手机打开", 501)
+				http.Error(w, "请先在电脑的 Super Cage 中安装 Claude Desktop，再从手机打开", 501)
 			} else {
-				http.Error(w, "请在电脑上更新 Cage 环境", 501)
+				http.Error(w, "请在电脑上更新 Super Cage 环境", 501)
 			}
 		default:
 			http.Error(w, surface.label()+"暂时不可用，请检查电脑上的环境", 502)

@@ -21,7 +21,7 @@ var mobileSupervisor string
 
 var mobileCCSProfile = regexp.MustCompile("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
 
-var errMobileLocked = errors.New("Cage 已锁定，请重新解锁后操作")
+var errMobileLocked = errors.New("Super Cage 已锁定，请重新解锁后操作")
 
 // Caller holds the account mutex. An operation begun under an old unlock
 // must not gain authority from a later unlock of the same account.
