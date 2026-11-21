@@ -348,9 +348,21 @@ func (s *Server) createTerminalLocked(input terminalRequest) (*terminalSession, 
 	// It always runs from the guest home, without loading project settings.
 	workspace := s.workspace()
 	var err error
+	var selection claudeSelection
+	selected := false // selection was made together with the project connection
 	if input.Kind != "claude-login" {
 		if s.macOSLegacyWorkspace(sharedRecord) != "" {
 			workspace, err = s.projectWorkspace(sharedRecord.Workspace)
+		} else if managed && (sharedRecord == nil || !sharedRecord.Terminal) {
+			// Opening the project's shares and choosing an account both wait on
+			// guest reads, and neither needs the other's result.
+			var connect func() error
+			if workspace, connect, err = s.prepareProject(input.Workspace, false); err == nil {
+				selection, err = connectAndSelect(connect, func() (claudeSelection, error) {
+					return s.selectTerminalClaudeAccount(command, input.ClaudeAccountID, false, workspace)
+				})
+				selected = true
+			}
 		} else {
 			workspace, err = s.connectProject(input.Workspace, false)
 		}
@@ -375,13 +387,12 @@ func (s *Server) createTerminalLocked(input terminalRequest) (*terminalSession, 
 			script = "exec /usr/local/libexec/cage-macos-terminal " + shellescape.Quote(macOSProjectPath(s.macosGuest.User, workspace))
 		}
 	}
-	var selection claudeSelection
 	var finished func()
 	if managed {
 		login := input.Kind == "claude-login"
 		if sharedRecord != nil && sharedRecord.Terminal {
 			selection = sharedRecord.Account
-		} else {
+		} else if !selected {
 			selection, err = s.selectTerminalClaudeAccount(command, input.ClaudeAccountID, login, workspace)
 		}
 		if err != nil {
@@ -462,6 +473,20 @@ func (s *Server) createTerminalLocked(input terminalRequest) (*terminalSession, 
 		s.noteClaudeSelection(selection.ID, workspace)
 	}
 	return session, err
+}
+
+// connectAndSelect runs the project connection and the account selection at
+// the same time and returns when both are done, so the caller still holds the
+// environment lock until neither is running. A project error wins over a
+// selection error, as it did when they ran one after the other.
+func connectAndSelect(connect func() error, selectAccount func() (claudeSelection, error)) (claudeSelection, error) {
+	connected := make(chan error, 1)
+	go func() { connected <- connect() }()
+	selection, selectErr := selectAccount()
+	if err := <-connected; err != nil {
+		return claudeSelection{}, err
+	}
+	return selection, selectErr
 }
 
 func validClaudeGuestID(id string) bool { return id == "default" || validClaudeID(id) }

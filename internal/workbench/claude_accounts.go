@@ -428,18 +428,27 @@ func (s *Server) allocateClaudeAccount(previous claudeAccountList, workspace str
 			ids = append(ids, a.guestID())
 		}
 	}
+	// The default login is verified in a login shell and the managed quotas are
+	// small file reads: neither needs the other, so a launch waits for the
+	// slower of them, not for both.
+	defaultSubject := ""
+	var defaultCheck sync.WaitGroup
+	if checkDefault {
+		defaultCheck.Add(1)
+		go func() {
+			defer defaultCheck.Done()
+			if reading, _, err := s.inspectClaudeDefault(epoch, true); err == nil {
+				defaultSubject = reading.subject()
+			}
+		}()
+	}
 	var readings map[string]claudeGuestQuota
 	if len(ids) > 0 {
 		ctx, cancel := context.WithTimeout(epoch, 4*time.Second)
 		readings, _ = read(ctx, ids) // Retain the last snapshot when SSH is unavailable.
 		cancel()
 	}
-	defaultSubject := ""
-	if checkDefault {
-		if reading, _, err := s.inspectClaudeDefault(epoch, true); err == nil {
-			defaultSubject = reading.subject()
-		}
-	}
+	defaultCheck.Wait()
 	m := &s.claudeAccounts
 	m.mu.Lock()
 	defer m.mu.Unlock()
