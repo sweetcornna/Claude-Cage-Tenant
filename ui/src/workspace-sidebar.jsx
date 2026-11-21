@@ -19,7 +19,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { EnvironmentShield } from "./environment-shield";
-import logo from "./logo.png";
+import { BrandMark } from "./brand";
 import claudeLogo from "./claude-logo.svg";
 import { projectName } from "./workspace-state.mjs";
 import { WorkspaceTabs } from "./workspace-tabs";
@@ -107,9 +107,9 @@ export function WorkspaceSidebar({
     <aside className="workspace-sidebar" aria-label="项目与终端">
       <div className="sidebar-top">
         <span className="sidebar-brand">
-          <img className="brand-logo" src={logo} alt="" />
-          Super Cage
-                <GuestSystemIcon system={guestSystem} />
+          <BrandMark size={22} className="brand-logo" />
+          <span className="wordmark">Super Cage</span>
+          <GuestSystemIcon system={guestSystem} />
         </span>
         <button
           className="icon-button"

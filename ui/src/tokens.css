@@ -5,7 +5,13 @@
  * below are the Super Cage preset itself: they paint the window before the
  * provider runs and are checked against the preset by appearance-state.test.mjs.
  * Legacy names (--accent, --strong, --hover…) are aliases kept for older
- * component styles; new styles use the design names only. */
+ * component styles; new styles use the design names only.
+ *
+ * Cascade: base → components → shell are layers (base.css, components.css,
+ * shell.css). Feature stylesheets stay unlayered so their own rules always
+ * win over the shared look. */
+@layer base, components, shell;
+
 :root {
   color-scheme: light;
   --paper: #faf9f5;

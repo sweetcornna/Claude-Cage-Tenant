@@ -5,7 +5,11 @@ import { DiagnosticBoundary } from "./diagnostics.jsx";
 import { ClientRoot } from "./remote-hosts";
 import { native } from "./api";
 import "./tokens.css";
+import "./base.css";
+import "./components.css";
+import "./shell.css";
 import "./style.css";
+import "./desktop-overrides.css";
 import { IconHints } from "./icon-hints.jsx";
 
 const Workbench = lazy(() => import("./main.jsx"));

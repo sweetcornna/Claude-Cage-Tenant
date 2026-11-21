@@ -389,8 +389,10 @@ export function WorkspaceTabs({
                 <span>{title}</span>
                 {tab.claudeLabel && <small className="claude-tab-profile">{tab.claudeLabel}</small>}
                 {saved[tab.id]?.pinned && <Pin size={11} className="tab-pin" />}
-                {!horizontal && !vertical && (opening || tab.sessionActive && !runningElsewhere) &&
-                  <LoaderCircle size={13} className="spin session-activity" role="img" aria-label={opening ? "正在打开会话" : "会话正在运行"} />}
+                {!horizontal && !vertical && (opening
+                  ? <LoaderCircle size={13} className="spin session-activity" role="img" aria-label="正在打开会话" />
+                  : tab.sessionActive && !runningElsewhere &&
+                    <i className="live-dot session-activity" role="img" aria-label="会话正在运行" />)}
               </button>
               {!horizontal && !vertical && runningElsewhere &&
                 <span className="session-owner" role="img" aria-label={runningNotice} tabIndex={0}>
