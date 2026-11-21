@@ -292,20 +292,13 @@ func planGuestClasses(size uint64, classes map[string]GuestClass) ClassLimits {
 	return limits
 }
 
-// differs reports a change of at least 64 MiB in any limit.
-func (l ClassLimits) differs(other ClassLimits) bool {
-	far := func(a, b uint64) bool { return max(a, b)-min(a, b) >= 64*mib }
-	return far(l.ControlLow, other.ControlLow) || far(l.SessionsLow, other.SessionsLow) || far(l.SessionsHigh, other.SessionsHigh) ||
-		far(l.BrowserHigh, other.BrowserHigh) || far(l.BrowserMax, other.BrowserMax)
-}
-
 // script writes the limits for the guest governor, atomically, when the
 // runtime directory the start script made is there.
 func (l ClassLimits) script() string {
 	body := fmt.Sprintf("version 1\\ncontrol_low %d\\nsessions_low %d\\nsessions_high %d\\nbrowser_high %d\\nbrowser_max %d\\n",
 		l.ControlLow, l.SessionsLow, l.SessionsHigh, l.BrowserHigh, l.BrowserMax)
-	return "if [ -d /run/cage-resources ] && [ -w /run/cage-resources ]; then printf '" + body +
-		"' > /run/cage-resources/.limits.$$ && mv -f /run/cage-resources/.limits.$$ /run/cage-resources/limits; fi\n"
+	return "if [ -d /run/cage-resources/in ] && [ -w /run/cage-resources/in ]; then printf '" + body +
+		"' > /run/cage-resources/in/.limits.$ && mv -f /run/cage-resources/in/.limits.$ /run/cage-resources/in/limits; fi\n"
 }
 
 // parseGovernor reads the governor's report (the lines after "uptime" in a

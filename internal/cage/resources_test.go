@@ -355,7 +355,7 @@ func TestResourceManagerSendsLimitsAndTellsTheGateway(t *testing.T) {
 		}
 	}
 	stop()
-	if strings.Contains(commands[0], "/run/cage-resources/limits") || !strings.Contains(commands[1], "/run/cage-resources/limits") || !strings.Contains(commands[1], "browser_high ") {
+	if strings.Contains(commands[0], "/run/cage-resources/in/limits") || !strings.Contains(commands[1], "/run/cage-resources/in/limits") || !strings.Contains(commands[1], "browser_high ") {
 		t.Fatalf("class limits not sent with the next probe: %q", commands[:2])
 	}
 	data, err := os.ReadFile(filepath.Join(profile, "machine-memory.json"))

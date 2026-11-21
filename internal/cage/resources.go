@@ -303,6 +303,9 @@ type machineMemoryReport struct {
 	Short     uint64    `json:"short_bytes"`
 	Wanted    uint64    `json:"wanted_bytes"`
 	Target    uint64    `json:"target_bytes"`
+	// Pressure: the guest is under memory pressure (or stopped answering
+	// after being so), so the shortfall is a shortage, not missing headroom.
+	Pressure bool `json:"pressure,omitempty"`
 }
 
 // allocationContext is what the host agent learns once at start from the
@@ -350,7 +353,6 @@ func StartResourceManager(parent context.Context, dir string, maximum uint64, cp
 		var previous ResourceSample
 		var bootTotal uint64
 		var lastError string
-		var written ClassLimits
 		limitsPending := ""
 		reported := false
 		ticker := time.NewTicker(2 * time.Second)
@@ -427,16 +429,10 @@ func StartResourceManager(parent context.Context, dir string, maximum uint64, cp
 					}
 				}
 				// The classes are sized for what the guest can have now. The
-				// limits go to the governor with the next probe.
-				limits := planGuestClasses(min(maximum, max(plan.capacity, plan.demand)), sample.classes)
-				reportedLimits := ClassLimits{}
-				if browser, ok := sample.classes["browser"]; ok {
-					reportedLimits.BrowserHigh, reportedLimits.BrowserMax = browser.High, browser.Max
-				}
-				limitsPending = ""
-				if limits.differs(written) || (sample.Protected && (limits.BrowserHigh != reportedLimits.BrowserHigh || limits.BrowserMax != reportedLimits.BrowserMax)) {
-					limitsPending, written = limits.script(), limits
-				}
+				// limits go to the governor with every probe: it falls back to
+				// the guest's own size when they stop coming (an older host
+				// agent, or failed probes).
+				limitsPending = planGuestClasses(min(maximum, max(plan.capacity, plan.demand)), sample.classes).script()
 				previous = sample
 			}
 			explain(&status, plan, maximum, possible, manual, p.failures)
@@ -458,7 +454,8 @@ func StartResourceManager(parent context.Context, dir string, maximum uint64, cp
 			if reportPath != "" && (plan.shortBytes > 0 || reported) {
 				// Tell an outer gateway what the machine cannot back; once more
 				// with zero when that is over.
-				report := machineMemoryReport{Version: 1, UpdatedAt: now.UTC(), Short: plan.shortBytes, Wanted: plan.wanted, Target: p.target}
+				report := machineMemoryReport{Version: 1, UpdatedAt: now.UTC(), Short: plan.shortBytes, Wanted: plan.wanted, Target: p.target,
+					Pressure: status.Pressure || p.failures > guestFailureHold}
 				if writeJSONAtomic(reportPath, report) == nil {
 					reported = plan.shortBytes > 0
 				}
