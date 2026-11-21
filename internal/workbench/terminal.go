@@ -174,9 +174,13 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 			default:
 			}
 		case "input":
-			if err := session.enqueueInput(r.Context(), input.Data); err != nil {
+			// A full queue holds this viewer here, unread, until the guest
+			// takes input again; the sender is held back instead of the
+			// input being refused.
+			if err := session.enqueueInputWait(r.Context(), input.Data, done); err != nil {
 				return
 			}
+			_ = ws.SetReadDeadline(time.Now().Add(terminalReadTimeout))
 		case "resize":
 			if validTerminalSize(input.Cols, input.Rows) {
 				if err := session.file.Resize(input.Cols, input.Rows); err != nil {

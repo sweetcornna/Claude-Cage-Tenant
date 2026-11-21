@@ -43,7 +43,10 @@ type terminalSession struct {
 	closed                bool
 	clients               map[*terminalViewer]bool
 	done                  chan struct{}
-	inputs                chan string
+	input                 []string      // admitted input not yet taken by the writer; guarded by mu
+	inputBytes            int           // what input costs against terminalInputBudget
+	inputReady            chan struct{} // wakes the writer after input is admitted
+	inputSpace            chan struct{} // closed when the writer frees space for a waiting viewer; nil when none waits
 	stopping              chan struct{}
 	closeOnce             sync.Once
 	cliStartupDone        chan struct{}
@@ -56,7 +59,7 @@ func (t *terminalSession) ownsConversation() bool {
 }
 
 func newTerminalSession(file terminalPTY) *terminalSession {
-	return &terminalSession{file: file, exitCode: -1, clients: map[*terminalViewer]bool{}, done: make(chan struct{}), inputs: make(chan string, 8), stopping: make(chan struct{}), changed: make(chan struct{})}
+	return &terminalSession{file: file, exitCode: -1, clients: map[*terminalViewer]bool{}, done: make(chan struct{}), inputReady: make(chan struct{}, 1), stopping: make(chan struct{}), changed: make(chan struct{})}
 }
 
 // exitStatus is the process's exit code after the session ends; -1 while it
@@ -140,24 +143,112 @@ func (t *terminalSession) close() {
 	}
 }
 
-// Input belongs to the session once admitted. A viewer never waits inside a
+// terminalInputBudget bounds the input one session holds for its PTY writer
+// while the guest program does not read: a stalled SSH window, a busy program,
+// a paste into a shell that is still starting. The bound is in bytes, because
+// what must survive is typing and pastes, however they were split into
+// messages. A message is always admitted into an empty queue, so one frame
+// larger than the budget still gets through.
+var terminalInputBudget = 8 << 20
+
+// terminalInputOverhead is what each queued message costs beyond its bytes, so
+// a flood of tiny messages is bounded too.
+const terminalInputOverhead = 64
+
+// admitInputLocked queues input, or reports errTerminalInputFull. Caller holds
+// the session lock; admission is sealed by closed under the same lock.
+func (t *terminalSession) admitInputLocked(input string) error {
+	if t.closed {
+		return os.ErrClosed
+	}
+	if input == "" {
+		return nil
+	}
+	cost := len(input) + terminalInputOverhead
+	if t.inputBytes > 0 && t.inputBytes+cost > terminalInputBudget {
+		return errTerminalInputFull
+	}
+	t.input = append(t.input, input)
+	t.inputBytes += cost
+	select {
+	case t.inputReady <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+// Input belongs to the session once admitted. The caller never waits inside a
 // PTY write, so disconnecting or locking the account can drain its handler
-// while a guest process is not reading input. A full queue rejects the viewer
-// immediately, so the handler never waits to read a WebSocket close either.
+// while a guest process is not reading input. When the queue is over its byte
+// budget the call refuses at once instead of waiting: callers that hold the
+// account lock or that answer a request (the phone) must not block. The
+// terminal stream waits for space itself, see enqueueInputWait.
 func (t *terminalSession) enqueueInput(ctx context.Context, input string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.closed {
-		return os.ErrClosed
+	return t.admitInputLocked(input)
+}
+
+// enqueueInputWait is enqueueInput for a stream that can wait: while the
+// queue is over its budget it keeps the message and retries as the writer
+// makes room, so nothing is dropped and the caller stops reading its socket,
+// which pushes back on the sender. It gives up when ctx ends, when gone
+// closes (the viewer's sender has exited), or when the session stops.
+func (t *terminalSession) enqueueInputWait(ctx context.Context, input string, gone <-chan struct{}) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		t.mu.Lock()
+		err := t.admitInputLocked(input)
+		var space chan struct{}
+		if errors.Is(err, errTerminalInputFull) {
+			if t.inputSpace == nil {
+				t.inputSpace = make(chan struct{})
+			}
+			space = t.inputSpace
+		}
+		t.mu.Unlock()
+		if space == nil {
+			return err
+		}
+		select {
+		case <-space:
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-gone:
+			return os.ErrClosed
+		case <-t.stopping:
+			return os.ErrClosed
+		}
 	}
-	select {
-	case t.inputs <- input:
-		return nil
-	default:
-		return errTerminalInputFull
+}
+
+// takeInput removes the oldest admitted input and wakes viewers waiting for
+// room. It does not block.
+func (t *terminalSession) takeInput() (string, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.input) == 0 {
+		return "", false
+	}
+	input := t.input[0]
+	t.input[0] = ""
+	if t.input = t.input[1:]; len(t.input) == 0 {
+		t.input = nil
+	}
+	t.inputBytes -= len(input) + terminalInputOverhead
+	t.releaseInputWaitersLocked()
+	return input, true
+}
+
+func (t *terminalSession) releaseInputWaitersLocked() {
+	if t.inputSpace != nil {
+		close(t.inputSpace)
+		t.inputSpace = nil
 	}
 }
 
@@ -166,11 +257,20 @@ func (t *terminalSession) writeInput() {
 		select {
 		case <-t.stopping:
 			return
-		case input := <-t.inputs:
-			if _, err := io.WriteString(t.file, input); err != nil {
-				t.stopPTY()
+		default:
+		}
+		input, ok := t.takeInput()
+		if !ok {
+			select {
+			case <-t.stopping:
 				return
+			case <-t.inputReady:
 			}
+			continue
+		}
+		if _, err := io.WriteString(t.file, input); err != nil {
+			t.stopPTY()
+			return
 		}
 	}
 }
@@ -316,12 +416,11 @@ func (t *terminalSession) run() {
 	t.stopPTY()
 	waitErr := t.file.Wait()
 	<-writerDone
+	t.mu.Lock()
 	// Admission is sealed under mu before stopping the writer. Release queued
 	// input even when the closed terminal remains visible with its history.
-	for len(t.inputs) > 0 {
-		<-t.inputs
-	}
-	t.mu.Lock()
+	t.input, t.inputBytes = nil, 0
+	t.releaseInputWaitersLocked()
 	t.exitCode = terminalExitCode(waitErr)
 	t.ended = true
 	t.notifyLocked()
