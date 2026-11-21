@@ -26,10 +26,20 @@ type browserClient struct {
 	http   *http.Client
 }
 
+// Each connection to the guest controller is its own SSH channel and costs a
+// handshake to open. The pool keeps what one burst of requests needs (a wheel
+// gesture allows three in flight, next to a tab list, a tab switch and the
+// health probe) for as long as a reader pauses between gestures. The agent
+// keeps idle connections for 120 s, so this host always closes them first.
+const (
+	browserIdleConnTimeout = 90 * time.Second
+	browserIdleConns       = 6
+)
+
 func newBrowserClient(parent context.Context) *browserClient {
 	ctx, cancel := context.WithCancel(parent)
 	return &browserClient{ctx: ctx, cancel: cancel, http: &http.Client{
-		Transport:     &http.Transport{Proxy: nil, IdleConnTimeout: 30 * time.Second, MaxIdleConnsPerHost: 4, DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext},
+		Transport:     &http.Transport{Proxy: nil, IdleConnTimeout: browserIdleConnTimeout, MaxIdleConnsPerHost: browserIdleConns, DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") },
 	}}
 }
