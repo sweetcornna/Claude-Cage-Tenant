@@ -14,6 +14,9 @@ import { api, normalizeURL, native, nativeAvailable } from "./api";
 import { clientKeyboard, clientStorageKey, getClientContext, isCloudWorkbench, isRemoteClient, runtimeURL, runtimeSocketURL } from "./client-context.mjs";
 import { shareClipboard } from "./shared-clipboard.mjs";
 import { Modal } from "./modal";
+import {
+  isPendingTerminal, loginTerminalKind, markPendingTab, pendingTerminalTab, renamePendingLayout, settlePendingTab,
+} from "./terminal-pending.mjs";
 import { keepSame, reuseItems, terminalListDue } from "./poll-state.mjs";
 import { usePasswordVault } from "./password-vault";
 import { validGuestChoice } from "./guest-system-picker";
@@ -63,6 +66,7 @@ const lazyNamed = (load, name) => lazy(() => load().then((module) => ({ default:
 const loadViews = () => import("./views");
 const TerminalView = lazyNamed(loadViews, "TerminalView");
 const RemoteView = lazyNamed(loadViews, "RemoteView");
+const TerminalPending = lazyNamed(loadViews, "TerminalPending");
 const SettingsPanel = lazyNamed(() => import("./settings"), "SettingsPanel");
 const TailscalePanel = lazyNamed(() => import("./tailscale"), "TailscalePanel");
 const MacOSAppWindow = lazyNamed(() => import("./macos-claude-window"), "MacOSAppWindow");
@@ -515,14 +519,33 @@ function App() {
       previous?.anchor === anchor ? null : { path, anchor },
     );
   };
-  const createTerminal = async (path, kind, loginAccountId) => {
+  // The tab of a new terminal appears at once and the server's record
+  // replaces it in place; a failure is shown there (terminal-pending.mjs).
+  const pendingClosed = useRef(new Set());
+  const createTerminal = async (path, kind, loginAccountId, retrying) => {
     setTerminalChoice(null);
     const codex = kind === "codex" || kind === "codex-login";
-    const result = await api(kind === "codex" && sessionCapabilities.sessions ? "/terminals?providers=" + SESSION_PROVIDERS : "/terminals", {
-      workspace: path, kind,
-      ...(loginAccountId && (codex ? { codex_account_id: loginAccountId } : { claude_account_id: loginAccountId })),
-    });
-    showTerminal(result);
+    const pending = !loginTerminalKind(kind) && (retrying || pendingTerminalTab(path, kind));
+    if (retrying) setTabs(list => markPendingTab(list, retrying.id, ""));
+    else if (pending) openTerminalTab(pending);
+    let result;
+    try {
+      result = await api(kind === "codex" && sessionCapabilities.sessions ? "/terminals?providers=" + SESSION_PROVIDERS : "/terminals", {
+        workspace: path, kind,
+        ...(loginAccountId && (codex ? { codex_account_id: loginAccountId } : { claude_account_id: loginAccountId })),
+      });
+    } catch (error) {
+      if (!pending) throw error;
+      pendingClosed.current.delete(pending.id);
+      setTabs(list => markPendingTab(list, pending.id, error.message));
+      return;
+    }
+    if (pending && pendingClosed.current.delete(pending.id)) {
+      // Closed while it was being created.
+      api("/terminals/" + result.id, undefined, "DELETE").catch(() => {});
+      return;
+    }
+    showTerminal(result, pending?.id);
     sessionsChanged();
     if (kind === "claude" && result.claude_account_id &&
         !claudeProfiles.accounts?.some((profile) => profile.id === result.claude_account_id)) {
@@ -533,15 +556,21 @@ function App() {
       codexProfiles.load();
     }
   };
-  const showTerminal = result => {
-    setTailnetLogin(null);
-    setManagementPage("");
+  const showTerminal = (result, placeholder) => {
     const tab = {
       ...result, id: "terminal:" + result.id, sessionId: result.id,
       terminalKind: result.kind, kind: "terminal",
     };
+    if (!placeholder) return openTerminalTab(tab);
+    // The user may have moved on meanwhile: only the placeholder changes.
+    setTabs(list => settlePendingTab(list, placeholder, tab));
+    setLayout(previous => renamePendingLayout(previous, placeholder, tab.id));
+  };
+  const openTerminalTab = tab => {
+    setTailnetLogin(null);
+    setManagementPage("");
     setTabs((list) => [...list.filter((t) => t.id !== tab.id && (!tab.cli_session_id || t.cli_session_id !== tab.cli_session_id)), tab]);
-    setSelectedProject(result.workspace);
+    setSelectedProject(tab.workspace);
     setDesktopOpen(false);
     setHome(false);
     setActive(tab.id);
@@ -659,7 +688,9 @@ function App() {
     // A live bound Codex tab archives on close; one whose Codex has quit only goes.
     if (tab.cli_session_id && !(isCodexTab(tab) && tab.closed)) return archiveSession({id:tab.cli_session_id, title:tab.title,
       ...(isCodexTab(tab) && { provider:"codex", owner:"desktop" })}, anchor, isCodexTab(tab));
-    if (tab.kind === "terminal") {
+    // Nothing runs yet; a terminal that still arrives is closed then.
+    if (tab.pending) { if (!tab.error) pendingClosed.current.add(tab.id); }
+    else if (tab.kind === "terminal") {
       if (
         !tab.closed &&
         !(await confirm({
@@ -874,8 +905,8 @@ function App() {
             const map = new Map(all.map((item) => [item.id, item]));
             return reuseItems(previous, [
               ...previous
-                .filter((item) => map.has(item.id))
-                .map((item) => map.get(item.id)),
+                .filter((item) => map.has(item.id) || item.pending)
+                .map((item) => map.get(item.id) || item),
               ...all.filter((item) => !previous.some((p) => p.id === item.id)),
             ]);
           });
@@ -883,16 +914,18 @@ function App() {
             setDesktopOpen(false);
             setHome(false);
           }
+          // A terminal still being created is not on the server yet.
+          const listed = all.some((item) => item.id === activeRef.current) || isPendingTerminal(activeRef.current);
           if (
             !activeRef.current ||
-            !all.some((item) => item.id === activeRef.current) ||
+            !listed ||
             (!browserDismissed.current && initialized.current &&
               b.active &&
               !browserIds.current.has(b.active))
           ) {
-            if (browserDismissed.current && !all.some(item => item.id === activeRef.current)) setHome(true);
+            if (browserDismissed.current && !listed) setHome(true);
             // Let split reconciliation promote the remaining pane on close.
-            if (!layoutRef.current.other || all.some(item => item.id === activeRef.current))
+            if (!layoutRef.current.other || listed)
               setActive(b.active || all[0]?.id || "");
           }
           browserIds.current = new Set(b.tabs.map((item) => item.id));
@@ -1334,7 +1367,7 @@ function App() {
             tab.kind === "terminal" && tab.workspace === current.workspace,
         )
       : dualBrowser ? browserTabs.filter(tab => current.id === rightId ? tab.id === rightId : tab.id !== rightId) : browserTabs;
-  const renameTab = (tab) =>
+  const renameTab = (tab) => !tab.pending &&
     setRename({ id: tab.id, title: tabName({ ...tab, incognito: false }, metadata, project) });
   const updateSharedMetadata = async (tab, changes) => {
     const updated = await api("/terminals/" + tab.sessionId + "/metadata", changes);
@@ -1343,6 +1376,7 @@ function App() {
     } : item));
   };
   const pinTab = (id) => {
+    if (isPendingTerminal(id)) return;
     const tab = tabs.find(tab => tab.id === id);
     if (tab?.cli_session_id) {
       void updateSharedMetadata(tab, {pinned:!metadata[id]?.pinned}).catch(error => notify(error.message));
@@ -1795,7 +1829,9 @@ function App() {
                     {visible && terminalHeader(tab)}
                     <div className="pane-body">
                       <Suspense fallback={null}>
-                      <TerminalView
+                      {tab.pending && <TerminalPending error={tab.error}
+                        onRetry={() => createTerminal(tab.workspace, tab.terminalKind, undefined, tab)} />}
+                      {!tab.pending && <TerminalView
                         session={terminalSession(tab)}
                         onLoginTab={({ id }) => showBrowserResult({ id, kind: "web", login: true, incognito: true, title: "账号授权" })}
                         onControls={(control) =>
@@ -1807,7 +1843,7 @@ function App() {
                         focused={active === tab.id}
                         onStatus={notify}
                         onAccountChanged={view => { if (view?.desktop_terminal_id && view.desktop_terminal_id !== tab.sessionId) void openSessionTerminal({id:tab.cli_session_id}); }}
-                      />
+                      />}
                       </Suspense>
                     </div>
                   </section>;
