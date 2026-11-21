@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +35,9 @@ func onEn0(context.Context) (string, error) { return "en0", nil }
 
 func TestSteadyNetworkRoundLeavesOperationLockFree(t *testing.T) {
 	arrived, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	finish := func() { releaseOnce.Do(func() { close(release) }) }
+	defer finish()
 	s := steadyNetworkServer(t, func(context.Context) (string, error) {
 		close(arrived)
 		<-release
@@ -54,7 +58,7 @@ func TestSteadyNetworkRoundLeavesOperationLockFree(t *testing.T) {
 		t.Fatal("network round held the operation lock while reading the interface")
 	}
 	s.op.Unlock()
-	close(release)
+	finish()
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):

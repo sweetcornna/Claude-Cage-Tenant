@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -62,6 +63,9 @@ func TestEnvironmentHealthProbeLeavesOperationLockFree(t *testing.T) {
 	s := readyLinuxServer(t)
 	arrived := make(chan struct{})
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	finish := func() { releaseOnce.Do(func() { close(release) }) }
+	defer finish()
 	installHealthGuest(t, s, &healthGuest{fail: func(_ int32, r *http.Request) error {
 		close(arrived)
 		select {
@@ -88,7 +92,7 @@ func TestEnvironmentHealthProbeLeavesOperationLockFree(t *testing.T) {
 		t.Fatal("health probe held the operation lock")
 	}
 	s.op.Unlock()
-	close(release)
+	finish()
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
