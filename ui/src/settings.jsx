@@ -717,7 +717,9 @@ export function SettingsPanel({
             </div>
           )}
         </div>
-        {(!["appearance", "browser", "account", "vault", "mobile", "archived-sessions", "project", "about"].includes(section) || changed) && (
+        {/* The save bar appears once there is something to save; the network
+            pages keep it because applying a proxy is a separate step. */}
+        {(["network", "region"].includes(section) || changed) && (
           <footer className="settings-footer">
             {" "}
             <>

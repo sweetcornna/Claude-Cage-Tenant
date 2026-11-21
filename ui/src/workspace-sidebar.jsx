@@ -19,7 +19,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { EnvironmentShield } from "./environment-shield";
-import logo from "./logo.png";
+import { BrandMark } from "./brand";
 import claudeLogo from "./claude-logo.svg";
 import { projectName } from "./workspace-state.mjs";
 import { WorkspaceTabs } from "./workspace-tabs";
@@ -107,9 +107,8 @@ export function WorkspaceSidebar({
     <aside className="workspace-sidebar" aria-label="项目与终端">
       <div className="sidebar-top">
         <span className="sidebar-brand">
-          <img className="brand-logo" src={logo} alt="" />
-          Super Cage
-                <GuestSystemIcon system={guestSystem} />
+          <BrandMark size={22} className="brand-logo" />
+          <span className="wordmark">Super Cage</span>
         </span>
         <button
           className="icon-button"
@@ -121,46 +120,53 @@ export function WorkspaceSidebar({
         </button>
       </div>
       <nav className="sidebar-navigation" aria-label="主导航">
-        <button
-          className={`sidebar-link ${home ? "selected" : ""}`}
-          onClick={onHome}
-        >
-          <Home size={17} />
-          工作台
-        </button>
-        <div className={`sidebar-browser-row ${!desktopOpen && !home && tabs.some((tab) => tab.id === active && tab.kind !== "terminal") ? "selected" : ""}`}>
+        {/* Groups: work surfaces · connections · accounts. Room for more rows in each. */}
+        <div className="sidebar-nav-group">
           <button
-            className="sidebar-link"
-            onClick={onBrowser}
-            disabled={!ready || busy || !browserAvailable}
-            aria-label="打开浏览器"
-            title="打开浏览器"
+            className={`sidebar-link ${home ? "selected" : ""}`}
+            onClick={onHome}
           >
-            <Globe2 size={17} />
-            浏览器
+            <Home size={17} />
+            工作台
           </button>
-          <button
-            className="icon-button sidebar-claude-shortcut"
-            onClick={onClaudeWeb}
-            disabled={!ready || busy || !browserAvailable}
-            aria-label="claude.ai"
-            title="打开 claude.ai"
-          >
-            <img src={claudeLogo} width="18" height="18" alt="" />
-          </button>
+          <div className={`sidebar-browser-row ${!desktopOpen && !home && tabs.some((tab) => tab.id === active && tab.kind !== "terminal") ? "selected" : ""}`}>
+            <button
+              className="sidebar-link"
+              onClick={onBrowser}
+              disabled={!ready || busy || !browserAvailable}
+              aria-label="打开浏览器"
+              title="打开浏览器"
+            >
+              <Globe2 size={17} />
+              浏览器
+            </button>
+            <button
+              className="icon-button sidebar-claude-shortcut"
+              onClick={onClaudeWeb}
+              disabled={!ready || busy || !browserAvailable}
+              aria-label="claude.ai"
+              title="打开 claude.ai"
+            >
+              <img src={claudeLogo} width="18" height="18" alt="" />
+            </button>
+          </div>
+          <button className={`sidebar-link ${desktopOpen ? "selected" : ""}`} onClick={onClaudeDesktop} disabled={!running || busy} title="安装或打开 Claude Desktop"><Monitor size={17} />Claude Desktop</button>
         </div>
-        <button className={`sidebar-link ${tailscaleOpen ? "selected" : ""}`} aria-current={tailscaleOpen ? "page" : undefined} onClick={onTailscale} aria-label="打开 Tailscale"><Network size={17} />Tailscale</button>
-        {getClientContext().virtual_machines && <button className="sidebar-link" aria-haspopup="dialog" onClick={() => setShowVirtualMachines(true)}><Monitor size={17} />虚拟机</button>}
-        {ssh && <button className="sidebar-link ssh-navigation" onClick={ssh.open} aria-label="SSH 主机"><Server size={17} />SSH</button>}
-        <button className={`sidebar-link ${desktopOpen ? "selected" : ""}`} onClick={onClaudeDesktop} disabled={!running || busy} title="安装或打开 Claude Desktop"><Monitor size={17} />Claude Desktop</button>
-        <button className={`sidebar-link ${claudeAccountsOpen ? "selected" : ""}`} onClick={onClaudeAccounts}
-          aria-current={claudeAccountsOpen ? "page" : undefined}>
-          <UsersRound size={17} />Claude 账号管理
-        </button>
-        {onCodexAccounts && <button className={`sidebar-link ${codexAccountsOpen ? "selected" : ""}`} onClick={onCodexAccounts}
-          aria-current={codexAccountsOpen ? "page" : undefined}>
-          <Bot size={17} />Codex 账号管理
-        </button>}
+        <div className="sidebar-nav-group">
+          <button className={`sidebar-link ${tailscaleOpen ? "selected" : ""}`} aria-current={tailscaleOpen ? "page" : undefined} onClick={onTailscale} aria-label="打开 Tailscale"><Network size={17} />Tailscale</button>
+          {getClientContext().virtual_machines && <button className="sidebar-link" aria-haspopup="dialog" onClick={() => setShowVirtualMachines(true)}><Monitor size={17} />虚拟机</button>}
+          {ssh && <button className="sidebar-link ssh-navigation" onClick={ssh.open} aria-label="SSH 主机"><Server size={17} />SSH</button>}
+        </div>
+        <div className="sidebar-nav-group">
+          <button className={`sidebar-link ${claudeAccountsOpen ? "selected" : ""}`} onClick={onClaudeAccounts}
+            aria-current={claudeAccountsOpen ? "page" : undefined}>
+            <UsersRound size={17} />Claude 账号管理
+          </button>
+          {onCodexAccounts && <button className={`sidebar-link ${codexAccountsOpen ? "selected" : ""}`} onClick={onCodexAccounts}
+            aria-current={codexAccountsOpen ? "page" : undefined}>
+            <Bot size={17} />Codex 账号管理
+          </button>}
+        </div>
       </nav>
       <div className="sidebar-scroll">
         <div className="sidebar-section-heading">
@@ -338,6 +344,7 @@ export function WorkspaceSidebar({
         <button className="sidebar-status" onClick={onSafety}>
           <i className={`status-dot ${network.mode}`} />
           <span>{healthy ? "环境运行正常" : runtimeLabel}</span>
+          <GuestSystemIcon system={guestSystem} />
           <EnvironmentShield size={17} healthy={healthy} />
         </button>
         <div className="sidebar-footer-actions">
