@@ -171,11 +171,12 @@ func (s *Server) streamDisplay(w http.ResponseWriter, r *http.Request, reader io
 				continue
 			}
 			viewer.setVisible(*control.Visible)
-			if hidden != nil {
+			if *control.Visible && hidden != nil {
 				hidden.Stop()
 				hidden = nil
 			}
-			if !*control.Visible {
+			// The grace runs from the first hide message, not from a repeat.
+			if !*control.Visible && hidden == nil {
 				hidden = time.AfterFunc(displayHeldGrace, func() {
 					_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(displayHeldCloseCode, "hidden-timeout"), time.Now().Add(time.Second))
 					closeStreams()

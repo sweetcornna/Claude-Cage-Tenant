@@ -210,6 +210,28 @@ func TestVNCReturningViewerShowsTheGuestAgainAndKeepsTheStream(t *testing.T) {
 	if got := receive(t, g.received, time.Second, "input after returning"); string(got) != "still here" {
 		t.Fatalf("input after returning: %q", got)
 	}
+	// A repeated hide message does not extend the grace period.
+	send("false")
+	receive(t, posts, 3*time.Second, "the second hide")
+	time.Sleep(900 * time.Millisecond)
+	send("false")
+	// The grace ends 1.5 s after the first hide, about 0.1 s from now. Had the
+	// repeat restarted it, the stream would live until about 2.9 s.
+	_ = ws.SetReadDeadline(time.Now().Add(1000 * time.Millisecond))
+	_, _, err := ws.ReadMessage()
+	var closed *websocket.CloseError
+	if !errors.As(err, &closed) || closed.Code != displayHeldCloseCode {
+		t.Fatalf("a repeated hide message kept the stream open past its grace: %v", err)
+	}
+}
+
+func TestVNCMalformedControlFramesAreIgnored(t *testing.T) {
+	newGuestVNC(t)
+	s := testServer(t)
+	server, posts := displayServer(t, s, okAnswer)
+	ws := dialDisplay(t, server, "binary", displayControlProtocol)
+	readBanner(t, ws)
+	receive(t, posts, 3*time.Second, "the show")
 	// Garbage control frames are ignored.
 	for _, junk := range []string{`{"type":"other"}`, `not json`, `{"type":"visibility"}`, `{"type":"visibility","visible":"no"}`} {
 		if err := ws.WriteMessage(websocket.TextMessage, []byte(junk)); err != nil {
