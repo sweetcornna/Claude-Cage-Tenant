@@ -83,13 +83,13 @@ func displayRetryDelay(n int) time.Duration {
 	return min(time.Duration(n)*time.Second, 5*time.Second)
 }
 
-const displayRetryLimit = 8
-
 // settle brings the guest in line with demand in the background, so a viewer
 // never waits for the guest and a failed change never refuses it. Calls
 // coalesce into one worker that applies the latest demand. A failed change is
-// reported once per streak and retried while some viewer still wants the
-// display shown; a failed hide is left to the idle timer, as before.
+// reported once per streak and retried, at most every five seconds, for as
+// long as some viewer still wants the display shown: a client that connects
+// while the guest is unavailable must not be left looking at a hidden window
+// when the guest returns. A failed hide is left to the idle timer, as before.
 func (d *displayViewDemand) settle(ctx context.Context, update func(bool) error, failed func(error)) {
 	d.mu.Lock()
 	d.again = true
@@ -115,7 +115,7 @@ func (d *displayViewDemand) settle(ctx context.Context, update func(bool) error,
 				failures++
 			}
 			d.mu.Lock()
-			retry := err != nil && d.viewers > 0 && failures < displayRetryLimit && ctx.Err() == nil
+			retry := err != nil && d.viewers > 0 && ctx.Err() == nil
 			if !retry && (!d.again || ctx.Err() != nil) {
 				d.settling = false
 				d.mu.Unlock()

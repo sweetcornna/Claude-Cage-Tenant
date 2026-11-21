@@ -327,9 +327,10 @@ sweep=
 if test -f "$modes" && grep -qx -- "$name" "$modes" && xrandr --output VNC-0 --mode "$name" 2>/dev/null; then
   :
 else
-  # An earlier run may have created the mode without adding it.
+  # The mode may exist already, created by an earlier run or an earlier
+  # version and perhaps on the output too. Only the switch has to succeed.
   xrandr --newmode "$name" %.3f %d %d %d %d %d %d %d %d +HSync -VSync 2>/dev/null || true
-  xrandr --addmode VNC-0 "$name"
+  xrandr --addmode VNC-0 "$name" 2>/dev/null || true
   xrandr --output VNC-0 --mode "$name"
 fi
 # Without a list, modes of an earlier version may be left over.

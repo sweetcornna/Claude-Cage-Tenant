@@ -762,20 +762,23 @@ async function selectDisplayMode(name, width, height) {
     }
   }
 }
-// Older modes go once the size has settled, never in front of a resize.
+// Older modes go once the size has settled, one per step, and only while no
+// resize is waiting: a resize is never queued behind more than one removal.
+let displayWaiting = 0;
+function removeOldDisplayMode() {
+  void displayStep(async () => {
+    const old = (displayModes ?? []).slice(0, -keptDisplayModes).find(mode => mode !== displaySize);
+    if (!old) return false;
+    await runXrandr("--delmode", "VNC-0", old).catch(() => {});
+    await runXrandr("--rmmode", old).catch(() => {});
+    displayModes = displayModes.filter(mode => mode !== old);
+    return true;
+  }).then(more => { if (more && !displayWaiting) removeOldDisplayMode(); }, () => {});
+}
 function sweepDisplayModes() {
   clearTimeout(displaySweep);
   if (!displayModes || displayModes.length <= keptDisplayModes) return;
-  displaySweep = setTimeout(() => {
-    void displayStep(async () => {
-      for (const old of (displayModes ?? []).slice(0, -keptDisplayModes)) {
-        if (old === displaySize) continue;
-        await runXrandr("--delmode", "VNC-0", old).catch(() => {});
-        await runXrandr("--rmmode", old).catch(() => {});
-        displayModes = displayModes.filter(mode => mode !== old);
-      }
-    }).catch(() => {});
-  }, displayModes.length > 32 ? 0 : 2000);
+  displaySweep = setTimeout(removeOldDisplayMode, displayModes.length > 32 ? 0 : 2000);
   displaySweep.unref?.();
 }
 async function resizeDisplay(width, height, density) {
@@ -793,15 +796,20 @@ async function resizeDisplay(width, height, density) {
     throw new Error("Invalid display size");
   const result = { ok: true, ...(displaySettings.available ? { scale: displaySettings.set(scale) } : {}) };
   const name = `cage-${width}x${height}`;
-  await displayStep(async () => {
-    if (displaySize === name) {
-      // A viewer attaching at an unchanged size still restores the full rate.
-      await runXrandr("--output", "VNC-0", "--mode", name).catch(() => {});
-      return;
-    }
-    await selectDisplayMode(name, width, height);
-    displaySize = name;
-  });
+  displayWaiting++;
+  try {
+    await displayStep(async () => {
+      if (displaySize === name) {
+        // A viewer attaching at an unchanged size still restores the full rate.
+        await runXrandr("--output", "VNC-0", "--mode", name).catch(() => {});
+        return;
+      }
+      await selectDisplayMode(name, width, height);
+      displaySize = name;
+    });
+  } finally {
+    displayWaiting--;
+  }
   sweepDisplayModes();
   return result;
 }

@@ -13,8 +13,8 @@ import (
 
 // A stand-in for xrandr with the server's state in files: the modes that
 // exist, the modes added to VNC-0 and the mode in use. Every call is logged.
-// It refuses what the real tool refuses: an existing name, an unknown mode and
-// removing the mode in use.
+// It refuses what the real tool refuses: an existing name, an unknown mode, a
+// mode that is on the output already, and removing the mode in use.
 const fakeRandR = `#!/bin/sh
 echo "$*" >> "$CAGE_RESIZE_FIXTURE/calls"
 state="$CAGE_RESIZE_FIXTURE/randr"
@@ -26,7 +26,7 @@ case "$1" in
   while read -r mode; do echo "   $mode     60.01*+"; done < "$state/output"
   echo "   1024x768     60.00" ;;
 --newmode) if grep -qx -- "$2" "$state/server"; then echo "BadName" >&2; exit 1; fi; echo "$2" >> "$state/server" ;;
---addmode) grep -qx -- "$3" "$state/server" || exit 1; echo "$3" >> "$state/output" ;;
+--addmode) grep -qx -- "$3" "$state/server" || exit 1; if grep -qx -- "$3" "$state/output"; then echo "BadMatch" >&2; exit 1; fi; echo "$3" >> "$state/output" ;;
 --output) grep -qx -- "$4" "$state/output" || { echo "xrandr: cannot find mode $4" >&2; exit 1; }; echo "$4" > "$state/current" ;;
 --delmode) if [ "$(cat "$state/current")" = "$3" ]; then exit 1; fi; grep -vx -- "$3" "$state/output" > "$state/output.new"; mv "$state/output.new" "$state/output" ;;
 --rmmode) if grep -qx -- "$2" "$state/output"; then exit 1; fi; grep -vx -- "$2" "$state/server" > "$state/server.new"; mv "$state/server.new" "$state/server" ;;
@@ -191,6 +191,28 @@ func TestDesktopResizeScriptRemovesOldModesAfterTheSwitch(t *testing.T) {
 	}
 	if f.current() != "cage-600x400" {
 		t.Fatalf("mode in use: %q", f.current())
+	}
+}
+
+// A guest whose Claude Desktop session still sits at a mode an earlier version
+// made has the mode on the output and no list. The first resize there must
+// not depend on how X treats adding a mode twice.
+func TestDesktopResizeScriptAcceptsAModeThatIsAlreadyOnTheOutput(t *testing.T) {
+	f := newDesktopResizeFixture(t)
+	f.write(filepath.Join(f.root, "randr", "server"), "cage-1000x800\ncage-640x480\n", 0o600)
+	f.write(filepath.Join(f.root, "randr", "output"), "cage-1000x800\ncage-640x480\n", 0o600)
+	f.write(filepath.Join(f.root, "randr", "current"), "cage-640x480\n", 0o600)
+	f.resize(1000, 800)
+	if f.current() != "cage-1000x800" {
+		t.Fatalf("the mode already on the output was not used: %q", f.current())
+	}
+	// The sweep for modes of an earlier version removes the one that is not in use.
+	deadline := time.Now().Add(5 * time.Second)
+	for strings.Contains(strings.Join(f.serverModes(), " "), "cage-640x480") && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := f.serverModes(); strings.Join(got, " ") != "cage-1000x800" {
+		t.Fatalf("modes after the sweep: %q", got)
 	}
 }
 

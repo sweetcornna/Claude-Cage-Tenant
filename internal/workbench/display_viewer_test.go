@@ -92,9 +92,31 @@ func TestJoinedViewerStopsRetryingWhenItLeaves(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	settled := attempts.Load()
 	time.Sleep(200 * time.Millisecond)
-	if attempts.Load() != settled || settled > displayRetryLimit {
+	if attempts.Load() != settled {
 		t.Fatalf("kept retrying for a viewer that left: %d attempts, %d after the wait", settled, attempts.Load())
 	}
+}
+
+// The guest can be away for a long time: a viewer that connected meanwhile is
+// shown the window as soon as the guest answers, with no action of its own.
+func TestJoinedViewerRecoversAfterALongOutage(t *testing.T) {
+	var demand displayViewDemand
+	shortDisplayRetry(&demand)
+	var attempts atomic.Int32
+	shown := make(chan struct{})
+	update := func(show bool) error {
+		if !show {
+			return nil
+		}
+		if attempts.Add(1) <= 40 {
+			return errors.New("guest unavailable")
+		}
+		close(shown)
+		return nil
+	}
+	viewer := demand.join(t.Context(), update, nil)
+	defer viewer.close()
+	receive(t, shown, 5*time.Second, "the show after 40 failed attempts")
 }
 
 // Ordering of guest changes is the one thing acquire promised that join keeps:

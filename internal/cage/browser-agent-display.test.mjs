@@ -78,10 +78,16 @@ function resizer(options) {
     const pending = timers.filter(timer => !timer.cleared);
     assert.equal(pending.length, 1, "exactly one removal should be waiting");
     pending[0].cleared = true;
-    await pending[0].fn();
+    pending[0].fn();
     await quiet(x.calls);
   };
-  return { ...x, resizeDisplay, timers, sweep, take: () => x.calls.splice(0) };
+  const startSweep = () => {
+    const pending = timers.filter(timer => !timer.cleared);
+    assert.equal(pending.length, 1, "exactly one removal should be waiting");
+    pending[0].cleared = true;
+    pending[0].fn();
+  };
+  return { ...x, resizeDisplay, timers, sweep, startSweep, take: () => x.calls.splice(0) };
 }
 
 const size = (w, h) => [w, h];
@@ -156,6 +162,30 @@ test("old modes go after the sizes settle, newest four stay, the mode in use nev
   await r.sweep();
   assert.deepEqual([...r.state.output], ["cage-700x500", "cage-600x490", "cage-500x485", "cage-400x482"]);
   assert.equal(r.state.current, "cage-400x482");
+});
+
+test("a resize that arrives during the removal of old modes goes first and pauses it", async () => {
+  const r = resizer();
+  for (const [w, h] of [[1000, 800], [900, 700], [800, 600], [700, 500], [600, 490], [500, 485], [400, 482]]) await r.resizeDisplay(w, h);
+  r.take();
+  // Three old modes wait. The first removal starts...
+  r.startSweep();
+  await tick();
+  // ...and a resize arrives before it is done.
+  const resized = r.resizeDisplay(450, 483);
+  await resized;
+  await quiet(r.calls);
+  const calls = r.take();
+  const first = calls.indexOf("--delmode VNC-0 cage-1000x800");
+  const second = calls.findIndex(call => call.startsWith("--delmode") && call !== "--delmode VNC-0 cage-1000x800");
+  const switched = calls.indexOf("--output VNC-0 --mode cage-450x483");
+  assert.ok(first === 0 && switched > first, "the resize runs once the removal in flight is done: " + JSON.stringify(calls));
+  assert.equal(calls[1], "--rmmode cage-1000x800", "a removal is never split: " + JSON.stringify(calls));
+  assert.equal(second, -1, "no further removal ran in front of or after the resize: " + JSON.stringify(calls));
+  // The removal resumes once the sizes have settled.
+  await r.sweep();
+  assert.equal(r.state.output.size, 4);
+  assert.equal(r.state.current, "cage-450x483");
 });
 
 test("modes left by an earlier agent count as old ones", async () => {
