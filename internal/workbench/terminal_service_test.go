@@ -71,12 +71,16 @@ func readTerminalUntil(t *testing.T, sub *terminalSubscription, needle string) s
 	sub.History = nil
 	deadline := time.After(10 * time.Second)
 	for !strings.Contains(text, needle) {
+		batch := sub.next(1 << 20)
+		if len(batch.Data) > 0 {
+			text += string(batch.Data)
+			continue
+		}
+		if batch.Done {
+			t.Fatalf("terminal ended before %q: %q", needle, text)
+		}
 		select {
-		case chunk, ok := <-sub.Output:
-			if !ok {
-				t.Fatalf("terminal ended before %q: %q", needle, text)
-			}
-			text += string(chunk)
+		case <-sub.Wake():
 		case <-deadline:
 			t.Fatalf("terminal did not produce %q: %q", needle, text)
 		}
@@ -255,7 +259,7 @@ func TestTerminalEOFReapsProcessBeforeSessionCompletes(t *testing.T) {
 	}
 	close(file.waitRelease)
 	awaitTerminalSignal(t, closed)
-	if _, ok := <-sub.Output; ok {
+	if batch := sub.next(1 << 20); !batch.Done || !batch.Ended {
 		t.Fatal("session completion did not close subscription")
 	}
 }
@@ -264,21 +268,28 @@ func TestTerminalSlowSubscriberDoesNotBlockOutput(t *testing.T) {
 	session, file := newControlledSession()
 	t.Cleanup(func() { close(file.waitRelease); session.close() })
 	slow := session.subscribe()
+	defer slow.Close()
 	fast := session.subscribe()
 	defer fast.Close()
-	for i := 0; i < 66; i++ {
-		chunk := fmt.Sprintf("output-%02d\n", i)
+	var want strings.Builder
+	// Far more separate PTY reads than the old 64-chunk viewer queue held.
+	for i := 0; i < 2000; i++ {
+		chunk := fmt.Sprintf("output-%04d\n", i)
+		want.WriteString(chunk)
 		if _, err := io.WriteString(file.writer, chunk); err != nil {
 			t.Fatal(err)
 		}
 		readTerminalUntil(t, fast, chunk)
 	}
-	count := 0
-	for range slow.Output {
-		count++
+	// The slow viewer kept every chunk, in order, and is still attached.
+	if batch := slow.next(1 << 20); string(batch.Data) != want.String() || batch.Offset != 0 || batch.Resync || batch.Done {
+		t.Fatalf("slow subscriber lost output: offset=%d resync=%t done=%t bytes=%d", batch.Offset, batch.Resync, batch.Done, len(batch.Data))
 	}
-	if count != 64 {
-		t.Fatalf("slow subscriber retained %d chunks", count)
+	session.mu.Lock()
+	attached := session.clients[slow.viewer]
+	session.mu.Unlock()
+	if !attached {
+		t.Fatal("slow subscriber was detached")
 	}
 	fast.Close()
 	if session.summary()["closed"].(bool) {
@@ -286,7 +297,7 @@ func TestTerminalSlowSubscriberDoesNotBlockOutput(t *testing.T) {
 	}
 	reconnected := session.subscribe()
 	defer reconnected.Close()
-	if !strings.Contains(string(reconnected.History), "output-65") {
+	if !strings.Contains(string(reconnected.History), "output-1999") {
 		t.Fatal("slow client prevented recording terminal history")
 	}
 }
