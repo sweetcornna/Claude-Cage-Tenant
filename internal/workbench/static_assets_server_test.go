@@ -1,9 +1,11 @@
 package workbench
 
 import (
+	"bytes"
 	"io/fs"
 	"net/http/httptest"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -61,6 +63,42 @@ func TestWorkbenchServesEntryPageRevalidatedAndAssetsImmutable(t *testing.T) {
 		if header.Get("X-Content-Type-Options") != "nosniff" || header.Get("Referrer-Policy") != "no-referrer" || header.Get("X-Frame-Options") != "DENY" || !strings.Contains(header.Get("Content-Security-Policy"), "default-src 'self'") {
 			t.Fatalf("security headers lost: %v", header)
 		}
+	}
+}
+
+func TestWorkbenchServesTheEmbeddedBuildCompressed(t *testing.T) {
+	s := testServer(t)
+	script := embeddedEntryAsset(t)
+	web, _ := fs.Sub(assets, "web")
+	identity, err := fs.ReadFile(web, strings.TrimPrefix(script, "/"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz := staticRequest(s, "GET", script, map[string]string{"Accept-Encoding": "gzip"})
+	if gz.Header().Get("Content-Encoding") != "gzip" || gz.Header().Get("Vary") != "Accept-Encoding" || gz.Header().Get("Content-Length") != strconv.Itoa(gz.Body.Len()) {
+		t.Fatalf("gzip: encoding=%q vary=%q length=%q", gz.Header().Get("Content-Encoding"), gz.Header().Get("Vary"), gz.Header().Get("Content-Length"))
+	}
+	if body := gunzipBytes(t, gz.Body.Bytes()); !bytes.Equal(body, identity) {
+		t.Fatal("gzip body differs from the embedded file")
+	}
+	// Brotli is served when the build carries a companion, else the client
+	// falls back to gzip: both are valid for a build made without the step.
+	br := staticRequest(s, "GET", script, map[string]string{"Accept-Encoding": "br, gzip"})
+	if companion, err := fs.ReadFile(web, strings.TrimPrefix(script, "/")+".br"); err == nil {
+		if br.Header().Get("Content-Encoding") != "br" || !bytes.Equal(br.Body.Bytes(), companion) {
+			t.Fatalf("brotli companion not served: encoding=%q", br.Header().Get("Content-Encoding"))
+		}
+	} else if br.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("no brotli companion, encoding=%q", br.Header().Get("Content-Encoding"))
+	}
+	if plain := staticRequest(s, "GET", script, nil); plain.Header().Get("Content-Encoding") != "" || !bytes.Equal(plain.Body.Bytes(), identity) {
+		t.Fatal("a client that sends no Accept-Encoding must get the file as it is")
+	}
+	if ranged := staticRequest(s, "GET", script, map[string]string{"Accept-Encoding": "br, gzip", "Range": "bytes=0-15"}); ranged.Code != 206 || !bytes.Equal(ranged.Body.Bytes(), identity[:16]) {
+		t.Fatalf("range: %d", ranged.Code)
+	}
+	if head := staticRequest(s, "HEAD", script, map[string]string{"Accept-Encoding": "gzip"}); head.Code != 200 || head.Body.Len() != 0 || head.Header().Get("Content-Length") != gz.Header().Get("Content-Length") {
+		t.Fatalf("HEAD: %d length=%q", head.Code, head.Header().Get("Content-Length"))
 	}
 }
 
