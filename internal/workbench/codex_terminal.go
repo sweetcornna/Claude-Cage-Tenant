@@ -94,6 +94,9 @@ var (
 	errCodexOtherTerminal = errors.New("这段会话已在另一个电脑终端中打开。")
 	errCodexOtherProcess  = errors.New("这段会话正在其他 Codex 进程中打开，请先退出该进程后再继续。")
 	errCodexCommand       = errors.New("Codex 启动命令不是 codex，无法以会话方式打开。请在设置中恢复为 codex 后重试。")
+	// The phone may watch, type into and stop a desktop Codex session, but
+	// closing its terminal is the desktop's.
+	errCodexDesktopTerminal = errors.New("这段会话正在电脑的 Codex 终端中打开，请在电脑上关闭或归档。")
 )
 
 // createCodexSessionLocked opens a Codex session in a terminal bound to its

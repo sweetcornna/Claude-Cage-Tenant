@@ -807,6 +807,102 @@ func TestCodexStopReachesTheTurnsOwner(t *testing.T) {
 	}
 }
 
+func boundCodexTerminal(t *testing.T, s *Server, project, id string) *terminalSession {
+	t.Helper()
+	terminal, err := s.terminals.startCodexSession(terminalChildCommand("echo"), project, "codex", codexSelection{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal.mu.Lock()
+	terminal.sharedID = id
+	terminal.mu.Unlock()
+	return terminal
+}
+
+// Archiving a Codex session closes its desktop terminal and stops a phone
+// turn; the phone cannot close the desktop's terminal.
+func TestCodexArchiveClosesTheTerminalAndStopsThePhoneTurn(t *testing.T) {
+	s, project, guest := newCodexFixture(t)
+	t.Cleanup(s.terminals.close)
+	desk := listedCodexSession(t, s, guest, project, "电脑上")
+	terminal := boundCodexTerminal(t, s, project, desk.ID)
+	for _, path := range []string{"/api/mobile/cli/sessions/" + desk.ID + "/archive", "/api/mobile/cli/sessions/" + desk.ID + "/delete"} {
+		if w := request(s, "POST", path, s.origin, "{}", true); w.Code != 409 || !strings.Contains(w.Body.String(), "请在电脑上关闭") {
+			t.Fatal("phone archive of the desktop's session", path, w.Code, w.Body.String())
+		}
+	}
+	if w := request(s, "POST", "/api/mobile/terminals/"+terminal.id+"/close", s.origin, "{}", true); w.Code != 409 {
+		t.Fatal("phone close of the desktop's terminal", w.Code, w.Body.String())
+	}
+	if s.terminals.boundCodex(desk.ID) == nil {
+		t.Fatal("the phone closed the terminal")
+	}
+	// Closing the live tab on the desktop archives, as for Claude.
+	if err := s.closeTerminalID(terminal.id); err != nil {
+		t.Fatal(err)
+	}
+	if record, _ := s.mobileCLI.record(s.profile, desk.ID); !record.Archived || s.terminals.get(terminal.id) != nil {
+		t.Fatal("closing the live tab did not archive", record.Archived)
+	}
+	if stops := guest.calls("stop"); len(stops) != 0 {
+		t.Fatal("a desktop-owned archive stopped a phone turn", stops)
+	}
+	// What is left of an ended bound terminal only goes away.
+	ended := listedCodexSession(t, s, guest, project, "已退出")
+	gone := boundCodexTerminal(t, s, project, ended.ID)
+	view := gone.subscribe()
+	readTerminalUntil(t, view, "terminal-ready")
+	view.Close()
+	if err := gone.enqueueInput(context.Background(), terminalInputLine("exit")); err != nil {
+		t.Fatal(err)
+	}
+	awaitTerminalSignal(t, gone.done)
+	if err := s.closeTerminalID(gone.id); err != nil {
+		t.Fatal(err)
+	}
+	if record, _ := s.mobileCLI.record(s.profile, ended.ID); record.Archived || s.terminals.get(gone.id) != nil {
+		t.Fatal("closing an ended tab archived", record.Archived)
+	}
+	// A phone turn is stopped by the archive.
+	phone := listedCodexSession(t, s, guest, project, "手机上")
+	record, _ := s.mobileCLI.record(s.profile, phone.ID)
+	if err := s.codexConnection(record); err != nil {
+		t.Fatal(err)
+	}
+	guest.reply("discover", []map[string]any{{"thread_id": record.CLIID, "account": "default", "connection": record.Connection, "workspace": guestPath(project), "title": "手机上", "updated_at": 1763600000.0, "owner": "phone", "running": true, "active": true}})
+	if sessions, _ := codexSessions(t, s); !slices.ContainsFunc(sessions, func(row mobileSummary) bool { return row.ID == phone.ID && row.Owner == "phone" }) {
+		t.Fatal("phone turn not listed", sessions)
+	}
+	guest.reply("stop", map[string]any{"ok": true})
+	if w := request(s, "POST", "/api/mobile/cli/sessions/"+phone.ID+"/archive", s.origin, "{}", true); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if stops := guest.calls("stop"); len(stops) != 1 || stops[0]["connection"] != record.Connection || stops[0]["reason"] != "archive" || stops[0]["request_id"] != nil {
+		t.Fatal("archive stop", stops)
+	}
+	// Purge then goes to the guest, which refuses while anything owns the thread.
+	guest.reply("purge", map[string]any{"error": "这段会话正在电脑的 Codex 终端中打开，请先关闭该终端再删除"})
+	if w := request(s, "POST", "/api/cli/sessions/"+phone.ID+"/purge", s.origin, "{\"confirm\":true}", true); w.Code != 400 || !strings.Contains(w.Body.String(), "请先关闭该终端") {
+		t.Fatal("purge while owned", w.Code, w.Body.String())
+	}
+	if record, _ := s.mobileCLI.record(s.profile, phone.ID); !record.Deleting || record.Purged {
+		t.Fatal("a refused purge lost its marker", record)
+	}
+	guest.reply("purge", map[string]any{"ok": true})
+	if w := request(s, "POST", "/api/cli/sessions/"+phone.ID+"/purge", s.origin, "{\"confirm\":true}", true); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if purges := guest.calls("purge"); len(purges) != 2 || purges[1]["thread"] != record.CLIID || purges[1]["connection"] != record.Connection {
+		t.Fatal("purge", purges)
+	}
+	if tomb, _ := s.mobileCLI.record(s.profile, phone.ID); !tomb.Purged || tomb.CLIID != record.CLIID {
+		t.Fatal("tombstone", tomb)
+	}
+	if w := request(s, "POST", "/api/cli/sessions/"+phone.ID+"/purge", s.origin, "{}", true); w.Code != 400 || !strings.Contains(w.Body.String(), "原始历史") {
+		t.Fatal("confirmation copy", w.Code, w.Body.String())
+	}
+}
+
 type httpResponse struct {
 	code int
 	body string

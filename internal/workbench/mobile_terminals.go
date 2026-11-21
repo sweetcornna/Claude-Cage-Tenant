@@ -221,6 +221,13 @@ func (s *Server) mobileCloseTerminal(w http.ResponseWriter, r *http.Request) {
 	if !s.mobileAllowed(w, r) {
 		return
 	}
+	session.mu.Lock()
+	bound := session.kind == "codex" && session.sharedID != "" && !session.closed
+	session.mu.Unlock()
+	if bound {
+		http.Error(w, errCodexDesktopTerminal.Error(), http.StatusConflict)
+		return
+	}
 	if err := s.closeTerminalID(session.id); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
