@@ -242,8 +242,9 @@
   outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
-.settings-page .settings-content .archive-toolbar .archive-search input {
+.settings-page .settings-content.settings-subpage .archive-toolbar .archive-search input[type="search"] {
   height: calc(var(--h-control) - 2px);
+  padding: 0;
   font-size: var(--fs-body);
 }
 .settings-page .settings-content .archive-toolbar .inline-select-trigger {
@@ -470,7 +471,7 @@
   font-size: var(--fs-body);
 }
 .settings-subpage .remote-pair-privacy {
-  margin: 12px 0 0;
+  margin: 14px 0 0;
   font-size: var(--fs-caption);
 }
 .settings-subpage .remote-pair-card [role="status"],
