@@ -449,3 +449,62 @@ func TestClaudeScienceStart(t *testing.T) {
 		}
 	})
 }
+
+func TestClaudeScienceConfigKeepsUserSettings(t *testing.T) {
+	if exec.Command("python3", "-c", "import tomllib").Run() != nil {
+		t.Skip("python3 with tomllib unavailable")
+	}
+	for name, tc := range map[string]struct{ before, want string }{
+		"fresh": {"", `{"disable_telemetry": true, "update": {"auto_update": false}}`},
+		"user-keys": {
+			"# mine\ndata_dir = \"/data/science\"\ndisable_telemetry = false\n\n[update]\nrelease_channel = \"stable\"\nauto_update = true\n\n[sandbox.network]\nenabled = true\n",
+			`{"data_dir": "/data/science", "disable_telemetry": true, "update": {"release_channel": "stable", "auto_update": false}, "sandbox": {"network": {"enabled": true}}}`,
+		},
+		"tables-only": {
+			"[network]\nproxy = \"http://proxy.example:8080\"\n[update.extra]\nx = 1\n",
+			`{"disable_telemetry": true, "network": {"proxy": "http://proxy.example:8080"}, "update": {"extra": {"x": 1}, "auto_update": false}}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			config := filepath.Join(home, ".claude-science", "config.toml")
+			if tc.before != "" {
+				if err := os.MkdirAll(filepath.Dir(config), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(config, []byte(tc.before), 0640); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// An already installed pinned build: only the configuration runs.
+			first := runScienceInstall(t, home, scienceInstallCase{payload: sciencePayload})
+			r := runScienceInstall(t, home, scienceInstallCase{payload: sciencePayload})
+			if first.err != nil || r.err != nil {
+				t.Fatalf("%v %v %s", first.err, r.err, r.out)
+			}
+			out, err := exec.Command("python3", "-c", "import json, sys, tomllib\nprint(json.dumps(tomllib.load(open(sys.argv[1], 'rb')), sort_keys=True))", config).CombinedOutput()
+			if err != nil {
+				data, _ := os.ReadFile(config)
+				t.Fatalf("config no longer parses: %v %s\n%s", err, out, data)
+			}
+			var got, want any
+			if json.Unmarshal(out, &got) != nil || json.Unmarshal([]byte(tc.want), &want) != nil {
+				t.Fatal("decode")
+			}
+			gotJSON, _ := json.Marshal(got)
+			wantJSON, _ := json.Marshal(want)
+			if string(gotJSON) != string(wantJSON) {
+				t.Fatalf("config:\n got %s\nwant %s", gotJSON, wantJSON)
+			}
+			info, _ := os.Stat(config)
+			if wantMode := os.FileMode(0600); tc.before != "" {
+				wantMode = 0640
+				if info.Mode().Perm() != wantMode {
+					t.Fatalf("mode %v", info.Mode().Perm())
+				}
+			} else if info.Mode().Perm() != wantMode {
+				t.Fatalf("mode %v", info.Mode().Perm())
+			}
+		})
+	}
+}

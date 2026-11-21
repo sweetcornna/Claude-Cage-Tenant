@@ -3,7 +3,7 @@ set -euo pipefail
 # Runs as the guest user after ToolInstallPrelude, which defines the pins and
 # cage_download_tool. Each refusal comes before the download, and all but the
 # bubblewrap check before any change. The subshell lets an up-to-date install
-# return early; provisioning follows it.
+# return early; configuration and provisioning follow it.
 cage_install_claude_science() (
   set -euo pipefail
   machine="$(uname -m)"
@@ -48,7 +48,7 @@ cage_install_claude_science() (
   # The first start sets up Python and R environments of about 10 GB in the
   # data directory; an update only needs room for the download and its copy.
   required_mb=11264
-  if [ -d "$HOME/.claude-science" ]; then required_mb=1024; fi
+  if [ -d "$HOME/.claude-science/conda" ]; then required_mb=1024; fi
   free_mb="$(df -Pk "$HOME" | awk 'NR == 2 { print int($4 / 1024) }')"
   if ! [ "${free_mb:-0}" -ge "$required_mb" ] 2>/dev/null; then
     printf '客机磁盘空间不足：安装 Claude Science 需要至少 %s MB 可用空间（首次启动还会准备约 10 GB 的 Python 与 R 环境），当前只有 %s MB。请清理客机中的文件或扩大环境磁盘后重试。\n' "$required_mb" "${free_mb:-0}" >&2
@@ -104,4 +104,53 @@ cage_install_claude_science() (
   rm -rf "$cache"
   printf 'Claude Science %s 已安装。\n' "$wanted"
 )
+# Documented device settings: no telemetry and no background update. Super
+# Cage, not the vendor updater, decides the version. Other keys are kept.
+cage_configure_claude_science() {
+  mkdir -p "$HOME/.claude-science"
+  python3 - "$HOME/.claude-science/config.toml" <<'CAGE_SCIENCE_CONFIG'
+import os, re, sys, tempfile
+from pathlib import Path
+
+path = Path(sys.argv[1])
+lines = path.read_text(encoding='utf-8').splitlines() if path.exists() else []
+header = re.compile(r'^\s*\[')
+def setting(name):
+    return re.compile(r'^\s*' + name + r'\s*=')
+
+first = next((i for i, line in enumerate(lines) if header.match(line)), len(lines))
+top, rest = lines[:first], lines[first:]
+found = [i for i, line in enumerate(top) if setting('disable_telemetry').match(line)]
+for i in found:
+    top[i] = 'disable_telemetry = true'
+if not found:
+    while top and not top[-1].strip():
+        top.pop()
+    top.append('disable_telemetry = true')
+    if rest:
+        top.append('')
+
+update = next((i for i, line in enumerate(rest) if re.match(r'^\s*\[\s*update\s*\]\s*(#.*)?$', line)), None)
+if update is None:
+    while rest and not rest[-1].strip():
+        rest.pop()
+    rest += ([''] if rest or top else []) + ['[update]', 'auto_update = false']
+else:
+    end = next((i for i in range(update + 1, len(rest)) if header.match(rest[i])), len(rest))
+    found = [i for i in range(update + 1, end) if setting('auto_update').match(rest[i])]
+    for i in found:
+        rest[i] = 'auto_update = false'
+    if not found:
+        rest.insert(update + 1, 'auto_update = false')
+
+text = '\n'.join(top + rest) + '\n'
+mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
+fd, name = tempfile.mkstemp(prefix='.config-', dir=path.parent)
+with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+    handle.write(text)
+os.chmod(name, mode)
+os.replace(name, path)
+CAGE_SCIENCE_CONFIG
+}
 cage_install_claude_science
+cage_configure_claude_science
