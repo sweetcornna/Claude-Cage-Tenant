@@ -10,8 +10,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -412,6 +414,105 @@ func TestCodexOwnerStatesKeepTheTerminalUnavailable(t *testing.T) {
 	}
 	if _, ok := plain.summary()["cli_session_provider"]; ok {
 		t.Fatal("a plain Codex terminal claims a session")
+	}
+}
+
+func desktopCodexList(t *testing.T, s *Server, query string) (sessionListAnswer, int) {
+	t.Helper()
+	w := request(s, "GET", "/api/cli/sessions"+query, "", "", true)
+	var answer sessionListAnswer
+	if w.Code == 200 {
+		if err := json.Unmarshal(w.Body.Bytes(), &answer); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return answer, w.Code
+}
+
+// The desktop lists Codex rows only when it asks for them; without the
+// parameter the answer and the guest work are what they were.
+func TestCodexDesktopListingIsOptIn(t *testing.T) {
+	s, project, guest := newCodexFixture(t)
+	t.Cleanup(s.terminals.close)
+	root := guestPath(project)
+	thread := uuid.NewString()
+	guest.reply("discover", []map[string]any{{"thread_id": thread, "account": "default", "workspace": root, "title": "桌面可见", "updated_at": 1763600000.0, "owner": ""}})
+	plain := request(s, "GET", "/api/cli/sessions", "", "", true)
+	if plain.Code != 200 || strings.Contains(plain.Body.String(), "capabilities") || strings.Contains(plain.Body.String(), codexProvider) {
+		t.Fatal("desktop listing without providers", plain.Code, plain.Body.String())
+	}
+	if calls := guest.calls("discover"); len(calls) != 0 {
+		t.Fatal("a desktop listing without providers ran Codex discovery", calls)
+	}
+	if again := request(s, "GET", "/api/cli/sessions", "", "", true); again.Body.String() != plain.Body.String() {
+		t.Fatal("the plain answer changed", again.Body.String())
+	}
+	for _, bad := range []string{"?providers=", "?providers=claude,gemini", "?providers=claude&providers=codex"} {
+		if _, code := desktopCodexList(t, s, bad); code != 400 {
+			t.Fatal("accepted", bad, code)
+		}
+	}
+	answer, code := desktopCodexList(t, s, "?providers=claude,codex")
+	if code != 200 || len(answer.Sessions) != 1 || answer.Sessions[0].Provider != codexProvider || answer.Sessions[0].Title != "桌面可见" ||
+		answer.Capabilities == nil || !answer.Capabilities.CodexSessions || answer.Capabilities.CodexCLI != nil {
+		t.Fatalf("opted-in listing: %d %+v", code, answer)
+	}
+	if calls := guest.calls("discover"); len(calls) != 1 {
+		t.Fatal("one Codex discovery per listing", calls)
+	}
+	// The phone keeps listing both, without the desktop's capabilities.
+	if w := request(s, "GET", "/api/mobile/cli/sessions", "", "", true); w.Code != 200 || strings.Contains(w.Body.String(), "capabilities") || !strings.Contains(w.Body.String(), thread[:0]+answer.Sessions[0].ID) {
+		t.Fatal("phone listing", w.Code, w.Body.String())
+	}
+	// A custom Codex command keeps plain terminals.
+	s.preferences.CodexTerminalCommand = "codex --search"
+	if answer, _ = desktopCodexList(t, s, "?providers=claude,codex"); answer.Capabilities.CodexSessions {
+		t.Fatal("a custom command offers sessions")
+	}
+	s.preferences.CodexTerminalCommand = ""
+
+	// A desktop session whose Codex closed before making a thread is hidden
+	// on the desktop until it has a terminal again.
+	placeholder := uuid.NewString()
+	if _, err := s.mobileCLI.createProvider(s.profile, project, placeholder, codexProvider, func(record *mobileRecord) {
+		record.Terminal, record.Connection, record.GuestWorkspace = true, uuid.NewString(), root
+	}); err != nil {
+		t.Fatal(err)
+	}
+	listed := func(query string) bool {
+		answer, _ := desktopCodexList(t, s, query)
+		return slices.ContainsFunc(answer.Sessions, func(row mobileSummary) bool { return row.ID == placeholder })
+	}
+	if listed("?providers=claude,codex") {
+		t.Fatal("placeholder listed on the desktop")
+	}
+	if sessions, _ := codexSessions(t, s); !slices.ContainsFunc(sessions, func(row mobileSummary) bool { return row.ID == placeholder }) {
+		t.Fatal("the phone lost its new session")
+	}
+	terminal, err := s.terminals.startCodexSession(terminalChildCommand("echo"), project, "codex", codexSelection{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal.mu.Lock()
+	terminal.sharedID = placeholder
+	terminal.mu.Unlock()
+	if !listed("?providers=claude,codex") {
+		t.Fatal("a session with a live terminal is hidden")
+	}
+	// A held list answers when the server's own terminal ends.
+	answer, _ = desktopCodexList(t, s, "?providers=claude,codex")
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- request(s, "GET", "/api/cli/sessions?providers=claude,codex&after="+answer.Revision+"&wait=10", "", "", true) }()
+	time.Sleep(300 * time.Millisecond)
+	started := time.Now()
+	s.terminals.remove(terminal.id)
+	select {
+	case w := <-done:
+		if w.Code != 200 || strings.Contains(w.Body.String(), placeholder) || time.Since(started) > 3*time.Second {
+			t.Fatal("held list", w.Code, time.Since(started), w.Body.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("held list did not answer")
 	}
 }
 

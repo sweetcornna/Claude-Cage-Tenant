@@ -156,6 +156,7 @@ type mobileCLIStore struct {
 	// codexOwner is the guest's latest owner of each Codex session's thread;
 	// the server's own bound terminals take precedence (codexOwner()).
 	codexOwner map[string]string
+	codexCLI   *codexCLICaps // the guest CLI's support, from the latest probe
 	generation string
 }
 

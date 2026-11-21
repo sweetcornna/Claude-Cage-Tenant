@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"al.essio.dev/pkg/shellescape"
@@ -122,6 +123,36 @@ func (m *mobileCLIStore) codexOwners() map[string]string {
 		owners[id] = owner
 	}
 	return owners
+}
+
+// codexSessionsPossible: Codex terminals can be sessions. A custom Codex
+// command (codex --search, a wrapper) stays a plain terminal, as a Claude
+// command that cannot share its session does.
+func (s *Server) codexSessionsPossible() bool {
+	s.mu.Lock()
+	command := strings.TrimSpace(codexTerminalCommand(s.preferences))
+	s.mu.Unlock()
+	return s.codexGuestSupported() && command == "codex"
+}
+
+func (m *mobileCLIStore) codexCLICaps() *codexCLICaps {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.codexCLI == nil {
+		return nil
+	}
+	caps := *m.codexCLI
+	return &caps
+}
+
+func (m *mobileCLIStore) noteCodexCLI(caps *codexCLICaps) {
+	if caps == nil || !caps.Complete {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copied := *caps
+	m.codexCLI = &copied
 }
 
 // codexAccountLabels names Codex accounts as the account panel does.

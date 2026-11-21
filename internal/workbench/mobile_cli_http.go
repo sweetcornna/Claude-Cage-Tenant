@@ -285,26 +285,31 @@ func (s *Server) mobileSessions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "会话列表版本无效", 400)
 		return
 	}
+	// The desktop lists Codex sessions only when it asks with
+	// ?providers=claude,codex: an older desktop UI would open them as Claude
+	// Code terminals. The phone lists both, as it always has.
+	list, ok := sessionListFilter(strings.HasPrefix(r.URL.Path, "/api/mobile/"), query["providers"])
+	if !ok {
+		http.Error(w, "会话类型无效", 400)
+		return
+	}
 	// The catalog must be loaded before discovery matches guest sessions to it.
 	if _, err := s.mobileCLI.summaries(s.profile, granted, archived); err != nil {
 		http.Error(w, "无法读取主机上的 CLI 会话记录", 500)
 		return
 	}
-	// Codex sessions continue only from the phone; the desktop sidebar opens
-	// sessions as Claude Code terminals and would offer rows it cannot open.
-	phone := strings.HasPrefix(r.URL.Path, "/api/mobile/")
 	arrival := time.Now()
-	claudeErr, codexErr := s.observeSessions(r.Context(), paths, phone, arrival)
+	claudeErr, codexErr := s.observeSessions(r.Context(), paths, list, arrival)
 	if r.Context().Err() != nil {
 		return
 	}
-	answer, err := s.sessionListAnswer(granted, archived, phone, claudeErr, codexErr)
+	answer, err := s.sessionListAnswer(granted, archived, list, claudeErr, codexErr)
 	if err != nil {
 		http.Error(w, "无法读取主机上的 CLI 会话记录", 500)
 		return
 	}
 	if wait > 0 && answer.Revision == after {
-		answer, err = s.awaitSessionList(r.Context(), arrival.Add(wait), after, paths, archived, phone, claudeErr, codexErr)
+		answer, err = s.awaitSessionList(r.Context(), arrival.Add(wait), after, paths, archived, list, claudeErr, codexErr)
 		if r.Context().Err() != nil {
 			return
 		}
@@ -323,8 +328,8 @@ func (s *Server) mobileSessions(w http.ResponseWriter, r *http.Request) {
 // awaitSessionList holds a list request while its answer equals after. The
 // host catalog is checked every 250 ms; the guest is watched by the resident
 // helper, or looked at every 5 s (the clients' own polling pace) when it
-// cannot be; Codex sessions on the phone are looked at every 5 s.
-func (s *Server) awaitSessionList(ctx context.Context, deadline time.Time, after string, paths []string, archived, phone bool, claudeErr, codexErr error) (sessionListAnswer, error) {
+// cannot be; Codex sessions, when listed, are looked at every 5 s.
+func (s *Server) awaitSessionList(ctx context.Context, deadline time.Time, after string, paths []string, archived bool, list sessionListKinds, claudeErr, codexErr error) (sessionListAnswer, error) {
 	changes, stop := s.subscribeGuestChanges()
 	defer stop()
 	host := time.NewTicker(250 * time.Millisecond)
@@ -351,18 +356,18 @@ func (s *Server) awaitSessionList(ctx context.Context, deadline time.Time, after
 		case <-ctx.Done():
 			return sessionListAnswer{}, ctx.Err()
 		case <-end.C:
-			return s.sessionListAnswer(granted(), archived, phone, claudeErr, codexErr)
+			return s.sessionListAnswer(granted(), archived, list, claudeErr, codexErr)
 		case <-changed:
-			claude, arrival = true, changedAt
+			claude, arrival = list.claude, changedAt
 		case <-slow.C:
-			claude, codex = !watching, phone
+			claude, codex = list.claude && !watching, list.codex
 		case <-host.C:
 			// A project change needs a new observation. Locking the account
 			// or closing the server ends the request context instead.
 			if looks++; looks%4 == 0 {
 				if current, err := s.projectPaths(); err == nil && strings.Join(slices.Sorted(slices.Values(current)), "\x00") != key {
 					paths, key = current, strings.Join(slices.Sorted(slices.Values(current)), "\x00")
-					claude, codex = true, phone
+					claude, codex = list.claude, list.codex
 				}
 			}
 		}
@@ -375,7 +380,7 @@ func (s *Server) awaitSessionList(ctx context.Context, deadline time.Time, after
 		if ctx.Err() != nil {
 			return sessionListAnswer{}, ctx.Err()
 		}
-		answer, err := s.sessionListAnswer(granted(), archived, phone, claudeErr, codexErr)
+		answer, err := s.sessionListAnswer(granted(), archived, list, claudeErr, codexErr)
 		if err != nil || answer.Revision != after {
 			return answer, err
 		}
@@ -385,7 +390,41 @@ func (s *Server) awaitSessionList(ctx context.Context, deadline time.Time, after
 type sessionListAnswer struct {
 	Sessions []mobileSummary `json:"sessions"`
 	Notice   string          `json:"notice"`
-	Revision string          `json:"revision"`
+	// Capabilities is sent only to a desktop that lists Codex sessions.
+	Capabilities *sessionCapabilities `json:"capabilities,omitempty"`
+	Revision     string               `json:"revision"`
+}
+
+type sessionCapabilities struct {
+	// CodexSessions: the menu's Codex entry creates a session, and Codex rows
+	// open as bound terminals (a Linux guest with the plain "codex" command).
+	CodexSessions bool `json:"codex_sessions"`
+	// CodexCLI is the guest CLI's last reported support, when known.
+	CodexCLI *codexCLICaps `json:"codex_cli,omitempty"`
+}
+
+// sessionListKinds is what a list request asks for.
+type sessionListKinds struct{ phone, claude, codex bool }
+
+func sessionListFilter(phone bool, values []string) (sessionListKinds, bool) {
+	if phone || values == nil {
+		return sessionListKinds{phone: phone, claude: true, codex: phone}, true
+	}
+	var kinds sessionListKinds
+	if len(values) != 1 {
+		return kinds, false
+	}
+	for _, name := range strings.Split(values[0], ",") {
+		switch name {
+		case "claude":
+			kinds.claude = true
+		case codexProvider:
+			kinds.codex = true
+		default:
+			return kinds, false
+		}
+	}
+	return kinds, true
 }
 
 const sessionListWaitLimit = 25 * time.Second
@@ -413,26 +452,28 @@ func sessionWait(value string) (time.Duration, bool) {
 	return min(time.Duration(seconds)*time.Second, sessionListWaitLimit), true
 }
 
-// observeSessions refreshes the guest's view of Claude (and on the phone,
-// Codex) sessions, sharing runs with concurrent list requests.
-func (s *Server) observeSessions(ctx context.Context, paths []string, phone bool, arrival time.Time) (claudeErr, codexErr error) {
+// observeSessions refreshes the guest's view of the sessions a list shows,
+// sharing runs with concurrent list requests; the desktop and the phone share
+// one Codex discovery.
+func (s *Server) observeSessions(ctx context.Context, paths []string, list sessionListKinds, arrival time.Time) (claudeErr, codexErr error) {
 	key := strings.Join(slices.Sorted(slices.Values(paths)), "\x00")
 	run := func() (context.Context, context.CancelFunc) { return s.discoveryContext(ctx) }
-	if !phone {
-		return s.cliDiscovery.share(ctx, "claude\x00"+key, arrival, run, func(ctx context.Context) error { return s.discoverTerminalConversations(ctx, paths) }), nil
-	}
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		codexErr = s.cliDiscovery.share(ctx, "codex\x00"+key, arrival, run, func(ctx context.Context) error { return s.discoverCodexConversations(ctx, paths) })
-	}()
-	claudeErr = s.cliDiscovery.share(ctx, "claude\x00"+key, arrival, run, func(ctx context.Context) error { return s.discoverTerminalConversations(ctx, paths) })
+	if list.codex {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codexErr = s.cliDiscovery.share(ctx, "codex\x00"+key, arrival, run, func(ctx context.Context) error { return s.discoverCodexConversations(ctx, paths) })
+		}()
+	}
+	if list.claude {
+		claudeErr = s.cliDiscovery.share(ctx, "claude\x00"+key, arrival, run, func(ctx context.Context) error { return s.discoverTerminalConversations(ctx, paths) })
+	}
 	wg.Wait()
 	return claudeErr, codexErr
 }
 
-func (s *Server) sessionListAnswer(granted map[string]bool, archived, phone bool, claudeErr, codexErr error) (sessionListAnswer, error) {
+func (s *Server) sessionListAnswer(granted map[string]bool, archived bool, list sessionListKinds, claudeErr, codexErr error) (sessionListAnswer, error) {
 	sessions, err := s.mobileCLI.summaries(s.profile, granted, archived)
 	if err != nil {
 		return sessionListAnswer{}, err
@@ -456,9 +497,14 @@ func (s *Server) sessionListAnswer(granted map[string]bool, archived, phone bool
 		}
 	}
 	s.codexRows(sessions)
-	if !phone {
-		sessions = slices.DeleteFunc(sessions, func(item mobileSummary) bool { return item.Provider == codexProvider })
-	}
+	sessions = slices.DeleteFunc(sessions, func(item mobileSummary) bool {
+		if item.Provider != codexProvider {
+			return !list.claude
+		}
+		// A desktop session whose Codex closed before it made a thread has
+		// nothing to resume; the phone keeps its own new sessions.
+		return !list.codex || !list.phone && item.placeholder && item.Owner == ""
+	})
 	// Equal pins and times keep a fixed order, so equal lists hash equally.
 	sort.SliceStable(sessions, func(i, j int) bool {
 		a, b := sessions[i], sessions[j]
@@ -471,6 +517,9 @@ func (s *Server) sessionListAnswer(granted map[string]bool, archived, phone bool
 		return a.ID < b.ID
 	})
 	answer := sessionListAnswer{Sessions: sessions, Notice: strings.Join(notices, "\n")}
+	if list.codex && !list.phone {
+		answer.Capabilities = &sessionCapabilities{CodexSessions: s.codexSessionsPossible(), CodexCLI: s.mobileCLI.codexCLICaps()}
+	}
 	data, err := json.Marshal(answer)
 	if err != nil {
 		return sessionListAnswer{}, err
