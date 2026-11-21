@@ -410,8 +410,10 @@ func (s *Server) networkExplanationLocked(now time.Time) *networkExplanation {
 		}
 		return e
 	}
-	if gate.Mode != cage.GateClosed {
-		return nil // A check is running; its progress is the job's message.
+	if gate.Mode != cage.GateClosed || s.jobs.snapshot().Running {
+		// A check or another operation owns the next transition; its
+		// progress is the job's message.
+		return nil
 	}
 	if gate.Report != nil && (gate.Reason == gateLeaseExpired || s.windowsGuest != nil && gate.Reason == windowsPacketDisconnectedReason) {
 		// The monitor schedules the recheck on its next round.
