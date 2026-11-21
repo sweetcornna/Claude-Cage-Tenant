@@ -212,20 +212,23 @@ func (r *Runtime) State(ctx context.Context) (State, error) {
 				return state, nil
 			}
 		}
+		// Published before unlocking, so concurrent callers join this read.
+		read = beginStateReadLocked(key, records, true)
 		stateCache.Unlock()
-		return r.readState(ctx, true)
+		return r.finishStateRead(ctx, key, read)
 	}
 }
 
 // FreshState always asks the engine. Its result also replaces the reused one.
 func (r *Runtime) FreshState(ctx context.Context) (State, error) {
-	return r.readState(ctx, false)
+	key, records := r.cacheKey(), r.recordStamp()
+	stateCache.Lock()
+	read := beginStateReadLocked(key, records, false)
+	stateCache.Unlock()
+	return r.finishStateRead(ctx, key, read)
 }
 
-func (r *Runtime) readState(ctx context.Context, shared bool) (State, error) {
-	key := r.cacheKey()
-	records := r.recordStamp()
-	stateCache.Lock()
+func beginStateReadLocked(key, records string, shared bool) *stateRead {
 	if stateCache.reads == nil {
 		stateCache.reads = map[string]*stateRead{}
 	}
@@ -233,9 +236,12 @@ func (r *Runtime) readState(ctx context.Context, shared bool) (State, error) {
 	if shared {
 		stateCache.reads[key] = read
 	}
-	stateCache.Unlock()
+	return read
+}
+
+func (r *Runtime) finishStateRead(ctx context.Context, key string, read *stateRead) (State, error) {
 	state, err := r.inspectState(ctx)
-	unchanged := r.recordStamp() == records
+	unchanged := r.recordStamp() == read.records
 	stateCache.Lock()
 	defer stateCache.Unlock()
 	read.state, read.err, read.finished = state, err, time.Now()
