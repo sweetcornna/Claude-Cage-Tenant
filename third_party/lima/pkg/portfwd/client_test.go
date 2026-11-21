@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -45,6 +46,48 @@ func TestDialContextToGRPCTunnelClosesStreamFromTCPProxy(t *testing.T) {
 	case <-time.After(time.Second):
 		assert.Assert(t, false, "timed out waiting for TCP proxy handling to finish")
 	}
+}
+
+// A listener keeps its dialer across guest agent reconnects, so the dialer
+// must use the client that is current when a connection arrives.
+func TestDialContextToCurrentGRPCTunnelFollowsReplacedClient(t *testing.T) {
+	staleDone := make(chan error, 1)
+	stale := newTestGuestAgentClient(t, &testGuestService{tunnelDone: staleDone})
+	freshDone := make(chan error, 1)
+	fresh := newTestGuestAgentClient(t, &testGuestService{tunnelDone: freshDone})
+	defer fresh.Close()
+
+	var mu sync.Mutex
+	current := stale
+	dial := DialContextToCurrentGRPCTunnel(func() *guestagentclient.GuestAgentClient {
+		mu.Lock()
+		defer mu.Unlock()
+		return current
+	})
+
+	// The host agent closes the stale client and installs a new one.
+	assert.NilError(t, stale.Close())
+	_, err := dial(t.Context(), "tcp", "127.0.0.1:80")
+	assert.ErrorContains(t, err, "client connection is closing")
+	mu.Lock()
+	current = fresh
+	mu.Unlock()
+
+	conn, err := dial(t.Context(), "tcp", "127.0.0.1:80")
+	assert.NilError(t, err)
+	assert.NilError(t, conn.Close())
+	select {
+	case err := <-freshDone:
+		assert.NilError(t, err)
+	case <-time.After(time.Second):
+		assert.Assert(t, false, "the new client did not carry the tunnel")
+	}
+
+	mu.Lock()
+	current = nil
+	mu.Unlock()
+	_, err = dial(t.Context(), "tcp", "127.0.0.1:80")
+	assert.ErrorContains(t, err, "not connected")
 }
 
 // recvOnlyTunnelClient implements only Recv of the bidi stream; the other
