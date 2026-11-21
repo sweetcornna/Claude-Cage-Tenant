@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -350,7 +349,9 @@ func TestSessionListsUseOneResidentGuestHelper(t *testing.T) {
 		held <- answer
 	}()
 	time.Sleep(500 * time.Millisecond)
-	stopResidentHelper(t)
+	// Ending the connection looks to the workbench as the helper or the guest
+	// going away: the held watch fails with errGuestSessionEnded.
+	s.cliDiscovery.resident.close()
 	time.Sleep(500 * time.Millisecond)
 	writeTranscript(t, history, map[string]any{"type": "custom-title", "customTitle": "after the helper ended"})
 	select {
@@ -363,31 +364,6 @@ func TestSessionListsUseOneResidentGuestHelper(t *testing.T) {
 	}
 	if got := title(); got != "after the helper ended" || logins() != 3 {
 		t.Fatalf("after the helper ended: title %q, %d logins", got, logins())
-	}
-}
-
-// stopResidentHelper ends this test's resident helper process, found as a
-// child of the test whose command line carries the helper digest.
-func stopResidentHelper(t *testing.T) {
-	t.Helper()
-	output, err := exec.Command("ps", "-axo", "pid=,ppid=,command=").Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(cliChannelInstalled)))
-	stopped := 0
-	for _, line := range strings.Split(string(output), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 || fields[1] != fmt.Sprint(os.Getpid()) || !strings.Contains(line, digest) || filepath.Base(fields[2]) == "ssh" {
-			continue
-		}
-		pid, _ := strconv.Atoi(fields[0])
-		if process, err := os.FindProcess(pid); err == nil && process.Kill() == nil {
-			stopped++
-		}
-	}
-	if stopped != 1 {
-		t.Fatalf("stopped %d resident helpers", stopped)
 	}
 }
 
