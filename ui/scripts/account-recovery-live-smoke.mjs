@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import { createRequire } from "node:module";
 
 const cage = process.argv[2];
-assert.ok(path.isAbsolute(cage || ""), "Supply an absolute Cage helper path");
+assert.ok(path.isAbsolute(cage || ""), "Supply an absolute Super Cage helper path");
 const run = promisify(execFile);
 const root = await fs.mkdtemp(path.join(os.tmpdir(), "account-recovery-live-"));
 const profile = path.join(root, "profile");
@@ -54,7 +54,7 @@ const saveKey = async (reset = false) => {
   if (output) await page.screenshot({ path: path.join(output, reset ? "reset-key.png" : "save-key.png"), mask: [page.locator("input,textarea")] });
   const code = await region.getByLabel("恢复密钥", { exact: true }).inputValue();
   assert.match(code, /^(?:[A-F0-9]{8}-){7}[A-F0-9]{8}$/);
-  const proceed = region.getByRole("button", { name: reset ? "返回登录" : "继续使用 Cage", exact: true });
+  const proceed = region.getByRole("button", { name: reset ? "返回登录" : "继续使用 Super Cage", exact: true });
   assert.equal(await proceed.isDisabled(), true);
   // Exercise the UI/native contract separately from the browser download.
   // The real native implementations are built/checked by platform checks.
@@ -102,13 +102,13 @@ const saveKey = async (reset = false) => {
 };
 const unlock = async (password) => {
   await page.getByLabel("账户密码", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "解锁 Cage", exact: true }).click();
+  await page.getByRole("button", { name: "解锁 Super Cage", exact: true }).click();
   await menu().waitFor();
 };
 const lock = async () => {
   await menu().click();
-  await page.getByRole("menuitem", { name: /锁定 Cage/ }).click();
-  await page.getByRole("region", { name: "解锁 Cage", exact: true }).waitFor();
+  await page.getByRole("menuitem", { name: /锁定 Super Cage/ }).click();
+  await page.getByRole("region", { name: "解锁 Super Cage", exact: true }).waitFor();
 };
 try {
   await restart();

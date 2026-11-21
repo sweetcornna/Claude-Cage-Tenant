@@ -109,7 +109,7 @@ func validateHostProjectData(root, profile string) error {
 		}
 		for _, dir := range private {
 			if cage.StoragePathsOverlap(root, dir) {
-				return errors.New("Cage 配置、环境存储及备份不能共享")
+				return errors.New("Super Cage 配置、环境存储及备份不能共享")
 			}
 		}
 	}

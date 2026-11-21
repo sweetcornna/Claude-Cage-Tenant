@@ -55,14 +55,14 @@ func ShareNativeCloudProject(configPath, connection, path string, readonly bool)
 	entry, _ := url.Parse(client.launch.URL)
 	code, err := client.call("POST", "/api/session", map[string]string{"token": entry.Fragment}, nil)
 	if err != nil || code != http.StatusOK {
-		return result, errors.New("无法连接本机 Cage")
+		return result, errors.New("无法连接本机 Super Cage")
 	}
 	current, err := client.bindConnection(connection)
 	if err != nil {
 		return result, err
 	}
 	if current.Mode != "remote" {
-		return result, errors.New("请先选择远程 Cage")
+		return result, errors.New("请先选择远程 Super Cage")
 	}
 	client.client.Timeout = 35 * time.Second
 	body, err := json.Marshal(clientShareRequest{Token: client.record.Token, Path: path, Readonly: &readonly})
@@ -85,7 +85,7 @@ func ShareNativeCloudProject(configPath, connection, path string, readonly bool)
 		return result, errors.New("无法共享本机项目：" + strings.TrimSpace(string(data)))
 	}
 	if err := json.NewDecoder(io.LimitReader(response.Body, 32<<10)).Decode(&result); err != nil {
-		return result, errors.New("本机 Cage 返回了无效的共享结果，请重新查看共享列表")
+		return result, errors.New("本机 Super Cage 返回了无效的共享结果，请重新查看共享列表")
 	}
 	return result, nil
 }
@@ -129,7 +129,7 @@ func (s *Server) clientProjectShareRequest(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if !session.Manifest.Capabilities["client_project_share"] {
-		http.Error(w, "此云端 Cage 尚不支持共享本机项目", http.StatusConflict)
+		http.Error(w, "此云端 Super Cage 尚不支持共享本机项目", http.StatusConflict)
 		return
 	}
 	switch {
@@ -150,7 +150,7 @@ func (s *Server) clientProjectShareRequest(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if !equalSecret(in.Token, s.token) {
-			http.Error(w, "请使用本机 Cage 的文件夹选择器授权", http.StatusForbidden)
+			http.Error(w, "请使用本机 Super Cage 的文件夹选择器授权", http.StatusForbidden)
 			return
 		}
 		if in.Readonly == nil {
@@ -336,7 +336,7 @@ func (s *Server) createClientProjectShare(request context.Context, session *remo
 	failed := func() (ClientProjectShare, error) {
 		cancel()
 		<-entry.done
-		return empty, errors.New("云端未确认项目挂载，请检查 Cage 是否已解锁、环境是否已启动")
+		return empty, errors.New("云端未确认项目挂载，请检查 Super Cage 是否已解锁、环境是否已启动")
 	}
 	select {
 	case <-upgraded:

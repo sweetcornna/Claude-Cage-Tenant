@@ -102,7 +102,7 @@ func (e *app) doctorCmd(ctx context.Context, args []string) int {
 	}
 	protects := !writableGitOptOut(false)
 	if cageWritableGit() {
-		d.line("info", "Cage projects allow Git writes within the shared directories")
+		d.line("info", "Super Cage projects allow Git writes within the shared directories")
 	} else if protects {
 		d.line("ok", "every .git is read-only for the VMs (sshfs.readonlyNames)")
 	} else {
@@ -296,7 +296,7 @@ func (d *doctor) directory(ctx context.Context, dir string, protects bool, getVM
 		current := unprotected(inst, names) == ""
 		switch {
 		case cageWritableGit() && !protected:
-			d.line("info", "its shares allow Git writes in Cage projects")
+			d.line("info", "its shares allow Git writes in Super Cage projects")
 		case protected && !current:
 			d.line("warn", "its shares keep .git read-only, but not all of "+strings.Join(names, ", "),
 				"The next start (after 'agent-vm stop' if it runs) fixes that.")

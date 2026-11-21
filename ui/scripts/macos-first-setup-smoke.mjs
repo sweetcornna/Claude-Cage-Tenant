@@ -91,7 +91,7 @@ for (const failure of ["http", "native"]) {
     await page.evaluate(() => window.cageNativeAction("settings"));
     await page.getByRole("region", { name: "设置", exact: true }).waitFor();
     await page.evaluate(() => window.cageNativeAction("quit"));
-    await page.getByRole("dialog", { name: "退出 Cage", exact: true }).getByRole("button", { name: "取消", exact: true }).click();
+    await page.getByRole("dialog", { name: "退出 Super Cage", exact: true }).getByRole("button", { name: "取消", exact: true }).click();
     assert.equal(calls.filter(c=>c==="finish").length,2);
     assert.equal(calls.filter(c=>c==="verify-projects").length,0);
     assert.deepEqual(errors, []);

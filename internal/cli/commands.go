@@ -80,7 +80,7 @@ func (e *app) inVM(ctx context.Context, opts VMOpts, fn session) int {
 		}
 		for _, inst := range instances {
 			if inst.Status == vm.Running && inst.Name != s.name {
-				fmt.Fprintf(e.io.Stderr, "Cage uses one persistent environment per profile; stop legacy VM %s before connecting it.\n", inst.Name)
+				fmt.Fprintf(e.io.Stderr, "Super Cage uses one persistent environment per profile; stop legacy VM %s before connecting it.\n", inst.Name)
 				return 1
 			}
 		}

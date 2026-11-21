@@ -101,10 +101,10 @@ try {
     });
   const tabs = page.getByRole("tablist", { name: "浏览器标签页" });
   await page
-    .getByRole("button", { name: "启动 Cage 环境", exact: true })
+    .getByRole("button", { name: "启动 Super Cage 环境", exact: true })
     .click();
   await page
-    .getByRole("heading", { name: "Cage 环境已就绪", exact: true })
+    .getByRole("heading", { name: "Super Cage 环境已就绪", exact: true })
     .waitFor();
   await page.getByRole("button", { name: "打开浏览器", exact: true }).click();
   await tabs.getByRole("tab").waitFor();

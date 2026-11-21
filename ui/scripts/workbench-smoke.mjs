@@ -19,10 +19,10 @@ try {
   const navigation = page.getByRole("navigation", { name: "主导航" });
   assert.equal(await navigation.getByRole("button", { name: /打开项目|项目文件/ }).count(), 0);
   await page
-    .getByRole("button", { name: "启动 Cage 环境", exact: true })
+    .getByRole("button", { name: "启动 Super Cage 环境", exact: true })
     .click();
   await page
-    .getByRole("heading", { name: "Cage 环境已就绪", exact: true })
+    .getByRole("heading", { name: "Super Cage 环境已就绪", exact: true })
     .waitFor();
   await page
     .getByRole("button", { name: "添加项目", exact: true })
@@ -62,7 +62,7 @@ try {
   assert.equal(state.settings.workspace, state.chosenFolder);
   await page.reload();
   await page
-    .getByRole("heading", { name: "Cage 环境已就绪", exact: true })
+    .getByRole("heading", { name: "Super Cage 环境已就绪", exact: true })
     .waitFor();
   await page
     .getByRole("region", { name: "项目 design-lab", exact: true })
@@ -86,7 +86,7 @@ try {
   assert.equal(await page.getByText("最近项目", { exact: true }).count(), 0);
   checks.push("真实目录列表刷新读回、不使用本地历史、项目打开失败保留路径");
   await page
-    .getByRole("heading", { name: "Cage 环境已就绪", exact: true })
+    .getByRole("heading", { name: "Super Cage 环境已就绪", exact: true })
     .waitFor();
   await page
     .getByRole("button", { name: "在 design-lab 新建终端", exact: true })

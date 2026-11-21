@@ -26,7 +26,7 @@ export const themeCatalog = [
     id: "codex",
     name: "Codex",
     group: "经典",
-    description: "中性背景与蓝色强调，保持 Cage 的默认外观。",
+    description: "中性背景与蓝色强调，保持 Super Cage 的默认外观。",
     light: light("#339cff", "#ffffff", "#1a1c1f"),
     dark: dark("#339cff", "#181818", "#ffffff"),
   },

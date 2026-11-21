@@ -19,7 +19,7 @@ enum MacGuestLoginCredential {
         let secret = FileHandle.standardInput.readData(ofLength: 1025)
         guard !secret.isEmpty, secret.count <= 1024 else { throw CageUpdateError("客机凭据为空或过长。") }
         var query = try item()
-        query[kSecAttrLabel as String] = "Cage macOS 试用客机登录"
+        query[kSecAttrLabel as String] = "Super Cage macOS 试用客机登录"
         query[kSecValueData as String] = secret
         let status = SecItemAdd(query as CFDictionary, nil)
         if status == errSecDuplicateItem, try read() == secret { return }

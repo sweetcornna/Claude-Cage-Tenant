@@ -81,7 +81,7 @@ func parseResourceEvidence(slice cgroupLimits, scope *cgroupLimits, mountinfo st
 	}
 	if scope != nil {
 		if _, err := parseLimits(*scope, configuration); err != nil {
-			return resourceEvidence{}, errors.New("容器自身的 CPU、内存或进程数限额与配置不一致；请停止环境后重新启动，Cage 会更新已有容器")
+			return resourceEvidence{}, errors.New("容器自身的 CPU、内存或进程数限额与配置不一致；请停止环境后重新启动，Super Cage 会更新已有容器")
 		}
 	}
 	cgroup2 := false

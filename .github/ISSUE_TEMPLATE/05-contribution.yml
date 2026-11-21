@@ -26,7 +26,7 @@ body:
   - type: input
     id: base-version
     attributes:
-      label: 基于的 Cage 版本或提交号
+      label: 基于的 Super Cage 版本或提交号
       description: 代码或补丁请注明基于的 Commit SHA，可在源码目录运行 git rev-parse HEAD；操作方案请注明适用版本，暂未确认时请明确说明。
       placeholder: 版本号 / Commit SHA / 尚未确认适用版本
     validations:
@@ -35,7 +35,7 @@ body:
     id: host-systems
     attributes:
       label: 涉及的主机系统
-      description: 主机是运行 Cage 的电脑，可多选；适用于所有平台时全部选中。Issue 会按所选系统添加标签，交给对应平台的维护者。
+      description: 主机是运行 Super Cage 的电脑，可多选；适用于所有平台时全部选中。Issue 会按所选系统添加标签，交给对应平台的维护者。
       multiple: true
       options:
         - macOS
@@ -48,7 +48,7 @@ body:
     id: guest-systems
     attributes:
       label: 涉及的客机系统
-      description: 客机是 Cage 内运行的系统，可多选；适用于所有客机时全部选中。
+      description: 客机是 Super Cage 内运行的系统，可多选；适用于所有客机时全部选中。
       multiple: true
       options:
         - macOS

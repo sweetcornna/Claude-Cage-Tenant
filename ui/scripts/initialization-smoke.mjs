@@ -174,7 +174,7 @@ for (const [platform, system] of [["darwin", "macos"], ["windows", "windows-11"]
     const storage = page.getByRole("region", { name: "环境存储目录" });
     await storage.getByLabel("存储目录", { exact: true }).waitFor();
     assert.equal(await storage.getByLabel("存储目录", { exact: true }).inputValue(), initialDirectory);
-    await storage.getByText("这是 Cage 的环境数据目录。更新、重装或卸载应用会保留这里的数据；请勿手动删除。").waitFor();
+    await storage.getByText("这是 Super Cage 的环境数据目录。更新、重装或卸载应用会保留这里的数据；请勿手动删除。").waitFor();
     assert.equal(await storage.getByText("当前环境目录", { exact: true }).count(), 0);
     assert.equal(await storage.getByText("新存储位置", { exact: true }).count(), 0);
     await page.locator(".initialization-content").evaluate(async element => {
@@ -193,7 +193,7 @@ for (const [platform, system] of [["darwin", "macos"], ["windows", "windows-11"]
     assert.ok(menu.x >= 0 && menu.y >= 0 && menu.x + menu.width <= 1280 && menu.y + menu.height <= 850, "floating menu must stay inside the viewport");
     if (evidence) await page.screenshot({ path: `${evidence}/${platform}-systems-floating.png`, fullPage: true });
     await picker.press("Home"); await picker.press("Enter");
-    await page.getByText("Cage 会检测本机系统版本，在下一步显示匹配的官方镜像、下载量与空间要求。").waitFor();
+    await page.getByText("Super Cage 会检测本机系统版本，在下一步显示匹配的官方镜像、下载量与空间要求。").waitFor();
     await page.getByText(/系统镜像通过主机网络下载.*系统代理或 TUN/).waitFor();
     if (system === "windows-11") await page.getByRole("checkbox").check();
     if (evidence) await page.screenshot({ path: `${evidence}/${platform}-system.png`, fullPage: true });
@@ -247,9 +247,9 @@ for (const [platform, system] of [["darwin", "macos"], ["windows", "windows-11"]
     await page.reload();
     await page.getByRole("complementary", { name: "项目与终端" }).waitFor();
     await page.evaluate(() => window.cageNativeAction("quit"));
-    const quitDialog = page.getByRole("dialog", { name: "退出 Cage", exact: true });
+    const quitDialog = page.getByRole("dialog", { name: "退出 Super Cage", exact: true });
     await quitDialog.getByRole("button", { name: "取消", exact: true }).click();
-    assert.equal(await page.getByRole("heading", { name: "为 Cage 准备独立环境" }).count(), 0);
+    assert.equal(await page.getByRole("heading", { name: "为 Super Cage 准备独立环境" }).count(), 0);
     assert.deepEqual(errors, []);
     console.log(`PASS ${platform}: independent initialization, inline keyboard selection, back navigation, progress, refresh, retry, completion gate and reopen`);
   } finally { await browser.close(); }

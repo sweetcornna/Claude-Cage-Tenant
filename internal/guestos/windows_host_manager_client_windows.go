@@ -54,7 +54,7 @@ func windowsHostManagerRequestCall(ctx context.Context, request windowsHostManag
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return errors.New("Windows 系统管理助手尚未连接，请在 Cage 安装流程中完成系统授权或恢复助手；原虚拟机和数据已保留")
+		return errors.New("Windows 系统管理助手尚未连接，请在 Super Cage 安装流程中完成系统授权或恢复助手；原虚拟机和数据已保留")
 	}
 	defer connection.Close()
 	stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
@@ -92,7 +92,7 @@ func windowsHostManagerRequestCall(ctx context.Context, request windowsHostManag
 			return errors.New("请等待 Windows 客机完整关机，再迁移环境存储")
 		}
 		if response.Error == "unauthorized" || response.Error == "permission_denied" {
-			return errors.New("当前系统用户没有这台 Cage 客机的管理授权")
+			return errors.New("当前系统用户没有这台 Super Cage 客机的管理授权")
 		}
 		if response.Error == "binding_mismatch" || response.Error == "layout_mismatch" || response.Error == "binding_invalid" {
 			return errors.New("Windows 客机的登记配置已变化，请核对原虚拟机；现有数据已保留")

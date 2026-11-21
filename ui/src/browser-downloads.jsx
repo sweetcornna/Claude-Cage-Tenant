@@ -146,10 +146,10 @@ export function useDesktopFiles(ready, onStatus, desktopVisible, windowVisible =
               await api("/input/files/desktop/open", {
                 id: request.id,
                 stage: "complete",
-                error: "请在 Cage 桌面应用中打开文件",
+                error: "请在 Super Cage 桌面应用中打开文件",
               });
               throw new Error(
-                "请在 Cage 桌面应用中打开文件，或从下载列表保存文件",
+                "请在 Super Cage 桌面应用中打开文件，或从下载列表保存文件",
               );
             }
             await native("desktopFileAction", { id: request.id });

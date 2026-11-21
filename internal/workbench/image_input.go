@@ -287,7 +287,7 @@ func (s *Server) guestImage(ctx context.Context, target string, data []byte, win
 		return nil, err
 	}
 	if err = cmd.Start(); err != nil {
-		return nil, errors.New("无法连接 Cage 环境")
+		return nil, errors.New("无法连接 Super Cage 环境")
 	}
 	output, readErr := io.ReadAll(io.LimitReader(pipe, 4097))
 	if readErr != nil || len(output) > 4096 {
@@ -296,7 +296,7 @@ func (s *Server) guestImage(ctx context.Context, target string, data []byte, win
 		return nil, errors.New("图片传递响应无效")
 	}
 	if err = cmd.Wait(); err != nil {
-		return nil, errors.New("图片未能传入 Cage，请确认目标已打开并支持图片；环境组件过旧时请先更新环境")
+		return nil, errors.New("图片未能传入 Super Cage，请确认目标已打开并支持图片；环境组件过旧时请先更新环境")
 	}
 	var result map[string]any
 	if json.Unmarshal(output, &result) != nil {

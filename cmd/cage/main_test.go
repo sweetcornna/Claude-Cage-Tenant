@@ -110,13 +110,13 @@ func TestStatelessCommandsNeedNoProfile(t *testing.T) {
 		wantStdout string
 		wantStderr string
 	}{
-		{name: "help", args: []string{"help"}, wantStdout: "Claude Cage"},
-		{name: "short help", args: []string{"-h"}, wantStdout: "Claude Cage"},
+		{name: "help", args: []string{"help"}, wantStdout: "Super Cage"},
+		{name: "short help", args: []string{"-h"}, wantStdout: "Super Cage"},
 		{name: "version", args: []string{"version"}, wantStdout: version.Version},
 		{name: "long version", args: []string{"--version"}, wantStdout: version.Version},
 		{name: "short version", args: []string{"-V"}, wantStdout: version.Version},
 		{name: "version gate met", args: []string{"version", "--min", "0.0.0"}},
-		{name: "version gate missed", args: []string{"version", "--min", "99.0.0"}, wantCode: 1, wantStderr: "Update it:  update Cage"},
+		{name: "version gate missed", args: []string{"version", "--min", "99.0.0"}, wantCode: 1, wantStderr: "Update it:  update Super Cage"},
 		{name: "licenses", args: []string{"licenses"}, wantStdout: "MIT License"},
 		{name: "licenses usage", args: []string{"licenses", "x"}, wantCode: 2, wantStderr: "Usage: claude-cage licenses"},
 	}

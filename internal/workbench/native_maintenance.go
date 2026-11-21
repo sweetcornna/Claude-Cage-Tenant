@@ -100,7 +100,7 @@ func (s *Server) nativeEnvironmentVersions(w http.ResponseWriter, r *http.Reques
 	if kitError != nil {
 		components.Status = "unknown"
 		components.UpdateRequired = false
-		detail = "此应用的原生组件包无法核验，请重新安装完整的 Cage 应用。"
+		detail = "此应用的原生组件包无法核验，请重新安装完整的 Super Cage 应用。"
 	}
 	s.mu.Lock()
 	busy := s.jobs.snapshot().Running

@@ -58,7 +58,7 @@ func (a *localAccount) withVault(ctx context.Context, mutate bool, fn func(*vaul
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if len(a.key) != 32 || ctx.Err() != nil {
-		return errors.New("请先解锁 Cage")
+		return errors.New("请先解锁 Super Cage")
 	}
 	mac := hmac.New(sha256.New, a.key)
 	mac.Write([]byte(vaultDomain))
@@ -168,7 +168,7 @@ func (a *localAccount) verifyVaultPassword(password string) error {
 		return errors.New("查看或复制密码前，请在本机的「设置 → 账户」设置密码")
 	}
 	if len(a.key) != 32 {
-		return errors.New("请先解锁 Cage")
+		return errors.New("请先解锁 Super Cage")
 	}
 	if time.Now().Before(a.nextAttempt) {
 		return errors.New("请稍后再试")

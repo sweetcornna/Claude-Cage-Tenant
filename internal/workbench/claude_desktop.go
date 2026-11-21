@@ -44,7 +44,7 @@ func (s *Server) claudeDesktopStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.vmRunning() {
-		http.Error(w, "请先启动 Cage 环境", 409)
+		http.Error(w, "请先启动 Super Cage 环境", 409)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
@@ -88,7 +88,7 @@ func (s *Server) claudeDesktopAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.vmRunning() {
-		http.Error(w, "请先启动 Cage 环境", 409)
+		http.Error(w, "请先启动 Super Cage 环境", 409)
 		return
 	}
 	s.launch(w, "claude-desktop-"+action, func() error {

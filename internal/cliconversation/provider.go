@@ -60,7 +60,7 @@ const (
 // automatically: the CLI can persist the user's message before emitting its result.
 func (r Runner) Run(ctx context.Context, turn Turn, onText func(string)) (Result, error) {
 	if r.Command == nil {
-		return Result{}, errors.New("尚未配置 Cage 客机 Claude Code 命令")
+		return Result{}, errors.New("尚未配置 Super Cage 客机 Claude Code 命令")
 	}
 	if turn.Workspace == "" || !sessionIDPattern.MatchString(turn.SessionID) {
 		return Result{}, errors.New("Claude Code 项目或会话标识无效")
@@ -253,7 +253,7 @@ func readResult(reader io.Reader, sessionID string, onText func(string), approva
 			return result, errors.New("无法验证本会话原先使用的上游，请检查主机配置或新建会话")
 		}
 		if e.Type == "system" && e.Subtype == "cage_identity_unverified_start" {
-			return result, errors.New("无法验证当前 Claude 账号或上游配置，请在电脑 Cage 检查账号和环境配置")
+			return result, errors.New("无法验证当前 Claude 账号或上游配置，请在电脑 Super Cage 检查账号和环境配置")
 		}
 		if e.Type == "system" && e.Subtype == "init" {
 			if !strings.EqualFold(e.SessionID, sessionID) || finished {

@@ -65,7 +65,7 @@ internal sealed class AppUpdater : IDisposable
         if (!Guid.TryParse(Environment.GetEnvironmentVariable("CAGE_UPDATE_CONFIRMATION"), out var token)) return;
         Directory.CreateDirectory(Root); UpdatePolicy.PlainPath(Root);
         File.WriteAllText(Path.Combine(Root, "launch-" + token + ".json"), JsonSerializer.Serialize(new { version = Version }));
-        Change("current", "Cage 已更新至 " + Version);
+        Change("current", "Super Cage 已更新至 " + Version);
         Environment.SetEnvironmentVariable("CAGE_UPDATE_CONFIRMATION", null);
     }
 
@@ -166,7 +166,7 @@ internal sealed class AppUpdater : IDisposable
             if (helper.HasExited) throw new IOException("安装程序已退出，原应用已保留");
             await helper.StandardInput.WriteLineAsync("COMMIT"); await helper.StandardInput.FlushAsync(token);
             helper.StandardInput.Close(); committed = true;
-            Change("installing", "正在安装并重启 Cage"); quit();
+            Change("installing", "正在安装并重启 Super Cage"); quit();
         }
         catch (Exception error) { Change("failed", error is OperationCanceledException ? "安装准备超时，原应用已保留" : error.Message, true); reconnect(); }
         finally

@@ -39,7 +39,7 @@ for (const platform of ["MacIntel", "Win32", "Linux x86_64"]) {
       socket.send(Buffer.from("\x1b[?2004hClaude image paste\r\n> "));
     });
     await page.reload();
-    await page.getByRole("button", { name: "启动 Cage 环境", exact: true }).click();
+    await page.getByRole("button", { name: "启动 Super Cage 环境", exact: true }).click();
     await page.getByRole("button", { name: "新建终端", exact: true }).first().click();
     await page.getByRole("menuitem", { name: /Claude/ }).first().click();
     await page.waitForFunction(() => document.querySelector(".xterm-rows")?.textContent.includes("Claude"));

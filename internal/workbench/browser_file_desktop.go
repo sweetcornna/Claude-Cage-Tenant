@@ -149,7 +149,7 @@ func BrowserFileForConnection(configPath, connectionID, action, id, destination 
 	} else {
 		status, err = client.call("GET", "/api/browser/files/downloads/"+id, nil, &item)
 		if err != nil || status != 200 {
-			return result, errors.New("下载文件不可用，请确认 Cage 已解锁且下载已完成")
+			return result, errors.New("下载文件不可用，请确认 Super Cage 已解锁且下载已完成")
 		}
 		result = SavedDownload{ID: id, Name: item.Name, Path: item.Path}
 		if connection.Mode == "remote" {

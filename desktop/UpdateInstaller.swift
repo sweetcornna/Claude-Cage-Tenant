@@ -47,7 +47,7 @@ final class CageUpdateInstaller: NSObject, NSApplicationDelegate {
         guard data.count <= 16384 else { throw CageUpdateError("安装任务过大") }
         plan = try JSONDecoder().decode(CageUpdatePlan.self, from: data)
         guard plan.parentPID == getppid(), let running = NSRunningApplication(processIdentifier: plan.parentPID),
-              running.bundleURL?.resolvingSymlinksInPath().path == plan.target else { throw CageUpdateError("安装任务不属于当前 Cage 应用") }
+              running.bundleURL?.resolvingSymlinksInPath().path == plan.target else { throw CageUpdateError("安装任务不属于当前 Super Cage 应用") }
         parent = running
         let selfURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
         let ownTeam = try CageUpdateFiles.signingInfo(selfURL, bundle: false)
@@ -76,7 +76,7 @@ final class CageUpdateInstaller: NSObject, NSApplicationDelegate {
                 guard command == Data("COMMIT\n".utf8) else { self.exitHelper(); return }
                 let deadline = Date().addingTimeInterval(90)
                 while !self.parent.isTerminated && Date() < deadline { Thread.sleep(forTimeInterval: 0.1) }
-                guard self.parent.isTerminated else { throw CageUpdateError("Cage 尚未退出，更新未安装") }
+                guard self.parent.isTerminated else { throw CageUpdateError("Super Cage 尚未退出，更新未安装") }
                 try self.replace()
                 DispatchQueue.main.async { self.openInstalled() }
             } catch {
@@ -110,7 +110,7 @@ final class CageUpdateInstaller: NSObject, NSApplicationDelegate {
                     if let data = try? Data(contentsOf: acknowledgement), data.count < 1024,
                        let value = try? JSONSerialization.jsonObject(with: data) as? [String: String], value["version"] == self.plan.version {
                         try? FileManager.default.removeItem(at: acknowledgement)
-                        self.record(success: true, message: "Cage 已更新至 \(self.plan.version)")
+                        self.record(success: true, message: "Super Cage 已更新至 \(self.plan.version)")
                         self.cleanSuccessfulTask(); self.exitHelper(); return
                     }
                     Thread.sleep(forTimeInterval: 0.2)
@@ -120,7 +120,7 @@ final class CageUpdateInstaller: NSObject, NSApplicationDelegate {
                 while !app.isTerminated && Date() < terminationDeadline { Thread.sleep(forTimeInterval: 0.1) }
                 if app.isTerminated { self.recover("新版本工作台未能就绪，正在恢复原应用") }
                 else {
-                    self.record(success: false, message: "新版本未确认就绪，请退出 Cage 后重试；原应用备份已保留")
+                    self.record(success: false, message: "新版本未确认就绪，请退出 Super Cage 后重试；原应用备份已保留")
                     self.exitHelper()
                 }
             }
@@ -155,13 +155,13 @@ final class CageUpdateInstaller: NSObject, NSApplicationDelegate {
             self.record(success: false, message: message)
             DispatchQueue.main.async {
                 guard canOpen else {
-                    let alert = NSAlert(); alert.messageText = "Cage 更新与自动恢复未完成"; alert.informativeText = message; alert.runModal()
+                    let alert = NSAlert(); alert.messageText = "Super Cage 更新与自动恢复未完成"; alert.informativeText = message; alert.runModal()
                     self.exitHelper(); return
                 }
                 let configuration = NSWorkspace.OpenConfiguration(); configuration.activates = true; configuration.createsNewApplicationInstance = true; configuration.environment = self.inheritedProfile()
                 NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: self.plan.target), configuration: configuration) { app, _ in
                     if app == nil {
-                        let alert = NSAlert(); alert.messageText = "Cage 更新未完成"; alert.informativeText = message; alert.runModal()
+                        let alert = NSAlert(); alert.messageText = "Super Cage 更新未完成"; alert.informativeText = message; alert.runModal()
                     }
                     self.exitHelper()
                 }

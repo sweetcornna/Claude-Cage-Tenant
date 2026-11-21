@@ -119,7 +119,7 @@ func (s *Server) guestInstallView() (guestInstallView, error) {
 
 func (s *Server) guestInstallation(w http.ResponseWriter, r *http.Request) {
 	if !s.hasTrustedView(r) || !s.localVMStorage() {
-		http.Error(w, "请在本机 Cage 窗口选择客户机系统", http.StatusForbidden)
+		http.Error(w, "请在本机 Super Cage 窗口选择客户机系统", http.StatusForbidden)
 		return
 	}
 	v, err := s.guestInstallView()
@@ -204,7 +204,7 @@ func (s *Server) resumePendingMacOSInstall(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if !s.hasTrustedView(r) || s.macosGuest != nil || s.windowsGuest != nil || !s.localVMStorage() {
-		http.Error(w, "请在本机 Cage 窗口恢复原 macOS 安装", http.StatusForbidden)
+		http.Error(w, "请在本机 Super Cage 窗口恢复原 macOS 安装", http.StatusForbidden)
 		return
 	}
 	s.beginGuestInstallMode(w, r, guestInstallRequest{System: guestos.MacOS}, true, recovery.User)
@@ -228,7 +228,7 @@ func guestInstallFailureMessage(system string, err error) error {
 
 func (s *Server) beginGuestInstallMode(w http.ResponseWriter, r *http.Request, in guestInstallRequest, guiAuthorize bool, recoveryUser string) {
 	if in.System == guestos.MacOS && !s.account.view().MacOSCredentialsReady {
-		http.Error(w, "请先注册或确认 Cage 账密，再安装 macOS 客机", http.StatusConflict)
+		http.Error(w, "请先注册或确认 Super Cage 账密，再安装 macOS 客机", http.StatusConflict)
 		return
 	}
 	v, err := s.guestInstallView()
@@ -268,7 +268,7 @@ func (s *Server) beginGuestInstallMode(w http.ResponseWriter, r *http.Request, i
 		install.Source = plan
 	} else if catalog {
 		if in.Media != "" || in.SHA256 != "" || in.EditorTerms {
-			requestError(w, errors.New("Ubuntu 使用 Cage 校验过的官方镜像，无需另选安装介质"))
+			requestError(w, errors.New("Ubuntu 使用 Super Cage 校验过的官方镜像，无需另选安装介质"))
 			return
 		}
 		plan, err := linuxGuestImagePlan(r.Context(), s.profile, in.System, runtime.GOARCH)

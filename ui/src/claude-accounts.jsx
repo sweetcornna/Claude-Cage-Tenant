@@ -377,7 +377,7 @@ export function ClaudeAccountsPanel({ store, running, environmentBusy, tabs, log
     {loginNotice && <p className="claude-profile-note" role="status">{loginNotice}</p>}
     {detectionError && <p className="account-error" role="alert">{detectionError}</p>}
     {usageUnavailable && !environment && <p className="claude-profile-note" role="status">{usageUnavailable}</p>}
-    {!running ? <p className="claude-profile-note">启动 Cage 环境后可检测普通终端的登录，也可登录新账号。</p> :
+    {!running ? <p className="claude-profile-note">启动 Super Cage 环境后可检测普通终端的登录，也可登录新账号。</p> :
       detectionStatus === "offline" ? <p className="claude-profile-note">工作环境就绪后可检测和登录账号。</p> :
       detectionStatus === "signed_out" && <p className="claude-profile-note">普通终端尚未登录 Claude 订阅。可在其中运行 <code>claude auth login</code>，登录后会在这里出现。</p>}
     <div className="claude-list-heading">

@@ -66,7 +66,7 @@ internal static class Backend
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         timeout.CancelAfter(deadline ?? TimeSpan.FromMinutes(3));
         using var process = new Process { StartInfo = StartInfo(executable, arguments) };
-        if (!process.Start()) throw new IOException("无法启动 Cage 后台");
+        if (!process.Start()) throw new IOException("无法启动 Super Cage 后台");
         using var abort = timeout.Token.Register(() => { try { if (!process.HasExited) process.Kill(); } catch (InvalidOperationException) { } });
         try
         {
@@ -74,7 +74,7 @@ internal static class Backend
             var text = await ReadLimited(process.StandardOutput, outputLimit, timeout.Token);
             await process.WaitForExitAsync(timeout.Token); await errors;
             try { return (process.ExitCode, JsonDocument.Parse(text).RootElement.Clone()); }
-            catch (JsonException) { throw new IOException("Cage 后台未返回有效状态，请查看工作台日志"); }
+            catch (JsonException) { throw new IOException("Super Cage 后台未返回有效状态，请查看工作台日志"); }
         }
         finally
         {

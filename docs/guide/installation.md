@@ -1,6 +1,6 @@
 ---
 title: 安装与首次启动
-description: 安装适合电脑的 Cage，选择客机系统和数据盘，完成第一次环境启动。
+description: 安装适合电脑的 Super Cage，选择客机系统和数据盘，完成第一次环境启动。
 group: 开始使用
 order: 1
 keywords: 下载 安装 客机 macOS Windows Debian Apple Silicon Hyper-V WHPX KVM 账户 密码 镜像 继续安装
@@ -11,22 +11,22 @@ keywords: 下载 安装 客机 macOS Windows Debian Apple Silicon Hyper-V WHPX K
 
 | 平台 | 要求与安装方式 |
 | --- | --- |
-| macOS | Apple Silicon、macOS 14+。打开 `.dmg`，将 Cage 拖入“应用程序”，再从那里启动。Intel Mac 暂不支持。 |
+| macOS | Apple Silicon、macOS 14+。打开 `.dmg`，将 Super Cage 拖入“应用程序”，再从那里启动。Intel Mac 暂不支持。 |
 | Windows | Windows 10 22H2 / 11、x64。运行 `.exe` 安装器，按所选客机准备 Hyper-V 或 Windows 虚拟机监控程序平台，并在系统要求时重启。未签名预览包会明确标注。 |
-| Linux | Debian 12 / Ubuntu 22.04 / 24.04、x86_64。需要 KVM 与当前用户的访问权限。执行 `sudo apt install ./Cage-<版本>-linux-amd64.deb` 补齐应用依赖，再从应用菜单打开。 |
+| Linux | Debian 12 / Ubuntu 22.04 / 24.04、x86_64。需要 KVM 与当前用户的访问权限。执行 `sudo apt install ./Super-Cage-<版本>-linux-amd64.deb` 补齐应用依赖，再从应用菜单打开。 |
 
 Windows ARM64 和 Linux ARM64 暂不支持。平台依赖详情见 [Windows 指南](https://github.com/Lee-xeo/Claude-Cage/blob/main/docs/windows.md)与 [Linux 指南](https://github.com/Lee-xeo/Claude-Cage/blob/main/docs/linux.md)。
 
-这里选择的是运行 Cage 的主机平台。虚拟机里的客机系统在首次创建环境时选择：Apple 芯片 Mac 可用 macOS 或 Debian；具备完整 Hyper-V 的 Windows 11 专业版、企业版和教育版可用 Windows 11 或 Debian；Linux 主机可选择与本机同发行版的系统或 Debian 13。具体组合见[选择客机系统](guest-systems.md)。Cage 的 macOS 14+ 运行要求与系统克隆条件分别判断；当前 Mac 克隆入口要求 macOS 26.4+。
+这里选择的是运行 Super Cage 的主机平台。虚拟机里的客机系统在首次创建环境时选择：Apple 芯片 Mac 可用 macOS 或 Debian；具备完整 Hyper-V 的 Windows 11 专业版、企业版和教育版可用 Windows 11 或 Debian；Linux 主机可选择与本机同发行版的系统或 Debian 13。具体组合见[选择客机系统](guest-systems.md)。Super Cage 的 macOS 14+ 运行要求与系统克隆条件分别判断；当前 Mac 克隆入口要求 macOS 26.4+。
 
 <figure class="guide-shot">
-  <a href="../../www/public/docs/screenshots/account-setup.jpg" target="_blank" rel="noopener" aria-label="查看原图：首次创建 Cage 账户"><img src="../../www/public/docs/screenshots/account-setup.jpg" alt="首次创建 Cage 账户" width="2560" height="1764" loading="lazy" decoding="async" /></a>
-  <figcaption>首次创建 Cage 账户。截图版本：0.1.6-alpha-preview（开发构建） · macOS 原生应用 · 2026-11-07。<a href="../../www/public/docs/screenshots/account-setup.jpg" target="_blank" rel="noopener">查看原图（2560 × 1764） ↗</a></figcaption>
+  <a href="../../www/public/docs/screenshots/account-setup.jpg" target="_blank" rel="noopener" aria-label="查看原图：首次创建 Super Cage 账户"><img src="../../www/public/docs/screenshots/account-setup.jpg" alt="首次创建 Super Cage 账户" width="2560" height="1764" loading="lazy" decoding="async" /></a>
+  <figcaption>首次创建 Super Cage 账户。截图版本：0.1.6-alpha-preview（开发构建） · macOS 原生应用 · 2026-11-07。<a href="../../www/public/docs/screenshots/account-setup.jpg" target="_blank" rel="noopener">查看原图（2560 × 1764） ↗</a></figcaption>
 </figure>
 
-## 创建 Cage 账户
+## 创建 Super Cage 账户
 
-选择用户名和密码登录时，设置用户名和至少 8 个字符的密码。这个账户用于解锁当前 Cage，Claude 订阅需要另外在环境里登录。注册后请保存恢复密钥，忘记密码时可在登录页使用它重置；保存与补设步骤见[账户恢复](settings.md#保存恢复密钥)。
+选择用户名和密码登录时，设置用户名和至少 8 个字符的密码。这个账户用于解锁当前 Super Cage，Claude 订阅需要另外在环境里登录。注册后请保存恢复密钥，忘记密码时可在登录页使用它重置；保存与补设步骤见[账户恢复](settings.md#保存恢复密钥)。
 
 包含本机信任登录的较新桌面构建还可选择“信任此电脑并进入”，也可选“使用用户名和密码”进入下图所示的流程。已有密码账户保持原来的登录方式；本机信任的适用范围见[受信任的本机登录](https://github.com/Lee-xeo/Claude-Cage/blob/main/docs/getting-started.md#受信任的本机登录)。
 
@@ -36,7 +36,7 @@ Windows ARM64 和 Linux ARM64 暂不支持。平台依赖详情见 [Windows 指�
 
 ## 初始化系统与存储
 
-首次登录后，Cage 显示独立的初始化界面。先选择适合项目的客机系统，可选择“自动匹配本机系统版本”或具体系统。自动匹配在下一步显示对应的官方镜像，安装干净的独立系统，主机个人文件与登录资料不会复制。以后启动沿用原系统和磁盘，更新 Cage 不会替换客机系统。
+首次登录后，Super Cage 显示独立的初始化界面。先选择适合项目的客机系统，可选择“自动匹配本机系统版本”或具体系统。自动匹配在下一步显示对应的官方镜像，安装干净的独立系统，主机个人文件与登录资料不会复制。以后启动沿用原系统和磁盘，更新 Super Cage 不会替换客机系统。
 
 “存储目录”已填入默认位置。需要更换时直接编辑，或点击“选择文件夹”选定本地磁盘上的专用空文件夹；点击“下一步：配置代理”时保存，目录无效时留在当前页提示修改。Windows 安装器里的程序目录与环境数据目录分开；例如应用装在 C 盘，环境可放在 `D:\CageData`。
 
@@ -49,10 +49,10 @@ Mac、Linux 使用默认配置时，环境数据放在用户主目录的 `.claud
 ## 导入代理并启动
 
 1. 点击“下一步：配置代理”，添加 Clash/Mihomo YAML 订阅、本地配置或手动 HTTP/SOCKS5 节点。详细步骤见[网络与代理](network.md)。
-2. 选择最终出口，点击“应用代理”。Cage 使用独立核心，不会自动采用本机 Clash 当前所选节点。
+2. 选择最终出口，点击“应用代理”。Super Cage 使用独立核心，不会自动采用本机 Clash 当前所选节点。
 3. 核对匹配的系统镜像、下载量和空间要求，点击“开始安装”。
 4. 留在初始化界面查看下载、校验、系统安装和工具配置进度。macOS 客机安装后自动登录，并逐项打开需要确认的权限页面；按画面说明打开对应开关即可，「文件系统扩展」按钮会直接展开正确面板。系统权限通过后继续确认工作区访问；需要文件夹授权时，初始化页面直接提供授权窗口入口，验证后继续联网检查。失败时按当前步骤的提示重试；“操作详情”显示具体错误与检查结果，完整记录可在“日志与诊断”导出。已完成系统安装的环境无需重新下载或安装。
-5. 客机可用且网络与隔离检查通过后，点击“进入工作台”。以后打开 Cage 直接进入原工作台，环境停止时可以直接启动使用。只需连接远程服务器时，初始化界面的“只连接 SSH 主机”可跳过本机安装。
+5. 客机可用且网络与隔离检查通过后，点击“进入工作台”。以后打开 Super Cage 直接进入原工作台，环境停止时可以直接启动使用。只需连接远程服务器时，初始化界面的“只连接 SSH 主机”可跳过本机安装。
 
 安装、启动与项目共享不要求修改主机全局 Git 配置，也不要求为裸仓库保护升级 Git。
 
@@ -60,7 +60,7 @@ Mac、Linux 使用默认配置时，环境数据放在用户主目录的 `.claud
 
 首次安装内容取决于客机系统。克隆入口优先复用已校验的匹配材料，缺少时下载官方镜像。macOS 使用 Apple IPSW；Windows 克隆使用匹配的 Microsoft ESD，手动安装可选择官方 ISO；Linux 克隆使用对应发行版的云镜像。Debian 13 基础镜像约 320–325 MiB，开发工具另行安装。镜像来源、系统许可和存储要求见[客机系统指南](guest-systems.md#下载量与磁盘空间)。
 
-系统镜像、镜像版本目录和在主机上预备的 macOS 应用与开发工具包通过主机网络下载，遵循主机代理设置；未配置代理时直连官方源。使用 Clash 等软件时，可开启其系统代理或 TUN，实际出口由该软件对下载网站的规则决定。已选择的主机代理连接失败、明确配置的 PAC 解析失败时，下载会报错，不自动回退直连。客机内的进程和下载任务使用 Cage 的独立代理，官方源与备用镜像的选择及平台设置见[系统镜像的下载网络](network.md#系统镜像的下载网络)。
+系统镜像、镜像版本目录和在主机上预备的 macOS 应用与开发工具包通过主机网络下载，遵循主机代理设置；未配置代理时直连官方源。使用 Clash 等软件时，可开启其系统代理或 TUN，实际出口由该软件对下载网站的规则决定。已选择的主机代理连接失败、明确配置的 PAC 解析失败时，下载会报错，不自动回退直连。客机内的进程和下载任务使用 Super Cage 的独立代理，官方源与备用镜像的选择及平台设置见[系统镜像的下载网络](network.md#系统镜像的下载网络)。
 
 Debian 初始虚拟磁盘容量上限为 24 GiB，macOS 和 Windows 需为系统及开发工具留出更多空间。实际占用随安装和使用增加，创建前查看所选版本的要求。Claude Desktop 按需单独下载。随后启动会复用工具、文件与登录资料。
 

@@ -54,7 +54,7 @@ func (s *Server) projectDirectories(w http.ResponseWriter, r *http.Request) {
 		return false
 	}
 	if private(real) {
-		http.Error(w, "Cage 配置目录不能作为项目浏览", 403)
+		http.Error(w, "Super Cage 配置目录不能作为项目浏览", 403)
 		return
 	}
 	directory, err := os.Open(real)

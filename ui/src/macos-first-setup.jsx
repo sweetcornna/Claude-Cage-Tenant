@@ -10,9 +10,9 @@ import "./initialization.css";
 
 const steps = [
   { id: "screen", label: "窗口录制", hint: "打开 Cage Guest Window 的窗口录制开关。如果提示「退出并重新打开」，按提示操作。" },
-  { id: "input", label: "辅助功能", hint: "打开 Cage Guest Window 的辅助功能开关，允许 Cage 操作客机窗口。" },
+  { id: "input", label: "辅助功能", hint: "打开 Cage Guest Window 的辅助功能开关，允许 Super Cage 操作客机窗口。" },
   { id: "projects", label: "文件系统扩展", hint: "打开 macFUSE 和 macFUSE (local) 两个开关，用于在客机中访问你选择的项目。" },
-  { id: "sharing", label: "屏幕共享", hint: "在「系统设置 → 通用 → 共享」中打开「屏幕共享」，并允许当前普通客机用户访问。确认开关已打开后，点击「已开启，重新检查」。Cage 会尝试连接客机的屏幕共享服务。" },
+  { id: "sharing", label: "屏幕共享", hint: "在「系统设置 → 通用 → 共享」中打开「屏幕共享」，并允许当前普通客机用户访问。确认开关已打开后，点击「已开启，重新检查」。Super Cage 会尝试连接客机的屏幕共享服务。" },
 ];
 
 export function MacOSFirstSetup() {
@@ -142,7 +142,7 @@ export function MacOSFirstSetup() {
   const pending = steps.find(({ id }) => !permissions[id]);
   const selected = steps.find(({ id }) => id === permissionPage);
   const projectInstallation = permissionPage === "projects" && permissions.project_install_required;
-  const selectedHint = projectInstallation ? "先在客机中完成 macFUSE 官方安装器的安装与管理员授权。安装完成后，Cage 会打开文件系统扩展设置，再开启两个开关。" : selected.hint;
+  const selectedHint = projectInstallation ? "先在客机中完成 macFUSE 官方安装器的安装与管理员授权。安装完成后，Super Cage 会打开文件系统扩展设置，再开启两个开关。" : selected.hint;
   const running = Boolean(state?.job?.running);
   const canOperate = Boolean(state?.vm_running && !running && !busy);
   const canFinish = Boolean(state?.ready && !account.macos_password_pending && !pending && !readError);
@@ -151,7 +151,7 @@ export function MacOSFirstSetup() {
     !state.ready ? "虚拟 Mac 已启动，正在等待客机连接。若停在登录画面，请打开客机画面完成登录。" :
     desktopWaiting ? "虚拟 Mac 正在完成首次登录并启动桌面，通常需要 1–3 分钟。桌面就绪后会自动打开第一项授权。" :
     readError ? "暂时无法确认权限状态，已显示的结果供参考。恢复连接后会继续检查。" :
-    pending ? `当前需要确认「${pending.label}」。完成后 Cage 会自动检查并继续。` :
+    pending ? `当前需要确认「${pending.label}」。完成后 Super Cage 会自动检查并继续。` :
     completionFailed ? "四项权限已验证，最后的设置收尾未完成。请重试完成设置。" : "四项权限已验证，正在保存设置；随后继续工作区授权和联网检查。";
   const sharingControls = <>
     <button type="button" disabled={!canOperate} onClick={() => act("sharing")}>{busy ? "正在处理…" : "打开屏幕共享设置"}</button>
@@ -191,7 +191,7 @@ export function MacOSFirstSetup() {
     </section>
     {failure && <section className="initialization-notice" role="alert"><h2>这一步尚未完成</h2><p>{failure}</p><p>已有安装进度会保留。可以重新打开当前设置页，或重新检查状态后继续。</p></section>}
     <details className="mac-setup-help"><summary>管理员密码与找不到设置页时的帮助</summary>
-      <p>系统要求管理员时，用户名填 <strong>cagesetup</strong>，{account.macos_password_pending ? "密码同步完成前可能仍需原客机密码。" : account.macos_credentials_ready ? "密码与 Cage 账户相同。" : "在客机画面中选中密码框，再点击「填写授权密码」。"}你确认授权后继续；此临时管理员在收尾时停用。</p>
+      <p>系统要求管理员时，用户名填 <strong>cagesetup</strong>，{account.macos_password_pending ? "密码同步完成前可能仍需原客机密码。" : account.macos_credentials_ready ? "密码与 Super Cage 账户相同。" : "在客机画面中选中密码框，再点击「填写授权密码」。"}你确认授权后继续；此临时管理员在收尾时停用。</p>
       <p>文件系统扩展的手动入口：客机「系统设置 → 通用 → 登录项与扩展 → 按类别 → 文件系统扩展」，同时打开 macFUSE 和 macFUSE (local)。</p>
       <p>屏幕共享的手动入口：客机「系统设置 → 通用 → 共享」，打开「屏幕共享」并允许当前普通客机用户。</p>
       <div className="initialization-recovery">{steps.map(({ id, label }) => <button key={id} disabled={!canOperate} onClick={() => act(id)}>重新打开{label}</button>)}</div>

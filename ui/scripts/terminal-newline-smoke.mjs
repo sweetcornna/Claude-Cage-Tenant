@@ -25,7 +25,7 @@ for (const platform of ["MacIntel", "Win32", "Linux x86_64"]) {
       remote.send(Buffer.from("$ "));
     });
     await page.reload();
-    await page.getByRole("button", { name: "启动 Cage 环境", exact: true }).click();
+    await page.getByRole("button", { name: "启动 Super Cage 环境", exact: true }).click();
     await page.getByRole("button", { name: "新建终端", exact: true }).first().click();
     await page.getByRole("menuitem", { name: "普通终端", exact: true }).click();
     await page.waitForFunction(() => document.querySelector(".xterm-rows")?.textContent.includes("$"));

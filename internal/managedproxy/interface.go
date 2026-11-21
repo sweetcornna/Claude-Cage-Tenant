@@ -106,7 +106,7 @@ func selectPhysicalInterface(route, hardware, nwi string, usable map[string]bool
 	if len(reachable) > 0 {
 		return reachable[0], nil
 	}
-	return "", errors.New("未找到可用的物理 IPv4 网卡；Cage 外网保持关闭，请连接网络后重试")
+	return "", errors.New("未找到可用的物理 IPv4 网卡；Super Cage 外网保持关闭，请连接网络后重试")
 }
 
 // BindInterface changes only the core's host transport. MATCH routing and

@@ -30,7 +30,7 @@ for (const platform of ["MacIntel", "Win32", "Linux x86_64"]) {
       socket.send(Buffer.from(`\x1b]52;c;${Buffer.from("旧复制不得重放").toString("base64")}\x07CopyMe1234\r\n$ `));
     });
     await page.reload();
-    await page.getByRole("button", { name: "启动 Cage 环境", exact: true }).click();
+    await page.getByRole("button", { name: "启动 Super Cage 环境", exact: true }).click();
     await page.getByRole("button", { name: "新建终端", exact: true }).first().click();
     await page.getByRole("menuitem", { name: "普通终端", exact: true }).click();
     const line = await page.locator(".xterm-rows").getByText("CopyMe1234", { exact: true }).first().boundingBox();

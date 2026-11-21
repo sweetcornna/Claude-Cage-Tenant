@@ -144,7 +144,7 @@ func (s *Server) synchronizeEnvironment() error {
 		return s.maintainNativeComponents(false)
 	}
 	if !s.vmRunning() {
-		return errors.New("请先启动 Cage 环境。")
+		return errors.New("请先启动 Super Cage 环境。")
 	}
 	if err := s.closeProxyGate("正在更新环境组件，外网暂时关闭"); err != nil {
 		return err
@@ -183,7 +183,7 @@ func (s *Server) upgradeEnvironmentTools() error {
 		return s.maintainNativeComponents(true)
 	}
 	if !s.vmRunning() {
-		return errors.New("请先启动 Cage 环境。")
+		return errors.New("请先启动 Super Cage 环境。")
 	}
 	s.mu.Lock()
 	allowed := s.toolsNetworkAllowedLocked()

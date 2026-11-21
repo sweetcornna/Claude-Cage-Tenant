@@ -67,7 +67,7 @@ try {
   await input.press("Enter");
   await dialog.getByRole("button", { name: "开发环境", exact: true }).click();
   await dialog.waitFor({ state: "hidden" });
-  const setup = page.getByRole("heading", { name: "为 Cage 准备独立环境", exact: true });
+  const setup = page.getByRole("heading", { name: "为 Super Cage 准备独立环境", exact: true });
   await setup.waitFor();
   await button.click();
   assert.equal(await dialog.getByRole("button", { name: /开发环境.*当前虚拟机/ }).isDisabled(), true);

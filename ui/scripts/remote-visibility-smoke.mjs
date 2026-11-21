@@ -15,8 +15,8 @@ page.on("console", (message) => {
   if (message.type() === "error") browserErrors.push(message.text());
 });
 try {
-  await page.getByRole("button", { name: "启动 Cage 环境", exact: true }).click();
-  await page.getByRole("heading", { name: "Cage 环境已就绪", exact: true }).waitFor();
+  await page.getByRole("button", { name: "启动 Super Cage 环境", exact: true }).click();
+  await page.getByRole("heading", { name: "Super Cage 环境已就绪", exact: true }).waitFor();
   await page.getByRole("button", { name: "打开浏览器", exact: true }).click();
   await page.waitForFunction(() => Boolean(document.querySelector(".remote-canvas canvas")));
   await page.getByText("正在连接画面", { exact: true }).waitFor({ state: "hidden" });

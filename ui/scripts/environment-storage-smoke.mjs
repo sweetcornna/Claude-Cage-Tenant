@@ -19,7 +19,7 @@ try {
     const input = route.request().postDataJSON();
     writes.push(input);
     const rejected = input.directory.endsWith("occupied");
-    const job = { kind: "storage", id: String(writes.length), running: !rejected && input.migrate, error: rejected ? "目录必须为空" : "", message: "正在复制并校验虚拟磁盘，请保持 Cage 开启。" };
+    const job = { kind: "storage", id: String(writes.length), running: !rejected && input.migrate, error: rejected ? "目录必须为空" : "", message: "正在复制并校验虚拟磁盘，请保持 Super Cage 开启。" };
     state.status.job = job;
     if (!rejected && !job.running) location = { ...location, directory: input.directory, backup: location.has_environment ? location.directory : "" };
     return route.fulfill({ json: job });

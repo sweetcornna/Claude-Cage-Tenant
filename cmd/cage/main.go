@@ -33,27 +33,27 @@ import (
 	"syscall"
 )
 
-const help = `Claude Cage — local isolated Claude development
+const help = `Super Cage — local isolated Claude development
 
-cage desktop       Open the unified Cage workbench (desktop launcher)
+cage desktop       Open the unified Super Cage workbench (desktop launcher)
 cage agent         Discover and use the versioned, JSON-only external Agent interface
 cage serve         Run its private localhost control service
 cage server-entry --json  Issue a private SSH remote connection entry
 cage container-configure --json  Configure a Linux container from JSON stdin
-cage init          Create a private profile; add and select nodes in Cage settings
+cage init          Create a private profile; add and select nodes in Super Cage settings
 cage check         Verify proxy transport (no VM required)
 cage guest-os --json  Check host prerequisites for a same-system guest
                      On Windows, add --vm-id GUID to inspect one Hyper-V VM
-cage proxy-start   Start Cage's bundled proxy core with the applied node
-cage proxy-stop    Stop Cage's core and close external networking
+cage proxy-start   Start Super Cage's bundled proxy core with the applied node
+cage proxy-stop    Stop Super Cage's core and close external networking
 cage setup         Build the isolated base VM through the specified proxy
-cage up            Start the shared Cage environment, editor and browser
+cage up            Start the shared Super Cage environment, editor and browser
 cage login         Start cage services, then Claude's login flow inside the VM
 cage access        Inspect legacy viewer credentials (diagnostics only)
 cage shell         Open a shell in the shared environment
 cage run COMMAND   Execute a command in the shared environment
 cage claude        Run Claude Code in the shared environment
-cage stop          Stop the shared Cage environment and its proxy core
+cage stop          Stop the shared Super Cage environment and its proxy core
                    --keep-proxy keeps the core running for an environment restart
 cage list          List this cage profile's VMs
 cage doctor        Diagnose the VM
@@ -93,7 +93,7 @@ func run() int {
 	}
 	// The shared commands otherwise name agent-vm and suggest its installer.
 	cli.Command = "claude-cage"
-	cli.UpdateHint = "update Cage from the app, or with the installer or package that installed it"
+	cli.UpdateHint = "update Super Cage from the app, or with the installer or package that installed it"
 	args := os.Args[1:]
 	if len(args) > 0 && args[0] == "host-download" {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -441,7 +441,7 @@ func run() int {
 			if err := openWorkbench(entry.URL); err != nil {
 				return fail(err)
 			}
-			fmt.Println("Cage workbench opened.")
+			fmt.Println("Super Cage workbench opened.")
 		}
 		return 0
 	}
@@ -647,7 +647,7 @@ func run() int {
 		if err := workbench.StartGuestServices(context.Background(), path, os.Stdout, os.Stderr); err != nil {
 			return fail(err)
 		}
-		fmt.Println("Cage local services are ready. Open Cage or run cage desktop to complete the required network checks. External networking stays closed until the workbench approves this VM; no local access password is required.")
+		fmt.Println("Super Cage local services are ready. Open Super Cage or run cage desktop to complete the required network checks. External networking stays closed until the workbench approves this VM; no local access password is required.")
 		if args[0] == "login" {
 			return cli.Main([]string{"run", "--tty", "bash", "-lc", "source /etc/profile.d/claude-cage.sh; exec claude auth login"}, cli.Stdio())
 		}

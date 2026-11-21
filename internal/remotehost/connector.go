@@ -61,12 +61,12 @@ func ServerEntryCommand(p HostProfile) (string, error) {
 // service. Instance identity persists independently of network addresses.
 func ValidateManifest(m ServerManifest) error {
 	if m.APIProtocol != APIProtocol {
-		return failure("protocol_incompatible", "云端 Cage 协议与客户端不兼容，请更新到兼容版本")
+		return failure("protocol_incompatible", "云端 Super Cage 协议与客户端不兼容，请更新到兼容版本")
 	}
 	supported := m.Platform == "linux" && (m.Runtime == "container" || m.Runtime == "lima") ||
 		m.Platform == "windows" && m.Runtime == "windows-remote"
 	if !instancePattern.MatchString(m.InstanceID) || !supported || len(m.Version) > 128 || hasControl(m.Version) {
-		return failure("manifest_invalid", "云端 Cage 身份响应无效")
+		return failure("manifest_invalid", "云端 Super Cage 身份响应无效")
 	}
 	u, err := url.Parse(m.Origin)
 	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || (u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1" && u.Hostname() != "::1") {
@@ -77,7 +77,7 @@ func ValidateManifest(m ServerManifest) error {
 		return failure("origin_refused", "云端服务端口无效")
 	}
 	if len(m.Ticket) < 32 || len(m.Ticket) > 512 || hasControl(m.Ticket) || len(m.Capabilities) > 64 {
-		return failure("manifest_invalid", "云端 Cage 连接票据无效")
+		return failure("manifest_invalid", "云端 Super Cage 连接票据无效")
 	}
 	if m.Runtime == "windows-remote" && !instancePattern.MatchString(m.RemoteView) || m.Runtime != "windows-remote" && m.RemoteView != "" {
 		return failure("manifest_invalid", "云端 Windows 视图凭据无效")
@@ -230,11 +230,11 @@ func connect(lifetime context.Context, p HostProfile, secrets ConnectSecrets, ph
 	decoder := json.NewDecoder(bytes.NewReader(output))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&manifest) != nil {
-		return nil, failure("manifest_invalid", "云端 Cage 未返回有效连接信息")
+		return nil, failure("manifest_invalid", "云端 Super Cage 未返回有效连接信息")
 	}
 	var extra any
 	if decoder.Decode(&extra) != io.EOF {
-		return nil, failure("manifest_invalid", "云端 Cage 返回了多余连接信息")
+		return nil, failure("manifest_invalid", "云端 Super Cage 返回了多余连接信息")
 	}
 	if err = ValidateManifest(manifest); err != nil {
 		return nil, err
@@ -275,13 +275,13 @@ func connect(lifetime context.Context, p HostProfile, secrets ConnectSecrets, ph
 	clear(body)
 	if err != nil {
 		s.Close()
-		return nil, failure("server_session_failed", "无法建立云端 Cage 会话")
+		return nil, failure("server_session_failed", "无法建立云端 Super Cage 会话")
 	}
 	io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 	response.Body.Close()
 	if response.StatusCode != http.StatusOK || len(jar.Cookies(origin)) == 0 {
 		s.Close()
-		return nil, failure("server_session_failed", "云端 Cage 未接受连接票据")
+		return nil, failure("server_session_failed", "云端 Super Cage 未接受连接票据")
 	}
 	if ready.Err() != nil {
 		s.Close()

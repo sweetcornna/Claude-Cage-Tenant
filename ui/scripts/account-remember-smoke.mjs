@@ -48,7 +48,7 @@ for (const platform of ["windows", "darwin", "linux"]) {
   const login = async (password = "fixture-password") => {
     await page.getByLabel("账户密码", { exact: true }).fill(password);
     const saved = password === "fixture-password" ? trustReply() : null;
-    await page.getByRole("button", { name: "解锁 Cage", exact: true }).click();
+    await page.getByRole("button", { name: "解锁 Super Cage", exact: true }).click();
     if (saved) await (await saved).finished();
   };
   const settings = async () => {
@@ -73,8 +73,8 @@ for (const platform of ["windows", "darwin", "linux"]) {
     assert.equal(actions.filter(a => a === "resume").length, 1);
 
     await menu().click();
-    await page.getByRole("menuitem", { name: /锁定 Cage/ }).click();
-    await page.getByRole("region", { name: "解锁 Cage", exact: true }).waitFor();
+    await page.getByRole("menuitem", { name: /锁定 Super Cage/ }).click();
+    await page.getByRole("region", { name: "解锁 Super Cage", exact: true }).waitFor();
     await page.reload();
     await remember().waitFor();
     assert.equal(await remember().isChecked(), true);
@@ -117,7 +117,7 @@ for (const platform of ["windows", "darwin", "linux"]) {
 
     Object.assign(state.account, { exists: false, unlocked: false, username: "", devices: {}, require_authentication: false });
     await page.reload();
-    await page.getByRole("heading", { name: "注册 Cage 账户", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "注册 Super Cage 账户", exact: true }).waitFor();
     await remember().waitFor();
     assert.equal(await remember().isChecked(), true);
     await page.getByLabel("用户名", { exact: true }).fill("测试工作区");

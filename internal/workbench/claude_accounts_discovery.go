@@ -58,7 +58,7 @@ func (s *Server) inspectClaudeDefault(parent context.Context, force bool) (claud
 	var empty claudeGuestSnapshot
 	epoch, unlocked := s.account.access()
 	if !unlocked {
-		return empty, time.Time{}, errors.New("Cage 已锁定，请先解锁")
+		return empty, time.Time{}, errors.New("Super Cage 已锁定，请先解锁")
 	}
 	ctx, cancel := context.WithTimeout(parent, 8*time.Second)
 	stop := context.AfterFunc(epoch, cancel)

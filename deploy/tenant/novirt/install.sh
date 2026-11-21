@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Install the Cage Tenant gateway on a Linux host without hardware
+# Install the Super Cage gateway on a Linux host without hardware
 # virtualization. Each workspace runs as an unprivileged Incus system
-# container. Run as root from the extracted Cage-Tenant-NoVirt bundle.
+# container. Run as root from the extracted Super-Cage-NoVirt bundle.
 set -euo pipefail
 
 bundle=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
@@ -90,7 +90,7 @@ done
 [[ $(id -u) == 0 ]] || die '请用 root 运行（sudo ./install.sh ...）'
 [[ -d /run/systemd/system ]] || die '需要 systemd'
 [[ -f /sys/fs/cgroup/cgroup.controllers ]] || die '需要 cgroup v2'
-[[ -x "$bundle/cage-tenant" && -x "$bundle/cage" && -f "$bundle/ui/tenant/index.html" ]] || die '请在解压后的 Cage-Tenant-NoVirt 目录中运行'
+[[ -x "$bundle/cage-tenant" && -x "$bundle/cage" && -f "$bundle/ui/tenant/index.html" ]] || die '请在解压后的 Super-Cage-NoVirt 目录中运行'
 case "$(uname -m)" in
   x86_64) arch=amd64 ;;
   aarch64) arch=arm64 ;;
@@ -210,7 +210,7 @@ if ! $allow_lan; then
   install -d -m 0755 /etc/cage-tenant
   cat > "$guard" <<EOF
 #!$nft_bin -f
-# Written by Cage Tenant install.sh: isolate workspaces on $network.
+# Written by Super Cage install.sh: isolate workspaces on $network.
 table inet cage_tenant_guard
 delete table inet cage_tenant_guard
 table inet cage_tenant_guard {
@@ -232,7 +232,7 @@ table inet cage_tenant_guard {
 EOF
   cat > "$guard_unit" <<EOF
 [Unit]
-Description=Cage Tenant workspace network isolation (nftables)
+Description=Super Cage workspace network isolation (nftables)
 DefaultDependencies=no
 Wants=network-pre.target
 Before=network-pre.target incus.service incus-startup.service cage-tenant.service shutdown.target
@@ -341,7 +341,7 @@ if $dev; then args+=(-dev); else args+=(-origin "$origin"); fi
 if $registration; then args+=(-enable-preview-registration); fi
 cat > /etc/systemd/system/cage-tenant.service <<EOF
 [Unit]
-Description=Cage Tenant gateway (Incus system containers)
+Description=Super Cage gateway (Incus system containers)
 After=network-online.target incus.service incus.socket
 Wants=network-online.target
 
@@ -363,7 +363,7 @@ systemctl is-active --quiet cage-tenant.service || { journalctl -u cage-tenant.s
 
 cat <<EOF
 
-Cage Tenant 无虚拟化版已安装。
+Super Cage 无虚拟化版已安装。
   门户：$origin
   网关：$listen（systemd 服务 cage-tenant，日志 journalctl -u cage-tenant）
   Incus 项目：$project，模板：cage-blank，网络：$network

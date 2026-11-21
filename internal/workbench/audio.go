@@ -50,7 +50,7 @@ func (s *Server) audio(w http.ResponseWriter, r *http.Request) {
 	available := !s.closing && !s.guestUpdateRequired
 	s.mu.Unlock()
 	if !available || !s.vmRunning() {
-		http.Error(w, "请先启动并更新 Cage 环境", http.StatusConflict)
+		http.Error(w, "请先启动并更新 Super Cage 环境", http.StatusConflict)
 		return
 	}
 	if !websocket.IsWebSocketUpgrade(r) {
