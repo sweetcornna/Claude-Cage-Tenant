@@ -254,9 +254,9 @@ func (s *Server) monitor(ctx context.Context) {
 
 // monitorEnvironmentRound runs one round of the environment monitor.
 //
-// The health probe of a ready Linux guest is read-only and runs without the
+// The health probe of a ready guest is read-only and runs without the
 // operation lock: user actions take that lock with TryLock and are refused
-// while it is held, so holding it across a guest round trip every five
+// while it is held, so holding it across guest round trips every five
 // seconds refused clicks. The lock is still taken to change the environment:
 // to attach, and for the instant it takes to mark the environment not ready.
 func (s *Server) monitorEnvironmentRound(m *environmentMonitor) {
@@ -265,39 +265,90 @@ func (s *Server) monitorEnvironmentRound(m *environmentMonitor) {
 		timing.stages = append(timing.stages, fmt.Sprintf("consecutive_lock_skips=%d", m.skipped))
 		s.recordMonitorTiming("environment", timing)
 	}()
-	linux := s.macosGuest == nil && s.windowsGuest == nil
-	if linux {
-		if s.busy() {
-			// A job owns the lifecycle and reattaches itself when it is done.
-			m.skipped, m.failures = 0, 0
-			timing.result = "job_running"
-			return
-		}
-		s.mu.Lock()
-		ready, token := s.ready, s.credentials.Token
-		s.mu.Unlock()
-		if ready {
-			s.monitorLinuxHealth(m, timing, token)
-			return
-		}
-		m.failures = 0
+	if s.busy() {
+		// A job owns the lifecycle and reattaches itself when it is done.
+		m.skipped, m.failures = 0, 0
+		timing.result = "job_running"
+		return
 	}
+	s.mu.Lock()
+	ready, token := s.ready, s.credentials.Token
+	s.mu.Unlock()
+	switch {
+	case s.windowsGuest != nil:
+		s.lockedEnvironmentRound(m, timing, true, false)
+	case s.macosGuest != nil:
+		s.monitorMacOSRound(m, timing, ready)
+	case ready:
+		s.monitorLinuxHealth(m, timing, token)
+	default:
+		m.failures = 0
+		s.lockedEnvironmentRound(m, timing, true, false)
+	}
+}
+
+// lockedEnvironmentRound attaches and/or runs the network tick under the
+// operation lock. It reports whether it ran.
+func (s *Server) lockedEnvironmentRound(m *environmentMonitor, timing *monitorTiming, attach, network bool) bool {
 	if !s.op.TryLock() {
 		m.skipped++
 		timing.result = "operation_lock_busy"
-		return
+		return false
 	}
 	defer s.op.Unlock()
 	m.skipped = 0
 	if s.busy() {
 		timing.result = "job_running"
-		return
+		return false
 	}
-	_ = s.attach()
-	timing.stage("environment_health")
-	if s.macosGuest != nil {
+	if attach {
+		_ = s.attach()
+		timing.stage("environment_health")
+	}
+	if network {
 		s.monitorNetworkTick()
 		timing.stage("network_tick")
+	}
+	return true
+}
+
+// monitorMacOSRound looks at a ready virtual Mac and its network inputs
+// without the operation lock, and takes the lock only when attach or the
+// network tick has something to do. A failed guest probe is tolerated once;
+// the second attaches under the lock, which marks the guest not ready if
+// its own probe fails too. Gate and VM changes attach at once.
+func (s *Server) monitorMacOSRound(m *environmentMonitor, timing *monitorTiming, ready bool) {
+	attach := !ready
+	if ready {
+		if job := s.jobs.snapshot().ID; job != m.job {
+			m.failures, m.job = 0, job
+		}
+		ctx, cancel := s.controlContext()
+		observed := s.observeMacOSGuest(ctx)
+		cancel()
+		timing.stage("environment_health")
+		switch observed {
+		case observedSteady:
+			m.failures = 0
+		case observedUnreachable:
+			m.failures++
+			attach = m.failures >= 2
+			if !attach {
+				timing.result = "health_failed_once"
+			}
+		default:
+			attach = true
+		}
+	} else {
+		m.failures = 0
+	}
+	networkTiming := s.startMonitorTiming()
+	network := s.networkRoundWanted(networkTiming)
+	if !network {
+		s.recordMonitorTiming("network", networkTiming)
+	}
+	if (attach || network) && s.lockedEnvironmentRound(m, timing, attach, network) && attach {
+		m.failures = 0
 	}
 }
 
