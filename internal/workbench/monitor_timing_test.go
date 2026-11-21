@@ -77,6 +77,8 @@ func TestSafetyMonitorRunsWhileOperationLockIsHeld(t *testing.T) {
 	s := testServer(t)
 	s.ready = true
 	s.safety.VerifiedAt = time.Now()
+	// The environment health probe runs without the lock; keep it off the guest.
+	installHealthGuest(t, s, &healthGuest{})
 	s.op.Lock()
 	s.startMonitors()
 	deadline := time.Now().Add(2 * time.Second)

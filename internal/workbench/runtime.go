@@ -222,52 +222,129 @@ func (s *Server) attach() error {
 	s.browserViews.background(s.changeBrowserVisibility)
 	return nil
 }
+
+// environmentMonitor carries the environment monitor's state between rounds.
+type environmentMonitor struct {
+	skipped int
+	// failures counts consecutive failed health probes of a ready Linux
+	// guest. One failure is tolerated: a single slow or lost reply would
+	// otherwise unmount the browser until a full attach rebuilds it. The
+	// count restarts when a job ran or the guest credentials changed, so two
+	// failures always belong to the same connection.
+	failures   int
+	job, token string
+}
+
 func (s *Server) monitor(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
-	skipped := 0
+	var state environmentMonitor
 	for ctx.Err() == nil {
-		timing := s.startMonitorTiming()
-		if s.op.TryLock() {
-			skipped = 0
-			if !s.busy() {
-				s.mu.Lock()
-				ready := s.ready
-				token := s.credentials.Token
-				s.mu.Unlock()
-				if !ready || s.macosGuest != nil || s.windowsGuest != nil {
-					_ = s.attach()
-				} else {
-					ctx, cancel := s.controlContext()
-					_, err := s.guestAPI(ctx, token, "GET", "/health", nil)
-					cancel()
-					if err != nil {
-						s.mu.Lock()
-						s.ready = false
-						s.mu.Unlock()
-					}
-				}
-				timing.stage("environment_health")
-				if s.macosGuest != nil {
-					s.monitorNetworkTick()
-					timing.stage("network_tick")
-				}
-			} else {
-				timing.result = "job_running"
-			}
-			s.op.Unlock()
-		} else {
-			skipped++
-			timing.result = "operation_lock_busy"
-		}
-		timing.stages = append(timing.stages, fmt.Sprintf("consecutive_lock_skips=%d", skipped))
-		s.recordMonitorTiming("environment", timing)
+		s.monitorEnvironmentRound(&state)
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		}
 	}
+}
+
+// monitorEnvironmentRound runs one round of the environment monitor.
+//
+// The health probe of a ready Linux guest is read-only and runs without the
+// operation lock: user actions take that lock with TryLock and are refused
+// while it is held, so holding it across a guest round trip every five
+// seconds refused clicks. The lock is still taken to change the environment:
+// to attach, and for the instant it takes to mark the environment not ready.
+func (s *Server) monitorEnvironmentRound(m *environmentMonitor) {
+	timing := s.startMonitorTiming()
+	defer func() {
+		timing.stages = append(timing.stages, fmt.Sprintf("consecutive_lock_skips=%d", m.skipped))
+		s.recordMonitorTiming("environment", timing)
+	}()
+	linux := s.macosGuest == nil && s.windowsGuest == nil
+	if linux {
+		if s.busy() {
+			// A job owns the lifecycle and reattaches itself when it is done.
+			m.skipped, m.failures = 0, 0
+			timing.result = "job_running"
+			return
+		}
+		s.mu.Lock()
+		ready, token := s.ready, s.credentials.Token
+		s.mu.Unlock()
+		if ready {
+			s.monitorLinuxHealth(m, timing, token)
+			return
+		}
+		m.failures = 0
+	}
+	if !s.op.TryLock() {
+		m.skipped++
+		timing.result = "operation_lock_busy"
+		return
+	}
+	defer s.op.Unlock()
+	m.skipped = 0
+	if s.busy() {
+		timing.result = "job_running"
+		return
+	}
+	_ = s.attach()
+	timing.stage("environment_health")
+	if s.macosGuest != nil {
+		s.monitorNetworkTick()
+		timing.stage("network_tick")
+	}
+}
+
+// monitorLinuxHealth probes a ready Linux guest without the operation lock.
+// The second consecutive failure marks the environment not ready; the next
+// round then reattaches under the lock as before.
+func (s *Server) monitorLinuxHealth(m *environmentMonitor, timing *monitorTiming, token string) {
+	// Lifecycle changes that make the guest ready again are jobs (start,
+	// restart, settings, safety and component updates all attach inside a job)
+	// or this monitor's own attach. A job submitted while the probe was in
+	// flight has a new ID, so its outcome is never overwritten by a stale
+	// failure.
+	job := s.jobs.snapshot().ID
+	if job != m.job || token != m.token {
+		m.failures, m.job, m.token = 0, job, token
+	}
+	ctx, cancel := s.controlContext()
+	_, err := s.guestAPI(ctx, token, "GET", "/health", nil)
+	cancel()
+	timing.stage("environment_health")
+	if err == nil {
+		m.failures = 0
+		return
+	}
+	m.failures++
+	if m.failures < 2 {
+		timing.result = "health_failed_once"
+		return
+	}
+	if !s.op.TryLock() {
+		// Keep the count: the next failed probe tries again.
+		m.skipped++
+		timing.result = "operation_lock_busy"
+		return
+	}
+	defer s.op.Unlock()
+	m.skipped = 0
+	current := s.jobs.snapshot()
+	s.mu.Lock()
+	stale := current.Running || current.ID != job || !s.ready || s.credentials.Token != token
+	if !stale {
+		s.ready = false
+	}
+	s.mu.Unlock()
+	m.failures = 0
+	if stale {
+		timing.result = "health_failed_superseded"
+		return
+	}
+	timing.result = "health_failed"
 }
 
 func (s *Server) runCage(args ...string) error {
