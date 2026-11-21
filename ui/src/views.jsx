@@ -28,6 +28,8 @@ import { displayRestoreAfterMs } from "./display-session.mjs";
 import { displayKey, displaySessions } from "./remote-session.js";
 import { RefreshCw, Clipboard, ArrowUpRight } from "lucide-react";
 import { SessionAccount } from "./session-account";
+import { createTerminalRenderer } from "./terminal-renderer.mjs";
+import { cagePerf } from "./display-perf.mjs";
 import "@xterm/xterm/css/xterm.css";
 
 const terminalAccountRequest = (path, options) => api("/cli" + path, options.body);
@@ -297,7 +299,8 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
   const box = useRef(),
     instance = useRef(),
     fit = useRef(),
-    socket = useRef();
+    socket = useRef(),
+    renderer = useRef();
   // "connecting" until the first stream opens, then "open" or "retrying";
   // "stalled" after repeated quick failures and "ended" once the session exits.
   const [link, setLink] = useState("connecting"),
@@ -354,6 +357,12 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
     terminal.open(box.current);
     instance.current = terminal;
     fit.current = fitter;
+    // WebGL draws the grid off the main thread's layout work; the DOM
+    // renderer stays as the fallback. See terminal-renderer.mjs.
+    const perf = cagePerf().terminal(session.id);
+    const draw = createTerminalRenderer(terminal, { onChange: (kind) => { perf.renderer = kind; } });
+    renderer.current = draw;
+    if (visibleRef.current) draw.show();
     // One xterm lives as long as the view; streams come and go beneath it.
     let ws = null;
     const isOpen = () => ws?.readyState === WebSocket.OPEN;
@@ -718,6 +727,8 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
       host.removeEventListener("drop", onDrop);
       onControls?.(null);
       observer.disconnect();
+      draw.dispose();
+      renderer.current = null;
       if (ws) {
         const current = ws;
         ws = null;
@@ -729,6 +740,10 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
       instance.current = null;
     };
   }, [session.id]);
+  useEffect(() => {
+    if (visible) renderer.current?.show();
+    else renderer.current?.hide();
+  }, [visible]);
   useEffect(() => {
     if (visible) {
       fit.current?.fit();

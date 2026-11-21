@@ -87,6 +87,12 @@ export async function createWorkbench({
     active: "",
     sequence: 0,
   };
+  // Terminals draw with the DOM renderer unless CAGE_TERMINAL_RENDERER says
+  // otherwise (auto, webgl or dom): smokes read the text from .xterm-rows,
+  // which only the DOM renderer has. terminal-webgl-smoke covers WebGL.
+  await page.addInitScript((renderer) => {
+    try { localStorage.setItem("cage-terminal-renderer", renderer); } catch { /* storage may be off */ }
+  }, process.env.CAGE_TERMINAL_RENDERER || "dom");
   await page.exposeFunction("chooseTestFolder", () => state.chosenFolder);
   await page.exposeFunction("requestNativeForTest", async (body) => nativeRequest ? nativeRequest(body) : null);
   await page.addInitScript(() => {
