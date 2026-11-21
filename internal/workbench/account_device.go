@@ -37,7 +37,7 @@ func (a *localAccount) enrollDevice(kind string) (deviceCredential, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if !validDeviceKind(kind) || len(a.key) != 32 {
-		return deviceCredential{}, errors.New("请先解锁 Cage，再设置快捷登录")
+		return deviceCredential{}, errors.New("请先解锁 Super Cage，再设置快捷登录")
 	}
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
@@ -70,7 +70,7 @@ func (a *localAccount) revokeDevice(kind string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if !validDeviceKind(kind) || len(a.key) != 32 {
-		return errors.New("请先解锁 Cage")
+		return errors.New("请先解锁 Super Cage")
 	}
 	record := *a.record
 	record.Devices = maps.Clone(record.Devices)
@@ -103,7 +103,7 @@ func (a *localAccount) unlockDevice(kind string, credential deviceCredential) er
 		return errors.New("快捷登录不可用，请使用密码")
 	}
 	if kind == "automatic" && a.record.RequireAuthentication {
-		return errors.New("Cage 已手动锁定，请使用指纹或密码")
+		return errors.New("Super Cage 已手动锁定，请使用指纹或密码")
 	}
 	device, ok := a.record.Devices[kind]
 	if !ok || device.ID != credential.ID {

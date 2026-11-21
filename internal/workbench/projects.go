@@ -231,7 +231,7 @@ func (s *Server) ensureProjectShare(path string) (returned error) {
 	// Stale FUSE mounts can remain after a control-service restart. Only reconnect
 	// this explicitly authorized path, without changing other projects' mounts.
 	if _, err = s.guest(ctx, "if mountpoint -q "+quoted+"; then fusermount3 -uz "+quoted+"; fi; sudo mkdir -p "+quoted+" && sudo chown \"$(id -u):$(id -g)\" "+quoted); err != nil {
-		return errors.New("无法在 Cage 中准备项目目录")
+		return errors.New("无法在 Super Cage 中准备项目目录")
 	}
 	probe, err := os.CreateTemp(path, ".cage-mount-probe-*")
 	if err != nil {

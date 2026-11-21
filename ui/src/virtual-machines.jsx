@@ -33,7 +33,7 @@ export function VirtualMachines({ onClose }) {
 
   function switchPortalVM(id) {
     if (!portalOrigin || window.parent === window) {
-      throw new Error("请从 Cage 门户打开工作台后再切换虚拟机。");
+      throw new Error("请从 Super Cage 门户打开工作台后再切换虚拟机。");
     }
     const controller = new AbortController();
     handoff.current = controller;
@@ -91,7 +91,7 @@ export function VirtualMachines({ onClose }) {
 
   async function open(id) {
     if (context.tenant_workspace && (!portalOrigin || window.parent === window)) {
-      throw new Error("请从 Cage 门户打开工作台后再切换虚拟机。");
+      throw new Error("请从 Super Cage 门户打开工作台后再切换虚拟机。");
     }
     const result = await api(`${endpoint}/${encodeURIComponent(id)}/open`, {}, "POST", connectionHeaders());
     if (context.tenant_workspace) {

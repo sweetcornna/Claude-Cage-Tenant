@@ -734,7 +734,7 @@ export function AppearanceSettings() {
               fontSize: appearance.codeFontSize,
             }}
           >
-            const workspace = "Cage";
+            const workspace = "Super Cage";
           </code>
         </div>
         <h4>显示与交互</h4>

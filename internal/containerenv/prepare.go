@@ -52,7 +52,7 @@ func (r *Runtime) Prepare(ctx context.Context, log io.Writer) error {
 		return err
 	}
 	if !rootless {
-		return errors.New("Cage 只允许使用独立 rootless 容器引擎")
+		return errors.New("Super Cage 只允许使用独立 rootless 容器引擎")
 	}
 	if err := r.ensureResourceSlice(ctx); err != nil {
 		return err

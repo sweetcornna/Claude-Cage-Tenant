@@ -36,9 +36,9 @@ const (
 
 var (
 	errLocalVMNotFound      = errors.New("未找到此本机虚拟机")
-	errLocalAccountMissing  = errors.New("请先完成本机 Cage 账户设置，再新建虚拟机")
-	errLocalVMOwnerLocked   = errors.New("请先解锁本机 Cage 工作区")
-	errLocalVMOwnerRequired = errors.New("请先进入本机 Cage 工作区再管理虚拟机")
+	errLocalAccountMissing  = errors.New("请先完成本机 Super Cage 账户设置，再新建虚拟机")
+	errLocalVMOwnerLocked   = errors.New("请先解锁本机 Super Cage 工作区")
+	errLocalVMOwnerRequired = errors.New("请先进入本机 Super Cage 工作区再管理虚拟机")
 )
 
 type localVMManifestRecord struct {

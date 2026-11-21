@@ -244,14 +244,14 @@ func validateWorkspace(path, profile string) (string, error) {
 	}
 	if executable, e := os.Executable(); e == nil {
 		if real, e := paths.Resolve(executable); e == nil && cage.StorageContains(abs, real) {
-			return "", errors.New("不能共享正在运行的工作台程序所在目录。请将安装版 Cage 放在项目外，并重启控制服务后选择此项目。")
+			return "", errors.New("不能共享正在运行的工作台程序所在目录。请将安装版 Super Cage 放在项目外，并重启控制服务后选择此项目。")
 		}
 	}
 	if mounts.UnderName(filepath.ToSlash(abs), nil) {
 		return "", errors.New("请选择项目根目录，不要共享 Git 等版本控制元数据目录")
 	}
 	if paths.Equal(abs, home) || filepath.Dir(abs) == abs {
-		return "", errors.New("请选择具体项目，不要共享主目录、Cage 配置或包含配置的上级目录")
+		return "", errors.New("请选择具体项目，不要共享主目录、Super Cage 配置或包含配置的上级目录")
 	}
 	private, err := privateProjectDirectories(profile)
 	if err != nil {
@@ -259,7 +259,7 @@ func validateWorkspace(path, profile string) (string, error) {
 	}
 	for _, dir := range private {
 		if cage.StoragePathsOverlap(abs, dir) {
-			return "", errors.New("Cage 配置、环境存储、迁移备份及其上级目录不能共享给虚拟机")
+			return "", errors.New("Super Cage 配置、环境存储、迁移备份及其上级目录不能共享给虚拟机")
 		}
 	}
 	if err := validateHostProjectData(abs, profile); err != nil {

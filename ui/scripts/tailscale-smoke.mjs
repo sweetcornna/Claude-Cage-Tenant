@@ -79,14 +79,14 @@ try {
   await panel.getByRole("button", { name: "应用访问私网", exact: true }).click();
   await panel.getByRole("button", { name: "复制私网代理地址", exact: true }).click(); assert.equal(copied, tail.proxy_url);
   assert.equal(await panel.getByText(tail.proxy_url, { exact: true }).count(), 0);
-  await panel.getByRole("button", { name: "从其他设备 SSH 到 Cage", exact: true }).focus(); await page.keyboard.press("Enter");
-  await panel.getByRole("button", { name: "复制连接 Cage 命令" }).click(); assert.equal(copied, "ssh cage@100.88.2.3");
+  await panel.getByRole("button", { name: "从其他设备 SSH 到 Super Cage", exact: true }).focus(); await page.keyboard.press("Enter");
+  await panel.getByRole("button", { name: "复制连接 Super Cage 命令" }).click(); assert.equal(copied, "ssh cage@100.88.2.3");
   await panel.getByLabel("连接设备的 SSH 公钥", { exact: true }).fill("ssh-ed25519 AAAAFixture local");
   failKey = true; await panel.getByRole("button", { name: "添加公钥", exact: true }).click(); await panel.getByRole("alert").waitFor();
   assert.equal(await panel.getByLabel("连接设备的 SSH 公钥").inputValue(), "ssh-ed25519 AAAAFixture local");
   failKey = false; await panel.getByRole("button", { name: "添加公钥", exact: true }).click(); await panel.locator(".tailscale-key").waitFor();
   await page.reload(); await open.click(); await panel.getByText("已连接", { exact: true }).waitFor();
-  await panel.getByRole("button", { name: "从其他设备 SSH 到 Cage", exact: true }).click();
+  await panel.getByRole("button", { name: "从其他设备 SSH 到 Super Cage", exact: true }).click();
   await panel.locator(".tailscale-key").waitFor();
   await panel.getByRole("button", { name: "移除 SSH 公钥" }).click(); await panel.locator(".tailscale-key").waitFor({ state: "hidden" });
   checks.push("application proxy credential copied without rendering; SSH opt-in keyboard disclosure; failed key keeps input; saved key survives refresh and can be revoked");

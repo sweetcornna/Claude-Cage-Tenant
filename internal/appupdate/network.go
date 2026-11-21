@@ -86,7 +86,7 @@ type routeBody struct {
 type networkUnavailableError struct{ cause error }
 
 func (e *networkUnavailableError) Error() string {
-	return "主机网络无法连接更新源，Cage 代理也不可用：" + e.cause.Error()
+	return "主机网络无法连接更新源，Super Cage 代理也不可用：" + e.cause.Error()
 }
 func (e *networkUnavailableError) Unwrap() error { return e.cause }
 

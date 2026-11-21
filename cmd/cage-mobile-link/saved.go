@@ -82,7 +82,7 @@ func configureSavedHost(state, dest, hostPin, peerPin string, settings hostSetti
 		return h, errors.New("saved host requires a trusted relay and absolute admin token, cage binary and config paths")
 	}
 	if info, err := os.Stat(settings.CageBinary); err != nil || !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0111 == 0) {
-		return h, errors.New("saved Cage binary must be an executable file")
+		return h, errors.New("saved Super Cage binary must be an executable file")
 	}
 	if _, err := readAdminToken(settings.AdminFile); err != nil {
 		return h, err
@@ -234,7 +234,7 @@ func savedRoom(ctx context.Context, state string, h savedHost) (bool, error) {
 		return false, errors.New("device identity changed")
 	}
 	if info, err := os.Stat(h.Settings.CageBinary); err != nil || !info.Mode().IsRegular() {
-		return false, errors.New("saved Cage binary unavailable")
+		return false, errors.New("saved Super Cage binary unavailable")
 	}
 	admin, err := readAdminToken(h.Settings.AdminFile)
 	if err != nil {

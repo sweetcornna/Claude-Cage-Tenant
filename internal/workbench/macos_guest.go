@@ -135,7 +135,7 @@ except (ValueError, AttributeError):
     print("null")
 ' "$receipt"`
 
-var errMacOSComponentUpdate = errors.New("虚拟 Mac 的客机组件与当前 Cage 版本不一致，浏览器、剪贴板和声音可能无法连接。请保存工作后在环境设置中同步环境组件；系统磁盘、账户和项目数据会保留。")
+var errMacOSComponentUpdate = errors.New("虚拟 Mac 的客机组件与当前 Super Cage 版本不一致，浏览器、剪贴板和声音可能无法连接。请保存工作后在环境设置中同步环境组件；系统磁盘、账户和项目数据会保留。")
 
 // macOSComponentsDrifted reports whether a receipt read from the guest belongs
 // to a different component kit. A missing or unreadable receipt also requires

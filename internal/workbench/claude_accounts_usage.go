@@ -110,7 +110,7 @@ func (s *Server) usageAvailability() error {
 	case s.guestUpdateRequired:
 		return errors.New("请先同步环境组件后再查询额度")
 	case s.closing || !s.ready:
-		return errors.New("请先启动 Cage 环境后再查询额度")
+		return errors.New("请先启动 Super Cage 环境后再查询额度")
 	case s.networkPaused:
 		return errors.New("网络已暂停，恢复连接后可查询订阅额度")
 	default:

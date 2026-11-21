@@ -24,7 +24,7 @@ await page.route('**/api/proxy/route', r=>{
  const valid=body.node_ids.length>0 && body.node_ids.every(id=>available.includes(id)) && new Set(body.node_ids).size===body.node_ids.length;
  const error=failRoute ? '代理核心拒绝该配置；原配置已保留' : !valid ? '代理链节点无效' : '';
  if (!error) { saved.route=[...body.node_ids];saved.selected=body.node_ids.at(-1); }
- state.status.job={id:`route-${submissions.length}`,kind:'proxy',running:false,error,message:error?'':'节点已应用；启动 Cage 环境后完成联网检查'};
+ state.status.job={id:`route-${submissions.length}`,kind:'proxy',running:false,error,message:error?'':'节点已应用；启动 Super Cage 环境后完成联网检查'};
  return r.fulfill({json:{id:state.status.job.id}});
 });
 const enter = async()=>{
@@ -35,7 +35,7 @@ const enter = async()=>{
 };
 const idle = ()=>page.waitForFunction(()=>!document.querySelector('.proxy-progress'));
 try {
- await page.getByRole('button',{name:'Cage 环境 网络检查',exact:true}).click();
+ await page.getByRole('button',{name:'Super Cage 环境 网络检查',exact:true}).click();
  await page.getByRole('button',{name:'出口规则',exact:true}).click();
  await page.getByRole('heading',{name:'内置代理',exact:true}).waitFor();
  await page.getByRole('region',{name:'IP 变化规则',exact:true}).waitFor();

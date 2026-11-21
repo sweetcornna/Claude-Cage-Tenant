@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=Cage
+Name=Super Cage
 Comment=Isolated coding workspace
 Comment[zh_CN]=隔离编码工作区
 Exec=/usr/bin/cage-desktop

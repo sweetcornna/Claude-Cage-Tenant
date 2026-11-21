@@ -164,7 +164,7 @@ func (s *Server) guestFiles(ctx context.Context, target, method, path string, bo
 			return nil, pipeErr
 		}
 		if err = cmd.Start(); err != nil {
-			return nil, usererror.Wrap("连接文件传递服务", err, "请确认 Cage 安装完整，环境已经启动；持续失败时在设置中导出诊断包。")
+			return nil, usererror.Wrap("连接文件传递服务", err, "请确认 Super Cage 安装完整，环境已经启动；持续失败时在设置中导出诊断包。")
 		}
 		data, readErr = io.ReadAll(io.LimitReader(pipe, 65537+64))
 		if readErr != nil || len(data) > 65536+64 {

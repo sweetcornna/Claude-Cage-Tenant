@@ -62,7 +62,7 @@ jobs:
           name: ${{ inputs.artifact_name }}-${{ matrix.os }}-failed-candidate
           path: |
             _output/windows-amd64/app/**
-            _output/releases/*/windows/Cage-*-windows-amd64-setup-unsigned.exe
+            _output/releases/*/windows/Super-Cage-*-windows-amd64-setup-unsigned.exe
             _output/releases/*/windows/SHA256SUMS
           if-no-files-found: ignore
           compression-level: 0
@@ -116,7 +116,7 @@ jobs:
         with:
           name: ${{ inputs.artifact_name }}
           path: |
-            _output/releases/*/windows/Cage-*-windows-amd64-setup.exe
+            _output/releases/*/windows/Super-Cage-*-windows-amd64-setup.exe
             _output/releases/*/windows/SHA256SUMS
             _output/releases/*/windows/mihomo-*-source.tar.gz
             _output/releases/*/windows/qemu-*-source.tar.gz

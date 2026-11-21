@@ -89,7 +89,7 @@ func ServerEntry(configPath string) (RemoteEntry, error) {
 	var result RemoteEntry
 	c, err := connectController(filepath.Dir(configPath))
 	if err != nil {
-		return result, errors.New("云端 Cage 服务尚未运行或无法认证，请检查服务状态")
+		return result, errors.New("云端 Super Cage 服务尚未运行或无法认证，请检查服务状态")
 	}
 	defer c.close()
 	entry, err := url.Parse(c.launch.URL)

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Package the no-virtualization edition: the gateway and portal, the Linux
-# Cage server that goes into the workspace template, and the root installer
+# Super Cage server that goes into the workspace template, and the root installer
 # that sets up Incus system containers. No container image is bundled; the
 # installer builds the blank template on the host.
 set -euo pipefail
@@ -35,7 +35,7 @@ if tar --version 2>/dev/null | grep -q bsdtar; then
 fi
 archives=()
 for arch in amd64 arm64; do
-  name="Cage-Tenant-NoVirt-$version-linux-$arch"
+  name="Super-Cage-NoVirt-$version-linux-$arch"
   tree="$output/$name"
   mkdir -p "$tree/ui/tenant" "$tree/docs" "$tree/deploy/tenant"
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -buildvcs=true -o "$tree/cage-tenant" ./cmd/cage-tenant

@@ -23,7 +23,7 @@ type reasonContext struct {
 }
 
 func hold(ctx context.Context, ready func()) error {
-	reason, err := windows.UTF16PtrFromString("Cage 远程连接待机")
+	reason, err := windows.UTF16PtrFromString("Super Cage 远程连接待机")
 	if err != nil {
 		return err
 	}

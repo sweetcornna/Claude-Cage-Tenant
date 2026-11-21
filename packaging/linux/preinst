@@ -13,7 +13,7 @@ if [ "${1:-}" = upgrade ] || [ "${1:-}" = install ] || [ "${1:-}" = remove ]; th
     fi
     case "$executable" in
       /usr/bin/claude-cage|/usr/bin/cage-desktop|/usr/lib/claude-cage/cage|/usr/lib/claude-cage/cage-desktop|/usr/lib/claude-cage/mihomo|/usr/lib/claude-cage/*' (deleted)')
-        echo 'Cage is running. Save work, stop the environment, and quit Cage before changing the installation.' >&2
+        echo 'Super Cage is running. Save work, stop the environment, and quit Super Cage before changing the installation.' >&2
         exit 1
         ;;
     esac

@@ -16,7 +16,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 1920, height: 108
         ctx.fillStyle = "#526482"; ctx.fillRect(0, 0, 1920, 1200);
         ctx.fillStyle = "#ddd"; ctx.beginPath(); ctx.arc(960, 1000, 32, 0, Math.PI*2); ctx.fill();
         ctx.fillStyle = "white"; ctx.font = "20px sans-serif"; ctx.textAlign = "center";
-        ctx.fillText("Cage", 960, 1050);
+        ctx.fillText("Super Cage", 960, 1050);
         ctx.fillStyle = "#ffffff88"; ctx.fillRect(880, 1070, 160, 30);
         ctx.fillStyle = "white"; ctx.font = "14px sans-serif";
         ctx.fillText("Enter Password", 960, 1091);

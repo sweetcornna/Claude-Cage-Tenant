@@ -111,7 +111,7 @@ func (r *Runtime) readParentLimits(ctx context.Context, connection *systemd.Conn
 		}
 		path, ok := scope["ControlGroup"].(string)
 		if !ok || !strings.HasPrefix(path, parentPath+"/") || filepath.Clean(path) != path || scope["ActiveState"] != "active" {
-			return resourceEvidence{}, errors.New("实际容器未处于 Cage 的宿主资源边界内")
+			return resourceEvidence{}, errors.New("实际容器未处于 Super Cage 的宿主资源边界内")
 		}
 		limits, err := readCgroupLimits(path)
 		if err != nil {

@@ -112,7 +112,7 @@ try {
   assert(delivered.slice(1).every(item => item.body.id === "input-two"));
 
   await page.evaluate(() => { window.pasteIntent.length = 0; });
-  await page.getByLabel("Cage 网页输入").evaluate((element, encoded) => {
+  await page.getByLabel("Super Cage 网页输入").evaluate((element, encoded) => {
     const data = new DataTransfer();
     data.items.add(new File([Uint8Array.from(atob(encoded), value => value.charCodeAt(0))], "screenshot.png", { type: "image/png" }));
     element.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: data }));

@@ -142,7 +142,7 @@ func TestPendingMacOSWithoutDiskReturnsToInstallerAdmission(t *testing.T) {
 			r.AddCookie(&http.Cookie{Name: s.cookieName() + "-desktop", Value: trustedViewProof(s.token)})
 			w := httptest.NewRecorder()
 			s.start(w, r)
-			want := "请先注册或确认 Cage 账密"
+			want := "请先注册或确认 Super Cage 账密"
 			if started {
 				want = "请先准备与原客机身份匹配的恢复入口"
 			}

@@ -60,7 +60,7 @@ func containerOperation(configPath string, args []string, cfg cage.Config, keepP
 		return true, errors.New("容器运行环境只能在 Linux 服务端使用")
 	}
 	if args[0] == "access" {
-		return true, errors.New("容器工作环境使用 Cage 工作台的受认证入口，不提供旧版独立查看器凭据")
+		return true, errors.New("容器工作环境使用 Super Cage 工作台的受认证入口，不提供旧版独立查看器凭据")
 	}
 	if args[0] != "run" && args[0] != "claude" && len(args) != 1 {
 		return true, errors.New("该容器管理命令不接受额外参数")
@@ -128,7 +128,7 @@ func containerOperation(configPath string, args []string, cfg cage.Config, keepP
 	}
 	switch args[0] {
 	case "up":
-		fmt.Println("Cage 容器服务已启动；工作台完成网络检查后才会放行外网。")
+		fmt.Println("Super Cage 容器服务已启动；工作台完成网络检查后才会放行外网。")
 		return true, nil
 	case "update-tools":
 		return true, workbench.RunMaintenanceScript(ctx, configPath, cage.ToolsUpdateScript(), os.Stdout, os.Stderr)

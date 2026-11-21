@@ -22,7 +22,7 @@ mkdir -p _output
 output=$(mktemp -d "$repo_dir/_output/tenant-server.XXXXXX")
 archives=()
 for arch in amd64 arm64; do
-  name="Cage-Tenant-Server-$version-linux-$arch"
+  name="Super-Cage-Server-$version-linux-$arch"
   tree="$output/$name"
   mkdir -p "$tree/ui/tenant" "$tree/docs" "$tree/deploy/tenant" "$tree/deploy/cloud"
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -buildvcs=true -o "$tree/cage-tenant" ./cmd/cage-tenant

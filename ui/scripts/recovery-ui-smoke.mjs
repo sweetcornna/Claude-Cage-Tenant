@@ -28,7 +28,7 @@ try {
   assert.equal(calls.filter((call) => call.operation === "install").length, 1);
   await page.getByRole("progressbar", { name: "更新下载进度" }).waitFor();
   assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "50");
-  assert.equal(await page.getByRole("dialog", { name: "Cage 更新" }).count(), 0);
+  assert.equal(await page.getByRole("dialog", { name: "Super Cage 更新" }).count(), 0);
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("cage-app-update", { detail: { phase: "failed", latestVersion: "0.2.0-alpha.2", message: "更新源暂不可访问，仓库尚未公开", retryable: true } })));
   await page.getByRole("button", { name: "重试更新", exact: true }).waitFor();
   await page.getByRole("alert").filter({ hasText: "更新源暂不可访问，仓库尚未公开" }).waitFor();
@@ -53,8 +53,8 @@ try {
     tools: { chromium: { current: "156", required: "系统安全更新" }, code_server: { current: "4.100", required: "4.144.0" } }, tools_update_allowed: false,
   } }));
   await page.route("**/api/environment/update", (route) => { componentUpdates++; return route.fulfill({ json: { id: "qa-components" } }); });
-  await page.getByRole("button", { name: "启动 Cage 环境", exact: true }).click();
-  await page.getByRole("heading", { name: "Cage 环境已就绪", exact: true }).waitFor();
+  await page.getByRole("button", { name: "启动 Super Cage 环境", exact: true }).click();
+  await page.getByRole("heading", { name: "Super Cage 环境已就绪", exact: true }).waitFor();
   await page.getByRole("button", { name: "打开浏览器", exact: true }).click();
   await page.getByRole("button", { name: "浏览器下载", exact: true }).click();
   await page.getByRole("dialog", { name: "下载文件" }).getByText("目标目录暂时无法写入", { exact: true }).waitFor();

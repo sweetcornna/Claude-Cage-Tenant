@@ -12,7 +12,7 @@ function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'cage-preview-test-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const windows = join(root, 'windows'), linux = join(root, 'linux'), output = join(root, 'public');
-  for (const [directory, names] of [[windows, [`Cage-${version}-windows-amd64-setup-unsigned.exe`, dependencies.mihomoSource.file, dependencies.qemuSource.file + '.gz']], [linux, [`Cage-${version}-linux-amd64.deb`, dependencies.mihomoSource.file]]]) {
+  for (const [directory, names] of [[windows, [`Super-Cage-${version}-windows-amd64-setup-unsigned.exe`, dependencies.mihomoSource.file, dependencies.qemuSource.file + '.gz']], [linux, [`Super-Cage-${version}-linux-amd64.deb`, dependencies.mihomoSource.file]]]) {
     mkdirSync(directory);
     for (const name of names) writeFileSync(join(directory, name), name);
     writeFileSync(join(directory, 'SHA256SUMS'), names.map(name => `${hash(name)}  ${name}\n`).join(''));
@@ -30,7 +30,7 @@ test('preview publication stages verified installers and sources only, with one 
 test('corrupt, missing, duplicate and unexpected checksum entries never become release assets', async t => {
   for (const kind of ['corrupt', 'missing', 'duplicate', 'unexpected', 'conflicting-source']) await t.test(kind, t => {
     const f = fixture(t), manifest = join(f.windows, 'SHA256SUMS');
-    const name = `Cage-${version}-windows-amd64-setup-unsigned.exe`;
+    const name = `Super-Cage-${version}-windows-amd64-setup-unsigned.exe`;
     if (kind === 'corrupt') writeFileSync(join(f.windows, name), 'changed');
     if (kind === 'missing') rmSync(join(f.windows, name));
     if (kind === 'duplicate') writeFileSync(manifest, readFileSync(manifest, 'utf8') + `${hash(name)}  ${name}\n`);
@@ -46,7 +46,7 @@ test('corrupt, missing, duplicate and unexpected checksum entries never become r
 
 test('consolidation preserves macOS checksums and rejects conflicting version assets', () => {
   const hash = 'a'.repeat(64), other = 'b'.repeat(64);
-  const mac = 'Cage-0.1.1-alpha-macos-arm64.dmg', windows = 'Cage-0.1.1-alpha-windows-amd64-setup-unsigned.exe';
+  const mac = 'Super-Cage-0.1.1-alpha-macos-arm64.dmg', windows = 'Super-Cage-0.1.1-alpha-windows-amd64-setup-unsigned.exe';
   const release = { tag_name: 'v0.1.1-alpha', draft: false, prerelease: true,
     assets: [{name: mac, state: 'uploaded', digest: `sha256:${hash}`}] };
   const files = new Map([[windows, {digest: other}], ['SHA256SUMS', {digest: other}]]);

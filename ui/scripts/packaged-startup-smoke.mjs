@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 
 const run = promisify(execFile);
 const target = process.argv[2];
-assert.ok(path.isAbsolute(target || ""), "supply an absolute Cage.app or full Cage helper path");
+assert.ok(path.isAbsolute(target || ""), "supply an absolute Super Cage.app or full Super Cage helper path");
 const packaged = target.endsWith(".app");
 const cage = packaged ? path.join(target, "Contents/Resources/cage") : target;
 const evidence = process.env.CAGE_REMOTE_QA_DIR;
@@ -29,7 +29,7 @@ try {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(entry.url);
-  await page.getByRole("heading", { name: "注册 Cage 账户", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "注册 Super Cage 账户", exact: true }).waitFor();
   await page.getByLabel("用户名",{exact:true}).waitFor();
   const initial = await page.evaluate(async () => (await fetch("/api/client/local-status")).json());
   assert.ok(initial.known && initial.service_running && !initial.running, "opening the local home must not boot the VM");
@@ -43,7 +43,7 @@ try {
   await page.getByRole("button",{name:"创建本地账户",exact:true}).click();
   const status = await (await statusResponse).json();
   assert.equal(status.vm_running, false);
-  await page.getByRole("heading", { name: "为 Cage 准备独立环境", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "为 Super Cage 准备独立环境", exact: true }).waitFor();
   const nav = page.getByRole("navigation", {name:"主导航"});
   assert.equal(await nav.count(), 0, "fresh profile must not mount workbench navigation");
   await page.getByRole("button",{name:"只连接 SSH 主机",exact:true}).click();

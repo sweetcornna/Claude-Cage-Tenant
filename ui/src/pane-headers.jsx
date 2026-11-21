@@ -191,7 +191,7 @@ export function BrowserHeader({ vault, onManageVault, tab, tabs, metadata, ready
           onFocus={(e) => e.target.select()}
           placeholder={
             ready
-              ? "输入网址或搜索，在 Cage 内打开"
+              ? "输入网址或搜索，在 Super Cage 内打开"
               : "启动环境后浏览网页"
           }
           disabled={!ready}

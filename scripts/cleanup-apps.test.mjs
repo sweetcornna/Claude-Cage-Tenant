@@ -69,19 +69,22 @@ test(
     t.after(() => rm(directory, { recursive: true, force: true }));
     const root = path.join(directory, "output"),
       outside = path.join(directory, "outside");
-    const latest = await app(path.join(root, "Cage.app"));
+    const latest = await app(path.join(root, "Super Cage.app"));
+    // Copies installed before the rename keep the Cage.app file name.
+    const legacy = await app(path.join(root, "Cage.app"));
     const old = await app(path.join(root, "qa backup", "previous-Cage.app"));
     const foreign = await app(path.join(root, "Other.app"), "example.other");
     const external = await app(path.join(outside, "Cage.app"));
     await symlink(outside, path.join(root, "linked-backup"));
     assert.deepEqual(
-      await cleanupApps({
+      (await cleanupApps({
         keep: [latest],
         roots: [root, path.join(directory, "missing")],
-      }),
-      [old],
+      })).sort(),
+      [legacy, old].sort(),
     );
-    await assert.rejects(access(old), { code: "ENOENT" });
+    for (const removed of [legacy, old])
+      await assert.rejects(access(removed), { code: "ENOENT" });
     for (const preserved of [latest, foreign, external])
       await access(preserved);
   },

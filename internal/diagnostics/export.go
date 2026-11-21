@@ -32,7 +32,7 @@ func (s *Store) Export(w io.Writer, version string, guest []byte, guestState str
 		if err := add("manifest.json", meta); err != nil {
 			return err
 		}
-		if err := add("README.txt", []byte("Cage diagnostic bundle. Logs are redacted automatically. Review before sharing. No project files, terminal sessions, configuration or browser history are collected. Guest collection is best effort; see manifest.json.\n")); err != nil {
+		if err := add("README.txt", []byte("Super Cage diagnostic bundle. Logs are redacted automatically. Review before sharing. No project files, terminal sessions, configuration or browser history are collected. Guest collection is best effort; see manifest.json.\n")); err != nil {
 			return err
 		}
 		if len(safety) > 0 {

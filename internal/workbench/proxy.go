@@ -410,7 +410,7 @@ func (s *Server) applyProxy(p managedproxy.Store, old cage.Config, resumeVersion
 	if restartVM {
 		return s.startEnvironment(false)
 	}
-	s.setMessage("节点已应用；启动 Cage 环境后完成联网检查")
+	s.setMessage("节点已应用；启动 Super Cage 环境后完成联网检查")
 	return nil
 }
 

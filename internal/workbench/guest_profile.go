@@ -33,7 +33,7 @@ func (s *Server) linuxPathHasPrefix(path, prefix string) bool {
 
 func (s *Server) guestProfileOptions(w http.ResponseWriter, r *http.Request) {
 	if !s.hasTrustedView(r) {
-		http.Error(w, "请在已信任的 Cage 窗口配置客机", http.StatusForbidden)
+		http.Error(w, "请在已信任的 Super Cage 窗口配置客机", http.StatusForbidden)
 		return
 	}
 	if r.Method == http.MethodPost {

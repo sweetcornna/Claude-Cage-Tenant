@@ -225,7 +225,7 @@ test(
       /* ---- 登录页与注册（键盘） ---- */
       await send("Page.navigate", { url: `${mock.origin}/` });
       await waitFor(`!!document.querySelector(".auth-card")`, "登录页");
-      assert.equal(await evaluate("document.title"), "Cage 门户");
+      assert.equal(await evaluate("document.title"), "Super Cage 门户");
       assert.equal((await active()).name, "username", "初始焦点在用户名");
       await click(".seg", "注册");
       await waitFor(`document.querySelector(".auth-title").textContent === "创建门户账户"`, "注册模式");
@@ -273,7 +273,7 @@ test(
       assert.equal(frame.allow, `clipboard-read ${mock.vmOrigin(vmA)}; clipboard-write ${mock.vmOrigin(vmA)}`, "剪贴板只委托给该 VM 源");
       await waitUntil(() => mock.openStreams(vmA) === 1, "VM A 工作台经票据进入并建立流");
       await waitFor(`document.querySelector(".ctx-status").textContent === "已连接" && document.querySelector(".overlay").hidden`, "已连接");
-      assert.equal(await evaluate("document.title"), "开发环境 · Cage");
+      assert.equal(await evaluate("document.title"), "开发环境 · Super Cage");
       await shot("04-workbench-light");
 
       /* ---- 新建第二台：弹窗重新开始；旧 iframe 立即卸载并释放流 ---- */
@@ -470,7 +470,7 @@ test(
       assert.equal((await active()).key, "back-to-login", "焦点移到返回登录");
       await shot("11-registration-closed");
       await press("Enter");
-      await waitFor(`document.querySelector(".auth-title").textContent === "登录 Cage 门户" && !document.querySelector(".auth-form").hidden`, "返回登录");
+      await waitFor(`document.querySelector(".auth-title").textContent === "登录 Super Cage 门户" && !document.querySelector(".auth-form").hidden`, "返回登录");
       assert.equal((await active()).name, "username");
       await click(".seg", "注册");
       assert.equal(await evaluate(`document.querySelector(".closed-panel").hidden`), false, "本页内不再显示注册表单");

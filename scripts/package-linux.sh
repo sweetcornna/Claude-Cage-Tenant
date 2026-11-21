@@ -39,12 +39,12 @@ Maintainer: Cage contributors <noreply@github.com>
 Depends: $dependencies, libwebkit2gtk-4.1-0 (>= 2.40), libglib2.0-bin, ca-certificates, systemd
 Suggests: qemu-system-x86, qemu-utils, ovmf, openssh-client, iproute2, git
 Recommends: dbus-user-session, fonts-noto-cjk, libnotify-bin, zenity | kdialog
-Homepage: https://github.com/Lee-xeo/Claude-Cage
+Homepage: https://github.com/sweetcornna/Super-Cage
 Description: Isolated coding workspace with a persistent Linux VM
- Cage combines projects, terminals, a browser and an editor in a native
- desktop window. Select a local virtual machine or connect to a Cage server over SSH.
+ Super Cage combines projects, terminals, a browser and an editor in a native
+ desktop window. Select a local virtual machine or connect to a Super Cage server over SSH.
 EOF
-deb="$output/Cage-$version-linux-amd64.deb"
+deb="$output/Super-Cage-$version-linux-amd64.deb"
 dpkg-deb --root-owner-group --build "$stage" "$deb"
 cp _output/linux-deps/mihomo-v1.19.33-source.tar.gz "$output/"
 (cd "$output" && sha256sum "$(basename "$deb")" mihomo-v1.19.33-source.tar.gz > SHA256SUMS)

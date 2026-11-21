@@ -27,9 +27,9 @@ try {
   assert.equal(await page.locator(".recent-projects").count(), 0);
   await shot("stopped");
   await page
-    .getByRole("button", { name: "启动 Cage 环境", exact: true })
+    .getByRole("button", { name: "启动 Super Cage 环境", exact: true })
     .click();
-  await page.getByRole("heading", { name: "Cage 环境已就绪" }).waitFor();
+  await page.getByRole("heading", { name: "Super Cage 环境已就绪" }).waitFor();
   await page.getByText("环境运行正常", { exact: true }).waitFor();
   assert.ok(
     (await page
@@ -70,7 +70,7 @@ try {
     starts,
   );
   await page.reload();
-  await page.getByRole("heading", { name: "Cage 环境已就绪" }).waitFor();
+  await page.getByRole("heading", { name: "Super Cage 环境已就绪" }).waitFor();
   await page.getByRole("button", { name: /^打开浏览器/ }).click();
   await page.getByRole("button", { name: "新建网页", exact: true }).click();
   await page.waitForFunction(
@@ -85,7 +85,7 @@ try {
   await shot("offline");
   state.status.ready = false;
   state.status.vm_running = false;
-  await page.getByRole("heading", { name: "先启动 Cage 环境" }).waitFor();
+  await page.getByRole("heading", { name: "先启动 Super Cage 环境" }).waitFor();
   assert.equal(await page.locator(".environment-shield.healthy").count(), 0);
   await page.setViewportSize({ width: 820, height: 558 });
   await shot("minimum");

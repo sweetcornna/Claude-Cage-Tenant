@@ -10,7 +10,7 @@ try {
       setup_progress: { phase: "image", label: "下载 Debian 13 基础镜像", received: 25 * 1048576, total: 100 * 1048576 } };
     return route.fulfill({ json: state.status.job });
   });
-  await page.getByRole("button", { name: "启动 Cage 环境", exact: true }).click();
+  await page.getByRole("button", { name: "启动 Super Cage 环境", exact: true }).click();
   const panel = page.getByRole("region", { name: "环境安装进度" });
   const bar = panel.getByRole("progressbar");
   await panel.getByText("25 MiB / 100 MiB").waitFor();

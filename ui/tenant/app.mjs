@@ -1213,7 +1213,7 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
   function brand(compact = false) {
     return h("div", { class: compact ? "brand brand-compact" : "brand" }, [
       h("span", { class: "brand-mark" }, icon("logo", "icon brand-icon")),
-      h("span", { class: "brand-name" }, "Cage"),
+      h("span", { class: "brand-name" }, "Super Cage"),
     ]);
   }
 
@@ -1391,7 +1391,7 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
         // 提示面板隐藏时焦点会丢失，交给用户名输入框。
         if (!closed && lastClosed && (focusWasInPanel || doc.activeElement === doc.body)) userInput.focus();
         lastClosed = closed;
-        title.textContent = register ? "创建门户账户" : "登录 Cage 门户";
+        title.textContent = register ? "创建门户账户" : "登录 Super Cage 门户";
         loginTab.setAttribute("aria-pressed", String(!register));
         registerTab.setAttribute("aria-pressed", String(register));
         setBusy(loginTab, busy);
@@ -2013,11 +2013,11 @@ export function mountPortal(root, portal, { doc = root.ownerDocument, win = doc.
   };
 
   function titleFor(state) {
-    if (state.phase !== "signed-in") return "Cage 门户";
+    if (state.phase !== "signed-in") return "Super Cage 门户";
     const target = state.target;
-    if (!target) return "虚拟机总览 · Cage";
+    if (!target) return "虚拟机总览 · Super Cage";
     const vm = state.vms.find((item) => item.id === target.vmId);
-    return `${displayName(vm)} · Cage`;
+    return `${displayName(vm)} · Super Cage`;
   }
 
   function render(state) {

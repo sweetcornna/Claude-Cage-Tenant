@@ -224,7 +224,7 @@ func desktopLaunch(profile string, gateway bool, options DesktopOptions, start f
 	if err == nil {
 		defer current.close()
 		if current.launch.DesktopGateway != gateway {
-			return DesktopResult{}, errors.New("此目录已被另一种 Cage 服务使用，请核对配置路径")
+			return DesktopResult{}, errors.New("此目录已被另一种 Super Cage 服务使用，请核对配置路径")
 		}
 		if options.CompleteUpdate {
 			if current.launch.DesktopGateway {
@@ -349,7 +349,7 @@ func (c *controllerClient) stopAndHandoff() error {
 			return err
 		}
 	} else if c.launch.Controller.Protocol != controlProtocol {
-		return errors.New("当前后台协议不受此版本支持，已保留运行环境。请使用匹配的 Cage 版本停止环境。")
+		return errors.New("当前后台协议不受此版本支持，已保留运行环境。请使用匹配的 Super Cage 版本停止环境。")
 	}
 	u, _ := url.Parse(c.launch.URL)
 	status, err := c.call("POST", "/api/session", map[string]string{"token": u.Fragment}, nil)

@@ -15,7 +15,7 @@ fi
 if [[ "$CAGE_SIGNING_IDENTITY" == - ]]; then echo 'Release packages require a Developer ID identity.' >&2; exit 1; fi
 version="$(tr -d '\n\r' < VERSION)"
 release="$PWD/_output/releases/$version"
-bundle="$PWD/_output/Cage.app"
+bundle="$PWD/_output/Super Cage.app"
 mkdir -p "$release"
 if [[ "${1:-}" != --from-notarized-app ]]; then
   bash scripts/build-app.sh
@@ -41,34 +41,37 @@ cp "$guest_materials" "$release/$guest_source"
 
 stage="$(mktemp -d "$PWD/_output/dmg-stage.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
-ditto "$bundle" "$stage/Cage.app"
+ditto "$bundle" "$stage/Super Cage.app"
 ln -s /Applications "$stage/Applications"
 cat > "$stage/安装说明 - Read Me.txt" <<'EOF'
-Cage — 本机隔离编码工作区
+Super Cage — 本机隔离编码工作区
 
-1. 将 Cage.app 拖入 Applications（应用程序）。
-2. 从应用程序打开 Cage，设置本地账户，并按首次引导选择客机系统、存储位置和代理。
+1. 将 Super Cage.app 拖入 Applications（应用程序）。
+2. 从应用程序打开 Super Cage，设置本地账户，并按首次引导选择客机系统、存储位置和代理。
 3. 添加自己的 Clash/Mihomo YAML 订阅或配置并选择节点，创建和启动环境。首次需下载系统镜像和工具，请保持网络连接。
-4. 打开项目或新建终端，输入 claude，并在 Cage 浏览器内登录自己的 Claude 账户。
+4. 打开项目或新建终端，输入 claude，并在 Super Cage 浏览器内登录自己的 Claude 账户。
 
 需要 Apple Silicon Mac、macOS 14 或更新版本。无需安装 Go、Node.js 或 Clash。
 代理服务与 Claude 账户需自行准备。具体版本与发布状态以发行说明为准。
 共享项目中的文件修改会直接写回 Mac；请备份重要项目。
-升级前请退出 Cage 并停止环境，再替换应用程序；配置与项目文件会保留。
+升级前请退出 Super Cage 并停止环境，再替换应用程序；配置与项目文件会保留。
+已安装旧版 Cage.app 时，先退出旧版，再将它移到废纸篓，只保留 Super Cage.app。
 
-Drag Cage.app into Applications, then open it from Applications.
+Drag Super Cage.app into Applications, then open it from Applications.
 Complete the local account and environment setup, add your own Clash/Mihomo
 YAML subscription or configuration, select a node, and start the environment.
 Initial setup downloads the selected guest system and developer tools.
 Requires Apple Silicon and macOS 14+. Your own proxy and Claude account are required.
+If an older Cage.app is installed, quit it and move it to the Trash.
+Settings and projects are kept.
 
 入门 / Getting started:
-https://github.com/Lee-xeo/Claude-Cage/blob/main/docs/getting-started.md
+https://github.com/sweetcornna/Super-Cage/blob/main/docs/getting-started.md
 问题反馈 / Issues:
-https://github.com/Lee-xeo/Claude-Cage/issues
+https://github.com/sweetcornna/Super-Cage/issues
 EOF
-artifact="Cage-$version-macos-arm64.dmg"
-hdiutil create -volname Cage -srcfolder "$stage" -ov -format UDZO "$release/$artifact"
+artifact="Super-Cage-$version-macos-arm64.dmg"
+hdiutil create -volname 'Super Cage' -srcfolder "$stage" -ov -format UDZO "$release/$artifact"
 codesign --force --sign "$CAGE_SIGNING_IDENTITY" --timestamp "$release/$artifact"
 xcrun notarytool submit "$release/$artifact" "${notary_credentials[@]}" \
   --wait --timeout 20m --output-format json > "$release/dmg-notarization.json"
