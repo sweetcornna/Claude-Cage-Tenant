@@ -1050,6 +1050,11 @@ const server = http.createServer(async (req, res) => {
   }
 });
 server.listen(18500, "127.0.0.1");
+// The host keeps several connections open between bursts of requests, and each
+// is an SSH channel that costs a handshake to open again. Node's default closes
+// an idle one after 5 s. The host closes its idle connections after 90 s, first.
+server.keepAliveTimeout = 120000;
+server.headersTimeout = 125000;
 (async () => {
   // A cold guest can spend several seconds initializing the sandbox and fonts.
   // Keep ordinary commands bounded separately from this initial handshake.
