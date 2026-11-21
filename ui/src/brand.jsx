@@ -1,11 +1,13 @@
 import React from "react";
-import fullMark from "./brand/mark.svg?raw";
-import smallMark from "./brand/mark-small.svg?raw";
+import fullMark from "../../brand/mark-themed.svg?raw";
+import smallMark from "../../brand/mark-small-themed.svg?raw";
 
-// The Super Cage mark (brand/design-language.md §5). Its path data is large,
-// so it is added to the document once as two <symbol>s and every use is a
-// <use> reference. Ink follows currentColor; the light follows --clay and its
-// glow --clay-soft.
+// The Super Cage mark (brand/design-language.md §5). The masters are imported
+// straight from brand/, the single source, so the desktop and the phone (its
+// Logo in mobile-cli/doodles.jsx draws this component) cannot drift apart. Its
+// path data is large, so it is added to the document once as two <symbol>s and
+// every use is a <use> reference. Ink follows currentColor; the light follows
+// --clay and its glow --clay-soft.
 const inner = (svg) =>
   svg
     .replace(/^[\s\S]*?<svg[^>]*>/, "")
