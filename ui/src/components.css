@@ -548,10 +548,14 @@
   }
   .field-help,
   .footnote {
-    margin: -8px 0 20px;
+    margin: 6px 0 20px;
     color: var(--muted);
     font-size: var(--fs-caption);
     line-height: 1.65;
+  }
+  /* Help tucks under the field it explains. */
+  label + .field-help {
+    margin-top: -12px;
   }
   .footnote {
     margin-top: 12px;

@@ -1094,8 +1094,16 @@
     color: var(--muted);
     font-size: var(--fs-secondary);
   }
+  .home-environment-body {
+    position: relative;
+  }
+  /* The terminal picker drops over the lists instead of stretching the card. */
   .home-environment .terminal-create-menu {
-    margin: 8px 0 0 auto;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 16;
+    margin: 6px 0 0;
   }
   .welcome-shortcuts {
     display: flex;
@@ -1155,7 +1163,7 @@
     margin-top: 36px;
   }
   .home-section h2.section-label {
-    margin: 0 0 8px 4px;
+    margin: 0 0 8px 2px;
   }
   .home-section > .list {
     overflow: hidden;
@@ -1305,7 +1313,7 @@
   /* ── Narrow windows ─────────────────────────────────────── */
   @media (max-width: 1050px) {
     :root {
-      --sidebar-width: 248px;
+      --sidebar-width: 17.7143rem;
     }
     .content-breadcrumb > button {
       max-width: 180px;
@@ -1329,7 +1337,7 @@
   }
   @media (max-width: 720px) {
     :root {
-      --sidebar-width: 208px;
+      --sidebar-width: 14.8571rem;
     }
     .workspace-sidebar {
       padding: 0 6px;

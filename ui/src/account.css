@@ -69,14 +69,14 @@
   font: inherit;
   font-size: 14px;
   padding: 11px 12px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
   color: var(--ink);
-  background: var(--paper);
+  background: var(--surface);
 }
 .account-field input:focus,
 .account-field textarea:focus {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 .account-field textarea { resize: vertical; line-height: 1.7; overflow-wrap: anywhere; }

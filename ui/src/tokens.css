@@ -102,9 +102,10 @@
   --dur: 160ms;
 
   /* Shell metrics. */
-  --sidebar-width: 264px;
-  --workbench-header-height: 44px;
-  --status-height: 28px;
+  /* In rem so the frame grows with the UI font size setting (264 / 44 / 28 px at 14 px). */
+  --sidebar-width: 18.8571rem;
+  --workbench-header-height: 3.1429rem;
+  --status-height: 2rem;
 }
 
 :root[data-theme="dark"] {
