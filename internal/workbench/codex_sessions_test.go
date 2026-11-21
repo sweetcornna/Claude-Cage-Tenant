@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -502,7 +502,9 @@ func TestCodexDesktopListingIsOptIn(t *testing.T) {
 	// A held list answers when the server's own terminal ends.
 	answer, _ = desktopCodexList(t, s, "?providers=claude,codex")
 	done := make(chan *httptest.ResponseRecorder, 1)
-	go func() { done <- request(s, "GET", "/api/cli/sessions?providers=claude,codex&after="+answer.Revision+"&wait=10", "", "", true) }()
+	go func() {
+		done <- request(s, "GET", "/api/cli/sessions?providers=claude,codex&after="+answer.Revision+"&wait=10", "", "", true)
+	}()
 	time.Sleep(300 * time.Millisecond)
 	started := time.Now()
 	s.terminals.remove(terminal.id)
