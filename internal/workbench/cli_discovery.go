@@ -53,10 +53,19 @@ var residentLifetime = 10 * time.Minute
 
 const residentRetired = 4
 
+// residentOversized and residentRefused fail one request, not the helper: the
+// answer exceeded the helper's 1 MiB (the channel helper allows 4 MiB), or the
+// request failed in the channel helper's own code (see cli_discovery.py). The
+// caller answers it with the channel helper; the helper stays in use.
+const (
+	residentOversized = 3
+	residentRefused   = 6
+)
+
 type residentOutcome int
 
 const (
-	residentUnavailable residentOutcome = iota // not sent: no helper or backing off
+	residentUnavailable residentOutcome = iota // not sent, backing off, or refused this request
 	residentAnswered
 	residentLost   // the helper or its connection ended; the next request starts another
 	residentFailed // the helper failed the request; backing off
@@ -227,6 +236,8 @@ func (s *Server) residentRequest(ctx context.Context, mode string, input any) (j
 			return reply.stdout, residentAnswered
 		case err == nil && reply.code == residentMissing:
 			return nil, residentUnavailable
+		case err == nil && (reply.code == residentRefused || reply.code == residentOversized):
+			return nil, residentUnavailable
 		case ctx.Err() != nil && errors.Is(err, context.Canceled):
 			return nil, residentLost // the caller left
 		case err != nil && holdExpired(ctx):
@@ -234,7 +245,8 @@ func (s *Server) residentRequest(ctx context.Context, mode string, input any) (j
 		case errors.Is(err, errGuestSessionEnded):
 			return nil, residentLost
 		}
-		// A stalled or failing helper must not delay the next requests.
+		// A stalled or failing helper must not delay the next requests: a
+		// timeout, a broken connection or a malformed answer backs off.
 		s.cliDiscovery.failed()
 		_ = diagnostics.New(s.profile).Record("warn", "cli-discovery", fmt.Sprintf("operation=%s exit=%d elapsed_ms=%d error=%v output_bytes=%d", mode, reply.code, time.Since(started).Milliseconds(), err, len(reply.stdout)))
 		return nil, residentFailed

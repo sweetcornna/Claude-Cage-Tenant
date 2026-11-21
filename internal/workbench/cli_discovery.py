@@ -33,6 +33,12 @@ WAIT_LIMIT = 25.0
 RETIRED = 4
 # The Codex helper is not installed yet; the workbench uses its own bootstrap.
 MISSING = 5
+# The request itself failed (a transcript that vanished mid-read, a refused
+# account, claude agents failing): the workbench answers this one request with
+# the channel helper and keeps using this process. Malformed framing or an
+# unknown operation still answers 1, which retires it.
+REFUSED = 6
+MODES = ("codex-discover", "discover", "watch", "view", "view-wait")
 OUTPUT_LIMIT = 1 << 20
 REQUEST_LIMIT = 1 << 20
 SUMMARY_LIMIT = 20000
@@ -250,14 +256,21 @@ def serve(requests, replies, lifetime=600.0):
         try:
             message = json.loads(payload)
             request = dict(message["input"], cancelled=cancelled)
-            output = json.dumps(handle(message["mode"], request), ensure_ascii=False).encode()
-            if len(output) > OUTPUT_LIMIT:
-                code, output, error = 3, b"", b"output limit"
-        except Missing:
-            code, output, error = MISSING, b"", b""
+            mode = message["mode"]
+            if mode not in MODES:
+                raise ValueError("unsupported operation")
         except Exception as failure:
-            # The workbench answers this request with the channel helper.
             code, output, error = 1, b"", type(failure).__name__.encode()
+        else:
+            try:
+                output = json.dumps(handle(mode, request), ensure_ascii=False).encode()
+                if len(output) > OUTPUT_LIMIT:
+                    code, output, error = 3, b"", b"output limit"
+            except Missing:
+                code, output, error = MISSING, b"", b""
+            except Exception as failure:
+                # The workbench answers this request with the channel helper.
+                code, output, error = REFUSED, b"", type(failure).__name__.encode()
         with writing:
             pending.pop(ident, None)
             replies.write(b"D %d %d %d %d\n" % (ident, code, len(output), len(error)) + output + error)
