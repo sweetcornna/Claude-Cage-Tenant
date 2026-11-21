@@ -241,6 +241,12 @@ func (s *Server) discoverTerminalConversations(ctx context.Context, paths []stri
 		if record != nil && !record.Terminal {
 			continue
 		}
+		// Unchanged sessions are not rewritten: every list poll runs this, and
+		// each write is a synced file replacement.
+		var before []byte
+		if record != nil {
+			before, _ = json.Marshal(record)
+		}
 		if record == nil {
 			record = &mobileRecord{mobileSession: mobileSession{mobileSummary: mobileSummary{ID: uuid.NewString(), Workspace: workspace}, Turns: []mobileTurn{}}, CLIID: item.CLIID, Terminal: true, Resume: true}
 			record.Generation = m.epochLocked()
@@ -265,8 +271,10 @@ func (s *Server) discoverTerminalConversations(ctx context.Context, paths []stri
 			}
 		}
 		record.UpdatedAt = time.UnixMilli(int64(item.UpdatedAt * 1000)).UTC()
-		if err := writePrivate(mobileRecordPath(s.profile, record.ID), record); err != nil {
-			return err
+		if after, _ := json.Marshal(record); !bytes.Equal(before, after) {
+			if err := writePrivate(mobileRecordPath(s.profile, record.ID), record); err != nil {
+				return err
+			}
 		}
 		m.catalog[record.ID] = record.summary()
 		running[record.ID] = running[record.ID] || item.Running
