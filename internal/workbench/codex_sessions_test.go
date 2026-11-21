@@ -911,6 +911,12 @@ func TestCodexArchiveClosesTheTerminalAndStopsThePhoneTurn(t *testing.T) {
 		t.Fatal("phone turn not listed", sessions)
 	}
 	guest.reply("stop", map[string]any{"ok": true})
+	// The guest is asked even when this server has not seen the turn, as
+	// after a restart.
+	s.mobileCLI.mu.Lock()
+	delete(s.mobileCLI.codexOwner, phone.ID)
+	delete(s.mobileCLI.codexLive, phone.ID)
+	s.mobileCLI.mu.Unlock()
 	if w := request(s, "POST", "/api/mobile/cli/sessions/"+phone.ID+"/archive", s.origin, "{}", true); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
@@ -1219,6 +1225,84 @@ func TestCodexMenuSessionThroughShippedHelper(t *testing.T) {
 				t.Fatalf("view %d %s", w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+// After a workbench restart the old terminal is gone but its Codex may still
+// hold the thread under its guest lease: the new server reads that as another
+// process, refuses the phone and the desktop, and offers no stale terminal.
+func TestCodexOwnershipAfterARestartComesFromTheGuestLease(t *testing.T) {
+	s, project, home := shippedCodexWorkbench(t)
+	id := uuid.NewString()
+	if w := request(s, "POST", "/api/mobile/cli/sessions", s.origin, `{"id":"`+id+`","workspace":"`+project+`","provider":"codex"}`, true); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	path := "/api/mobile/cli/sessions/" + id
+	send := func(s *Server) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]string{"request_id": uuid.NewString(), "text": "hello"})
+		return request(s, "POST", path+"/messages", s.origin, string(body), true)
+	}
+	wait := func(s *Server, what string, done func(mobileSession) bool) mobileSession {
+		deadline := time.Now().Add(25 * time.Second)
+		for {
+			w := request(s, "GET", path, "", "", true)
+			var view mobileSession
+			if w.Code == 200 && json.Unmarshal(w.Body.Bytes(), &view) == nil && done(view) {
+				return view
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: %d %s", what, w.Code, w.Body.String())
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	if w := send(s); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	wait(s, "first turn", func(view mobileSession) bool {
+		return len(view.Turns) == 1 && view.Owner == "" && view.CanSend != nil && *view.CanSend
+	})
+	w := request(s, "POST", "/api/cli/sessions/"+id+"/open", s.origin, "{}", true)
+	var opened mobileSession
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &opened) != nil {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	terminal := s.terminals.get(opened.DesktopTerminalID)
+	screen := terminal.subscribe()
+	readTerminalUntil(t, screen, "codex tui ready")
+	screen.Close()
+	if record, _ := s.mobileCLI.record(s.profile, id); record.TerminalID != terminal.id || record.CodexLease == "" {
+		t.Fatalf("record before the restart %+v", record)
+	}
+
+	// A new server over the same profile; the old one's Codex keeps running.
+	restarted := &Server{account: s.account, profile: s.profile, configPath: s.configPath, origin: s.origin, token: s.token, session: s.session, preferences: s.preferences}
+	restarted.projectShares = map[string]*projectShare{project: {done: make(chan struct{})}}
+	t.Cleanup(restarted.terminals.close)
+	mobileTestSSH(t, restarted, home, []string{"HOME=" + home, "PATH=" + filepath.Join(home, "bin") + ":/usr/bin:/bin"})
+	restarted.ready = true
+	view := wait(restarted, "guest lease", func(view mobileSession) bool { return view.Owner == "external" })
+	if view.CanSend == nil || *view.CanSend || view.DesktopTerminalID != "" || view.TerminalAvailable || view.ConnectionNotice != codexExternalNotice {
+		t.Fatalf("view after the restart %+v", view)
+	}
+	answer, _ := desktopCodexList(t, restarted, "?providers=claude,codex")
+	if len(answer.Sessions) != 1 || answer.Sessions[0].Owner != "external" || !answer.Sessions[0].Running {
+		t.Fatalf("listed after the restart %+v", answer.Sessions)
+	}
+	if w := send(restarted); w.Code != 409 || !strings.Contains(w.Body.String(), "电脑的 Codex 终端") {
+		t.Fatal("phone message under the old terminal's lease", w.Code, w.Body.String())
+	}
+	if w := request(restarted, "POST", "/api/cli/sessions/"+id+"/open", restarted.origin, "{}", true); w.Code != 409 || len(restarted.terminals.snapshot()) != 0 {
+		t.Fatal("desktop open under the old terminal's lease", w.Code, w.Body.String())
+	}
+	// When that Codex quits, the thread is free again.
+	if err := terminal.enqueueInput(context.Background(), "q\r"); err != nil {
+		t.Fatal(err)
+	}
+	awaitTerminalSignal(t, terminal.done)
+	wait(restarted, "release", func(view mobileSession) bool { return view.Owner == "" && view.CanSend != nil && *view.CanSend })
+	if w := send(restarted); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
 	}
 }
 

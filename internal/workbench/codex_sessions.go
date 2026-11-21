@@ -421,7 +421,14 @@ func (s *Server) codexConversationView(ctx context.Context, record *mobileRecord
 	}
 	// The server's own bound terminal decides before the guest's report,
 	// which can lag the terminal's start by a login shell.
-	owner := codexOwner(s.terminals.boundCodex(id) != nil, guestCodexOwner(current))
+	bound := s.terminals.boundCodex(id)
+	owner := codexOwner(bound != nil, guestCodexOwner(current))
+	// Only a terminal this server has now can be opened from the phone; one
+	// recorded before a restart is gone.
+	record.TerminalID = ""
+	if bound != nil {
+		record.TerminalID = bound.id
+	}
 	canSend := current.CanSend && owner == ""
 	record.ConnectionNotice = current.ConnectionNotice
 	if owner == "desktop" {
