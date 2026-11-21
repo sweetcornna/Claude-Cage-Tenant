@@ -78,19 +78,26 @@
 }
 .claude-scheduling[open] > summary::before { transform: rotate(90deg); }
 .claude-scheduling[open] {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 16px;
   max-height: 45vh;
   overflow-y: auto;
   margin-bottom: 12px;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--line);
 }
-.claude-scheduling[open] > :not(label) { grid-column: 1 / -1; }
-.claude-scheduling > label { display: grid; gap: 6px; color: var(--ink); font-size: var(--fs-secondary); font-weight: 500; }
+/* The two selects side by side; details does not lay out as a grid everywhere. */
+.claude-scheduling > label {
+  display: inline-grid;
+  width: calc(50% - 8px);
+  gap: 6px;
+  margin: 4px 0 12px;
+  vertical-align: top;
+  color: var(--ink);
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+}
+.claude-scheduling > label + label { margin-left: 16px; }
 .claude-scheduling > .field-help { margin: 0; }
-.claude-account-order { max-height: 9rem; overflow: auto; border-top: 1px solid var(--line); }
+.claude-account-order { max-height: 12rem; margin-top: 12px; overflow: auto; border-top: 1px solid var(--line); }
 .claude-account-order > div { display: flex; gap: 8px; align-items: center; min-height: var(--h-control); border-bottom: 1px solid var(--line); font-size: var(--fs-secondary); }
 .claude-account-order span { flex: 1; overflow-wrap: anywhere; }
 .claude-account-order button { min-height: var(--h-compact); padding: 0 10px; font-size: var(--fs-caption); }
@@ -370,7 +377,8 @@
 /* Narrow panes: the quota moves under the name. */
 @container (max-width: 560px) {
   .claude-profiles .section-title.claude-profiles-intro { flex-direction: column; gap: 12px; }
-  .claude-scheduling[open] { grid-template-columns: minmax(0, 1fr); }
+  .claude-scheduling > label { width: 100%; }
+  .claude-scheduling > label + label { margin-left: 0; }
 }
 @container (max-width: 860px) {
   .claude-profile-list { grid-template-columns: 2rem minmax(0, 1fr) auto; }

@@ -249,6 +249,14 @@ export async function routeModulePages(page, state, options = {}) {
     if (variant() === "error") return json(route, { accounts: claudeAccounts(seconds).slice(0, 2), detection_status: "signed_out",
       detection_error: "无法检测普通终端的登录：Claude Code 没有响应，请稍后重试", login_notice: "", usage_panel_running: false,
       usage_unavailable_reason: "额度查询暂不可用：当前代理拒绝了 claude.ai 的请求", scheduling: { mode: "balanced", switch_policy: "ask" } });
+    if (variant() === "detected") return json(route, {
+      accounts: [{ id: "p0", source: "default", label: "me@linjian.example", email: "me@linjian.example", organization: "林间工作室", plan: "Max", enabled: true, status: "changed" },
+        ...claudeAccounts(seconds)],
+      detected: { identity: "d".repeat(64), email: "night.owl@linjian.example", organization: "林间工作室", plan: "Pro",
+        quota: { observed_at: seconds - 60, five_hour: { used_percentage: 12, resets_at: seconds + 9000, observed_at: seconds - 60 },
+          seven_day: { used_percentage: 33, resets_at: seconds + 300000, observed_at: seconds - 60 } }, usage_status: "reported", usage_checked_at: seconds - 60 },
+      detection_status: "ready", detection_error: "", login_notice: "", usage_panel_running: false, usage_unavailable_reason: "",
+      scheduling: { mode: "sequential", switch_policy: "ask" } });
     return json(route, { accounts: variant() === "empty" ? [] : claudeAccounts(seconds), detection_status: "signed_out", detection_error: "",
       login_notice: "", usage_panel_running: false, usage_unavailable_reason: "", scheduling: { mode: "balanced", switch_policy: "ask" } });
   });
