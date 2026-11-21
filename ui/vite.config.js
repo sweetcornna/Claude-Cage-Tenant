@@ -6,7 +6,18 @@ export default defineConfig({
   build: {
     outDir: "../internal/workbench/web",
     emptyOutDir: true,
-    rolldownOptions: { input: { desktop: "index.html", mobile: "mobile.html" } },
+    rolldownOptions: {
+      input: { desktop: "index.html", mobile: "mobile.html" },
+      // The workbench server serves everything under assets/ as immutable, which
+      // is only safe while each name carries an 8-character content hash (the
+      // defaults, spelled out here so they cannot drift). verify-build.mjs
+      // rejects a build that breaks this.
+      output: {
+        entryFileNames: "assets/[name]-[hash:8].js",
+        chunkFileNames: "assets/[name]-[hash:8].js",
+        assetFileNames: "assets/[name]-[hash:8][extname]",
+      },
+    },
   },
   server: { proxy: { "/api": { target: "http://localhost:17777", ws: true } } },
 });
