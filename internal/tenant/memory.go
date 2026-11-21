@@ -75,6 +75,9 @@ type InstanceMemory struct {
 	GuestSwapIns   uint64
 	GuestSwapKnown bool
 	NestedShort    int64
+	// NestedPressure: the nested guest is under memory pressure itself, so its
+	// shortfall is a shortage, not missing headroom.
+	NestedPressure bool
 	// Active is set by the balancer, not by the runtime: the workspace was
 	// used (browser traffic, a portal open, guest CPU) within memoryActiveWindow.
 	Active bool

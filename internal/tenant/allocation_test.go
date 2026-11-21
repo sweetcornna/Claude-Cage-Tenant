@@ -440,3 +440,22 @@ func TestAllocationStableUnderConstantDemand(t *testing.T) {
 		}
 	}
 }
+
+func TestAllocationNestedPressureIsAShortageUnderHostPressure(t *testing.T) {
+	// The host is short of memory. A machine whose nested guest only lacks
+	// headroom waits; one whose nested guest is under pressure grows.
+	id := vmID(8)
+	now := time.Unix(1e9, 0)
+	entry := guestVM(4352*testMiB, 3*testGiB, 0)
+	entry.NestedShort = 1536 * testMiB
+	state := MemoryState{HostTotal: 16 * testGiB, HostAvailable: 2 * testGiB, Ceiling: 12 * testGiB, Instances: map[string]InstanceMemory{id: entry}}
+	if result := allocate(state, nil, now); !result.pressure || len(result.changes) != 0 && result.changes[0].to > entry.Limit {
+		t.Fatalf("missing headroom grew under host pressure: %+v", result.changes)
+	}
+	entry.NestedPressure = true
+	state.Instances[id] = entry
+	result := allocate(state, nil, now)
+	if len(result.changes) != 1 || result.changes[0].to <= entry.Limit || result.changes[0].reason != "nested guest needs memory" {
+		t.Fatalf("nested shortage under host pressure: %+v", result.changes)
+	}
+}

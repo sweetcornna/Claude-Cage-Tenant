@@ -238,7 +238,9 @@ func allocateMemory(in allocationInput, held map[string]demandState) allocationR
 		// Short: tasks wait for memory, pages come back from swap, or less is
 		// available than the least a shrink leaves (so a shrink into the
 		// headroom under host pressure never reads as a shortage).
-		if entry.GuestStall >= memoryShortStall || in.swapIn[id] || entry.GuestAvailable < memoryMinHeadroom/2 {
+		// A nested guest under pressure that its machine cannot back is a
+		// shortage too; a nested guest that only lacks headroom is not.
+		if entry.GuestStall >= memoryShortStall || in.swapIn[id] || entry.GuestAvailable < memoryMinHeadroom/2 || entry.NestedPressure && entry.NestedShort > 0 {
 			short[id] = true
 			d = max(d, entry.Limit+max(int64(memoryShrinkStep), entry.Limit/4))
 		}

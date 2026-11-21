@@ -156,10 +156,11 @@ func parseGuestMemory(body []byte, now time.Time) (InstanceMemory, error) {
 		Version   int       `json:"version"`
 		UpdatedAt time.Time `json:"updated_at"`
 		Short     int64     `json:"short_bytes"`
+		Pressure  bool      `json:"pressure"`
 	}
 	if data := bytes.TrimSpace(sections["nested"]); len(data) > 0 && json.Unmarshal(data, &nested) == nil && nested.Version == 1 &&
 		nested.Short > 0 && nested.Short <= 1<<40 && now.Sub(nested.UpdatedAt).Abs() <= nestedFresh {
-		reading.NestedShort = nested.Short
+		reading.NestedShort, reading.NestedPressure = nested.Short, nested.Pressure
 	}
 	return reading, nil
 }

@@ -170,10 +170,10 @@ func TestGuestMemoryReadingToleratesMissingOptionalFiles(t *testing.T) {
 	if err != nil || reading.GuestTotal != 8189952<<10 || reading.GuestStall != 0 || reading.GuestSwapKnown || reading.NestedShort != 0 {
 		t.Fatalf("minimal reading %+v %v", reading, err)
 	}
-	nested := "{\"version\":1,\"updated_at\":\"" + now.Add(-10*time.Second).Format(time.RFC3339) + "\",\"short_bytes\":3221225472}"
+	nested := "{\"version\":1,\"updated_at\":\"" + now.Add(-10*time.Second).Format(time.RFC3339) + "\",\"short_bytes\":3221225472,\"pressure\":true}"
 	full := meminfo + "#cage-psi\nsome avg10=12.50 avg60=1.00 avg300=0.00 total=1\nfull avg10=1.00 avg60=0 avg300=0 total=1\n#cage-vmstat\npswpin 4242\n#cage-nested\n" + nested + "\n"
 	reading, err = parseGuestMemory([]byte(full), now)
-	if err != nil || reading.GuestStall != 12.5 || reading.GuestSwapIns != 4242 || !reading.GuestSwapKnown || reading.NestedShort != 3*testGiB {
+	if err != nil || reading.GuestStall != 12.5 || reading.GuestSwapIns != 4242 || !reading.GuestSwapKnown || reading.NestedShort != 3*testGiB || !reading.NestedPressure {
 		t.Fatalf("full reading %+v %v", reading, err)
 	}
 	// A stale or implausible nested demand is ignored; a broken meminfo is not a reading.

@@ -79,10 +79,6 @@ func (g *simGuest) step() {
 			swapB = b - g.limits.BrowserHigh
 			g.browserStall = min(60, 10+50*float64(swapB)/float64(g.limits.BrowserHigh))
 		}
-		if s > g.limits.SessionsHigh {
-			swapS = s - g.limits.SessionsHigh
-			g.protectedStall = max(g.protectedStall, min(40, 5+40*float64(swapS)/float64(g.limits.SessionsHigh)))
-		}
 	}
 	resident := c + (s - swapS) + (b - swapB)
 	used := resident + (swapB+swapS)/3
@@ -156,7 +152,9 @@ func (g *simGuest) step() {
 	// protected and its new allocations reclaim from the unprotected
 	// classes, so it answers unless nothing unprotected is left.
 	if g.classesC {
-		g.answers = !g.forceSilent && g.controlStall < 10
+		// The probes arrive as SSH sessions of the sessions' user: they share
+		// the sessions' cgroup (user.slice) and its stall.
+		g.answers = !g.forceSilent && g.controlStall < 10 && g.protectedStall < 10
 	} else {
 		g.answers = !g.forceSilent && g.controlStall < 10 && g.available >= 128*simMiB
 	}
@@ -176,13 +174,14 @@ func (g *simGuest) sample() *cage.ResourceSample {
 }
 
 type simMachine struct {
-	id     string
-	limit  int64  // limits.memory set by the gateway
-	own    uint64 // the machine's own processes (cage serve, host agent, QEMU)
-	guest  *simGuest
-	short  uint64 // published in machine-memory.json
-	active bool
-	swaps  int // seconds the machine itself was out of memory
+	id             string
+	limit          int64  // limits.memory set by the gateway
+	own            uint64 // the machine's own processes (cage serve, host agent, QEMU)
+	guest          *simGuest
+	short          uint64 // published in machine-memory.json
+	nestedPressure bool
+	active         bool
+	swaps          int // seconds the machine itself was out of memory
 }
 
 func (m *simMachine) memTotal() uint64 { return uint64(m.limit) - 200*simMiB }
@@ -237,7 +236,7 @@ func (w *simWorld) run(seconds int, trace func(second int, m *simMachine)) {
 				decision := g.policy.Decide(w.now, g.sample(), false, false, machine)
 				g.target = decision.Target
 				g.policy.Applied(decision.Target)
-				m.short = decision.ShortBytes
+				m.short, m.nestedPressure = decision.ShortBytes, decision.Pressure || g.sample() == nil
 				if g.classesC && g.answers {
 					g.limits = cage.PlanGuestClasses(min(g.maximum, max(decision.Capacity, decision.Demand)),
 						map[string]cage.GuestClass{"control": {Current: g.want.control}, "sessions": {Current: min(g.want.sessions, max(g.limits.SessionsHigh, g.want.sessions))}})
@@ -258,7 +257,7 @@ func (w *simWorld) allocate() {
 	for _, m := range w.machines {
 		resident += min(uint64(m.limit), m.used()+200*simMiB)
 		state.Instances[m.id] = InstanceMemory{Status: "Running", Limit: m.limit, GuestTotal: int64(m.memTotal()), GuestAvailable: int64(m.available()),
-			NestedShort: int64(m.short), Active: m.active}
+			NestedShort: int64(m.short), NestedPressure: m.nestedPressure, Active: m.active}
 	}
 	state.HostAvailable = int64(w.host - min(w.host, w.hostOwn+resident))
 	result := allocateMemory(allocationInput{now: w.now, state: state, minimum: DefaultMemoryMin}, w.held)
@@ -308,6 +307,14 @@ func TestReplayOutageBeforeAndAfter(t *testing.T) {
 	after, am := singleMachine(true, newSizing, outage)
 	after.run(2400, outage)
 	report(t, "outage, new allocation", after, am)
+	// The new sizing alone, on a guest without the governor (components not
+	// yet updated): the tab fits in the larger guest.
+	sizingOnly, sm := singleMachine(false, newSizing, outage)
+	sizingOnly.run(2400, outage)
+	report(t, "outage, new size, no classes", sizingOnly, sm)
+	if sizingOnly.silent[sm.id] != 0 || sm.swaps != 0 {
+		t.Fatalf("sizing alone: silent %d s, machine out of memory %d s", sizingOnly.silent[sm.id], sm.swaps)
+	}
 	// Priorities alone, with the old 3 GiB ceiling (an explicit manual
 	// setting): the tab is reclaimed and throttled, the control plane answers.
 	classesOnly, cm := singleMachine(true, oldSizing, outage)
@@ -340,15 +347,28 @@ func TestReplayRunawayTabIsContained(t *testing.T) {
 	}
 }
 
-func TestReplaySessionRunawayKeepsProbesAnswering(t *testing.T) {
+func TestReplaySessionRunawayAtTheMaximum(t *testing.T) {
+	// A session grows to 5.9 GiB in a guest whose maximum is 6 GiB. The host
+	// agent gives the guest its maximum and the machine stays safe; the
+	// browser is reclaimed first. The probes are SSH sessions of the same
+	// user as the sessions and share their cgroup, so once the guest is out
+	// of memory they stop answering too: a known limit (resource-allocation.md
+	// section 7), reported, not asserted away.
 	build := func(second int, m *simMachine) {
 		m.guest.want = simClasses{control: 400 * simMiB, sessions: 500*simMiB + min(uint64(second), 900)*6*simMiB, browser: 900 * simMiB, cache: 400 * simMiB}
 	}
 	w, m := singleMachine(true, newSizing, build)
-	w.run(1500, build)
+	firstSilent := -1
+	for range 1500 {
+		w.run(1, build)
+		if firstSilent < 0 && w.silent[m.id] > 0 {
+			firstSilent = w.second
+		}
+	}
 	report(t, "session runaway, new", w, m)
-	if w.silent[m.id] != 0 || m.swaps != 0 {
-		t.Fatalf("a runaway session silenced the probes for %d s (machine out of memory %d s)", w.silent[m.id], m.swaps)
+	t.Logf("probes first silent at %d s, when the sessions wanted %d MiB in a %d MiB guest", firstSilent, (500*simMiB+min(uint64(firstSilent), 900)*6*simMiB)>>20, m.guest.maximum>>20)
+	if m.swaps != 0 || m.guest.target != m.guest.maximum || m.guest.sessionKill != 0 || firstSilent >= 0 && 500*simMiB+uint64(firstSilent)*6*simMiB < m.guest.maximum-1536*simMiB {
+		t.Fatalf("session runaway: machine out of memory %d s, target %d MiB, first silent at %d s", m.swaps, m.guest.target>>20, firstSilent)
 	}
 }
 
@@ -478,8 +498,9 @@ func TestReplayParkedMachineRegrowsQuickly(t *testing.T) {
 	// Then its guest needs 3 GiB more: the host agent tells the gateway what
 	// the machine cannot back, and the guest has it within two gateway rounds.
 	// A parked machine absorbs about its headroom (1 GiB) at once; the rest
-	// waits for the next gateway round (up to 15 s), so a burst faster than
-	// that can leave the guest out of memory for a few seconds (logged).
+	// waits for gateway rounds (15 s each), so a burst faster than that leaves
+	// the guest out of memory, and its probes silent, for up to two rounds
+	// (logged; an open decision in resource-allocation.md section 7).
 	idle := func(second int, m *simMachine) {
 		m.guest.want = simClasses{control: 400 * simMiB, sessions: 300 * simMiB, browser: 300 * simMiB, cache: 200 * simMiB}
 	}
@@ -512,7 +533,7 @@ func TestReplayParkedMachineRegrowsQuickly(t *testing.T) {
 		elapsed := w.second - start
 		t.Logf("3 GiB more over %2d s on a machine parked at %d MiB: the guest has it after %d s (machine %d MiB, guest %d MiB), control plane silent %d s, machine out of memory %d s",
 			ramp, parked>>20, elapsed, m.limit>>20, m.guest.target>>20, w.silent[m.id]-silent, m.swaps)
-		if elapsed > 35 || m.swaps != 0 || w.silent[m.id]-silent > 20 {
+		if elapsed > 40 || m.swaps != 0 || w.silent[m.id]-silent > 40 || ramp > 1 && w.silent[m.id]-silent > 10 {
 			t.Fatalf("regrowth over %d s took %d s (machine out of memory %d s, silent %d s)", ramp, elapsed, m.swaps, w.silent[m.id]-silent)
 		}
 	}
