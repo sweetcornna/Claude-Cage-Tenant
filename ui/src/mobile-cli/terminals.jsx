@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useEffect, useState } from "react";
-import { Bot, ChevronRight, LoaderCircle, Sparkles, SquareTerminal } from "lucide-react";
+import { Bot, ChevronRight, FolderOpen, LoaderCircle, Sparkles, SquareTerminal } from "lucide-react";
 import { Doodle } from "./doodles";
 import { InlineSelect } from "./inline-select";
 import { terminals } from "./services.mjs";
@@ -9,9 +9,9 @@ import { haptic } from "./device-navigation.mjs";
 
 const TerminalScreen = lazy(() => import("./terminal-screen"));
 export const kindInfo = {
-  shell: { label: "终端", icon: SquareTerminal, hint: "Linux Shell" },
-  claude: { label: "Claude 终端", icon: Sparkles, hint: "交互式 Claude Code" },
-  codex: { label: "Codex 终端", icon: Bot, hint: "交互式 Codex" },
+  shell: { label: "Shell", name: "终端", icon: SquareTerminal, hint: "Linux 命令行" },
+  claude: { label: "Claude", name: "Claude 终端", icon: Sparkles, hint: "Claude Code 界面" },
+  codex: { label: "Codex", name: "Codex 终端", icon: Bot, hint: "Codex 界面" },
 };
 
 export function TerminalsView({ catalog, project, onProject, terminalID, onOpen, onBack, onDenied, visible }) {
@@ -49,10 +49,10 @@ export function TerminalsView({ catalog, project, onProject, terminalID, onOpen,
   const list = (data?.terminals || []).filter((t) => !t.closed).concat((data?.terminals || []).filter((t) => t.closed));
   const projects = catalog?.projects || [];
   return <section className="terminals page-scroll" aria-label="终端">
-    <header className="page-head"><h1>终端</h1><p className="note">在手机上直接操作环境里的终端，和电脑共享同一个会话。</p></header>
+    <p className="note page-lede">在手机上直接操作环境里的终端，和电脑共享同一个会话。</p>
     {error && <div className="notice" role="alert">{error}</div>}
     <div className="card new-terminal">
-      {projects.length > 0 && <InlineSelect label="工作目录" icon={<ChevronRight size={15} />} value={project?.path || ""} onChange={onProject}
+      {projects.length > 0 && <InlineSelect label="工作目录" icon={<FolderOpen size={15} />} value={project?.path || ""} onChange={onProject}
         options={projects.map((p) => ({ value: p.path, label: "在 " + p.name + " 中打开", optionLabel: p.name + " · " + p.path }))} />}
       <div className="kind-grid">{kinds.filter((k) => kindInfo[k]).map((kind) => {
         const { label, icon: Icon, hint } = kindInfo[kind];
@@ -66,7 +66,7 @@ export function TerminalsView({ catalog, project, onProject, terminalID, onOpen,
     {list.length > 0 && <ul className="terminal-list">{list.map((t) => {
       const Icon = kindInfo[t.kind]?.icon || SquareTerminal;
       return <li key={t.id}><button type="button" onClick={() => onOpen(t.id)}>
-        <Icon size={18} /><span><strong>{t.title}</strong><small>{t.closed ? "已结束" + (t.exit_code != null ? "（退出码 " + t.exit_code + "）" : "") : (kindInfo[t.kind]?.label || "终端") + (t.workspace ? " · " + t.workspace.split("/").pop() : "")}</small></span>
+        <Icon size={18} /><span><strong>{t.title}</strong><small>{t.closed ? "已结束" + (t.exit_code != null ? "（退出码 " + t.exit_code + "）" : "") : (kindInfo[t.kind]?.name || "终端") + (t.workspace ? " · " + t.workspace.split("/").pop() : "")}</small></span>
         {!t.closed && <i className="live-dot" aria-label="运行中" />}<ChevronRight size={16} />
       </button></li>;
     })}</ul>}

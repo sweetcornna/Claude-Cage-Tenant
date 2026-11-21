@@ -23,6 +23,7 @@ export function Home({ catalog, project, onProject, provider, onProvider, creati
   const codex = !!catalog?.codex;
   const env = environmentSummary(environment);
   const ready = !!catalog?.ready;
+  const stopped = environment ? !environment.ready && !environment.vm_running && !environment.job?.running : !ready;
   const text = draft.trim();
   const canSend = !!project && ready && !creating && !attachments.uploading && (!!text || attachments.items.some((i) => i.status === "done"));
   const submit = () => {
@@ -37,7 +38,7 @@ export function Home({ catalog, project, onProject, provider, onProvider, creati
       <Doodle name="squiggle" className="greeting-underline" />
       <p className="home-sub">{project ? <>今天想在 <b>{project.name}</b> 做点什么？</> : "先在电脑上打开一个项目，就能在这里开始。"}</p>
     </div>
-    {!ready && <button type="button" className="env-nudge" onClick={onEnvironment}>
+    {stopped && <button type="button" className="env-nudge" onClick={onEnvironment}>
       <Doodle name="moon" className="nudge-doodle" />
       <span><strong>环境还没有运行</strong><small>点这里启动，启动后就能开始对话和使用终端。</small></span>
       <ChevronRight size={18} />

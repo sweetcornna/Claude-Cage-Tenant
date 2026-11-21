@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
-import { Archive, ArrowLeft, LoaderCircle, Menu, Monitor, RefreshCw, SquarePen } from "lucide-react";
+import { Archive, ArrowDown, ArrowLeft, Check, Copy, LoaderCircle, Menu, Monitor, RefreshCw, SquarePen } from "lucide-react";
 import { RemoteDisplay } from "./remote-browser";
 import { CodeNavigation, ProjectTree, WorkspaceDrawer, workspaceCoreTools, workspaceTools } from "./workspace-drawer";
 import { Home } from "./home";
@@ -12,7 +12,7 @@ import { TerminalsView } from "./terminals";
 import { FilesView } from "./files";
 import { Doodle, Logo } from "./doodles";
 import { ProviderBadge } from "./session-row";
-import { deviceCommand } from "./device-navigation.mjs";
+import { deviceCommand, haptic } from "./device-navigation.mjs";
 import { accessDenied, request, sessionPath } from "./transport.mjs";
 import { recoverPendingMessage, retryableSessionError, sessionFailureMessage, sessionRetryDelay, sessionRetryLimit } from "./session-recovery.mjs";
 import { SessionActionDialog, sortSessions } from "./session-row";
@@ -289,7 +289,17 @@ function App() {
     window.addEventListener("cage-open-archives", openArchives);
     return () => window.removeEventListener("cage-open-archives", openArchives);
   }, [current.project]);
-  return <main className={["mobile-app", phoneWorkspace && "phone-workspace", nativePhone && "native-phone", current.tool === "terminal" && current.terminal && "immersive"].filter(Boolean).join(" ")}>
+  const edge = useRef(null);
+  const swipe = phoneWorkspace && !drawer && !current.displayID && !(current.tool === "terminal" && current.terminal) ? {
+    onTouchStart: (event) => { const t = event.touches[0]; edge.current = t.clientX < 22 ? { x: t.clientX, y: t.clientY } : null; },
+    onTouchMove: (event) => {
+      const start = edge.current, t = event.touches[0];
+      if (!start) return;
+      if (Math.abs(t.clientY - start.y) > 40) { edge.current = null; return; }
+      if (t.clientX - start.x > 56) { edge.current = null; haptic("light"); setDrawer(true); }
+    },
+  } : {};
+  return <main {...swipe} className={["mobile-app", phoneWorkspace && "phone-workspace", nativePhone && "native-phone", current.tool === "terminal" && current.terminal && "immersive"].filter(Boolean).join(" ")}>
     <header className="topbar workspace-topbar">
       {phoneWorkspace
         ? <button type="button" className="icon-button menu-button" aria-haspopup="dialog" aria-expanded={drawer} aria-label="展开侧栏"
@@ -381,6 +391,7 @@ function Chat({ id, drafts, ready, visible, refresh, onOpenWeb, onDenied, onMiss
   const assistant = codex ? "Codex" : "Claude Code";
   const attachments = useAttachments(session?.workspace || "");
   const autoSend = useRef(!!drafts.get(id)?.auto);
+  const [away, setAway] = useState(false);
   useEffect(() => {
     live.current = true;
     return () => { live.current = false; };
@@ -556,7 +567,7 @@ function Chat({ id, drafts, ready, visible, refresh, onOpenWeb, onDenied, onMiss
   const decide = async (turnId, approvalId, allow) => {
     const turn = latest.current?.turns?.at(-1);
     if (actionBusy.current || checkApproval.current?.id === approvalId || turn?.id !== turnId || turn?.status !== "running" || turn.approval?.id !== approvalId) return;
-    actionBusy.current = true; setBusy(true); setApprovalFeedback(null);
+    actionBusy.current = true; setBusy(true); setApprovalFeedback(null); haptic(allow ? "success" : "light");
     try {
       const generation = latest.current?.generation;
       accept(await request(sessionPath(id) + "/approval", { body: { request_id: turnId, approval_id: approvalId, allow } }), generation);
@@ -581,8 +592,10 @@ function Chat({ id, drafts, ready, visible, refresh, onOpenWeb, onDenied, onMiss
     {(sendProgress || connectionProgress || readProgress) && <p className="note" role="status">{sendProgress || connectionProgress || readProgress}</p>}
     {session?.connection_notice && <Notice>{session.connection_notice}</Notice>}
     {session?.history_truncated && <p className="note">手机显示的历史已截断，完整内容保存在电脑 Claude Code 中。</p>}
+    {away && <button type="button" className="jump-latest" aria-label="回到最新消息" onClick={() => { follow.current = true; setAway(false); transcript.current?.scrollTo({ top: transcript.current.scrollHeight, behavior: "smooth" }); }}><ArrowDown size={18} /></button>}
     <section className="transcript" ref={transcript} aria-label="会话消息" onScroll={(e) => {
       const box = e.currentTarget; follow.current = box.scrollHeight - box.scrollTop - box.clientHeight < 64;
+      if (away === follow.current) setAway(!follow.current);
     }}>
       {!session && !readError && <Empty icon={LoaderCircle} title="正在读取会话…" />}
       {session && <p className="chat-meta"><ProviderBadge provider={session.provider} />{session.workspace}</p>}
@@ -593,13 +606,14 @@ function Chat({ id, drafts, ready, visible, refresh, onOpenWeb, onDenied, onMiss
           <ToolActivity tools={turn.tools} />
           {turn.text && <MessageBody text={turn.text} />}
           {turn.truncated && <p className="note">本轮输出超过记录上限，仅显示已保存的部分。</p>}
-          {!turn.text && !turn.approval && active(turn.status) && <p className="note">等待输出…</p>}
+          {!turn.text && !turn.approval && active(turn.status) && <Thinking />}
           {turn.id === last.id && turn.status === "running" && turn.approval?.id && <Approval
             key={turn.approval.id} approval={turn.approval} busy={busy} feedback={approvalFeedback?.id === turn.approval.id ? approvalFeedback : null}
             onDecide={(allow) => decide(turn.id, turn.approval.id, allow)} />}
           {turn.error && <div className="turn-error">{turn.error}</div>}
           {turn.denied_tools?.length > 0 && <div className="turn-tools">以下工具需要授权，本次调用已拒绝。<span>{turn.denied_tools.join("、")}</span></div>}
           {["failed", "interrupted", "stopped"].includes(turn.status) && <p className="note">{labels[turn.status]}</p>}
+          {turn.text && !active(turn.status) && <MessageActions text={turn.text} />}
         </article>
       </React.Fragment>)}</TranscriptContext.Provider>
     </section>
@@ -614,6 +628,24 @@ function Chat({ id, drafts, ready, visible, refresh, onOpenWeb, onDenied, onMiss
         canSend={!(busy || confirming || !!readProgress || !!readError || !ready || !session || session.single_turn || session.can_send === false || attachments.uploading || (!draft.trim() && !attachments.items.some(item => item.status === "done")))} />
     </div>
   </>;
+}
+
+function Thinking() {
+  return <p className="thinking" role="status"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6c.7 4.6 2.6 6.6 7.2 7.4-4.6.8-6.5 2.8-7.2 7.5-.7-4.7-2.7-6.7-7.4-7.5 4.7-.8 6.7-2.8 7.4-7.4z" /></svg>正在思考…</p>;
+}
+
+function MessageActions({ text }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); }
+    catch {
+      const area = Object.assign(document.createElement("textarea"), { value: text });
+      area.style.cssText = "position:fixed;opacity:0"; document.body.append(area); area.select();
+      document.execCommand("copy"); area.remove();
+    }
+    haptic("light"); setCopied(true); setTimeout(() => setCopied(false), 1600);
+  };
+  return <div className="message-actions"><button type="button" aria-label={copied ? "已复制" : "复制回复"} onClick={copy}>{copied ? <Check size={15} /> : <Copy size={15} />}{copied ? "已复制" : "复制"}</button></div>;
 }
 
 function Approval({ approval, busy, feedback, onDecide }) {

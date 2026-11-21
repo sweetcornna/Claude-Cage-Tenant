@@ -252,3 +252,13 @@ body { background: var(--paper); -webkit-font-smoothing: antialiased; }
 .mobile-session-settings h1 { font-family: var(--serif); font-weight: 500; }
 .mobile-app.immersive > .topbar { display: none; }
 .sheet-content:focus { outline: none; }
+.thinking { display: inline-flex; align-items: center; gap: 8px; color: var(--clay-ink); font-size: 14.5px; }
+.thinking svg { width: 18px; height: 18px; fill: var(--clay); animation: spark 1.8s ease-in-out infinite; }
+@keyframes spark { 0% { transform: rotate(0) scale(.85); } 50% { transform: rotate(45deg) scale(1.1); } 100% { transform: rotate(90deg) scale(.85); } }
+@media (prefers-reduced-motion: reduce) { .thinking svg { animation: none; } }
+.message-actions { display: flex; gap: 4px; margin-top: 6px; }
+.message-actions button { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 0 9px; border: 0; border-radius: 9px; background: none; color: var(--muted); font-size: 12.5px; }
+.message-actions button:active { background: var(--soft); }
+.jump-latest { position: absolute; z-index: 4; left: 50%; bottom: 128px; transform: translateX(-50%); display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.mobile-app { position: relative; }
+.page-lede { margin: 4px 2px 0; }
