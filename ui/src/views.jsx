@@ -30,7 +30,9 @@ import { RefreshCw, Clipboard, ArrowUpRight } from "lucide-react";
 import { SessionAccount } from "./session-account";
 import { createTerminalRenderer } from "./terminal-renderer.mjs";
 import { cagePerf } from "./display-perf.mjs";
+import { EmptyState } from "./drawings";
 import "@xterm/xterm/css/xterm.css";
+import "./terminal-pending.css";
 
 const terminalAccountRequest = (path, options) => api("/cli" + path, options.body);
 
@@ -835,6 +837,28 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
               重新连接
             </button>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A terminal whose tab is shown while the server creates it (main.jsx and
+// terminal-pending.mjs): a quiet line while the request runs, then the
+// server's error in its place, with a retry. The record replaces this view.
+export function TerminalPending({ error, onRetry }) {
+  return (
+    <div className="terminal-view">
+      {error ? (
+        <div className="terminal-pending-error" role="alert">
+          <EmptyState compact title="终端没有打开"
+            action={<button className="quiet-button" onClick={onRetry}>重试</button>}>
+            {error}
+          </EmptyState>
+        </div>
+      ) : (
+        <div className="terminal-startup" role="status">
+          <span>正在准备终端…</span>
         </div>
       )}
     </div>
