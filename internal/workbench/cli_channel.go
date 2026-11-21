@@ -656,6 +656,24 @@ func (s *Server) stopTerminalConversation(ctx context.Context, view mobileSessio
 		return view, err
 	}
 	if record.codex() {
+		// A turn of the desktop's Codex TUI stops as it would at the keyboard:
+		// Esc interrupts it (and declines an open approval).
+		if terminal := s.terminals.boundCodex(record.ID); terminal != nil {
+			s.account.mu.Lock()
+			if !s.mobileAuthorized(ctx) {
+				s.account.mu.Unlock()
+				return view, errMobileLocked
+			}
+			err = terminal.enqueueInput(ctx, "\x1b")
+			s.account.mu.Unlock()
+			if err != nil {
+				return view, err
+			}
+			return s.terminalConversationView(ctx, view.ID)
+		}
+		if view.Owner == "external" {
+			return view, errors.New("这一轮不在 Super Cage 的终端中运行，请在运行它的终端中停止")
+		}
 		return s.terminalConversationAction(ctx, view.ID, map[string]any{"action": "stop", "request_id": turnID})
 	}
 	terminal := s.terminals.get(record.TerminalID)

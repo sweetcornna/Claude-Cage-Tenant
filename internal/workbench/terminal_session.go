@@ -93,10 +93,16 @@ func (t *terminalSession) summary() map[string]any {
 			closed = false
 		}
 	}
-	return map[string]any{"id": t.id, "title": t.title, "closed": closed, "workspace": t.workspace, "kind": t.kind,
+	summary := map[string]any{"id": t.id, "title": t.title, "closed": closed, "workspace": t.workspace, "kind": t.kind,
 		"claude_account_id": t.claudeAccountID, "claude_account_source": t.claudeAccountSource, "cli_session_id": t.sharedID,
 		"codex_account_id": t.codexAccountID, "codex_account_source": t.codexAccountSource,
 		"cli_starting": t.cliStartupPendingLocked()}
+	// Clients that know Codex sessions open a bound Codex terminal without the
+	// Claude startup veil and account header.
+	if t.kind == "codex" && t.sharedID != "" {
+		summary["cli_session_provider"] = codexProvider
+	}
+	return summary
 }
 
 func (t *terminalSession) cliStartupPendingLocked() bool {
