@@ -63,12 +63,15 @@ import (
 //
 //	POST /api/claude-science/{install|update|start|stop}, body {}
 //	  200 Job (as /api/claude-desktop/*), kinds claude-science-<action>.
-//	  install: downloads the pinned build (sha256-checked), refuses on
-//	  unsupported guests, a running daemon or too little disk, and writes
-//	  the service. update: stops the daemon, then install. start: writes the
+//	  install: downloads the pinned build (sha256-checked) and writes the
+//	  service. update: stops the daemon, then install. start: writes the
 //	  service and waits until the daemon answers. stop: stops it.
-//	  400 unknown fields; 404 unknown action; 409 unsupported (reason as in
-//	  GET), environment stopped, or another job running.
+//	  400 unknown fields; 404 unknown action; 409 unsupported host or
+//	  guest system (reason as in GET), environment stopped, or another job
+//	  running. What only the guest knows (architecture, libc, storage,
+//	  bubblewrap, free disk, a running daemon) fails the job before any
+//	  change; the job error is the generic maintenance failure and the
+//	  Chinese reason is the last line of the job log, as for Claude Desktop.
 //
 //	POST /api/claude-science/open, body {} or {"fresh": true}
 //	  200 {"id": tab id, "kind": "science", "title": "Claude Science",
