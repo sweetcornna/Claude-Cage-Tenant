@@ -62,24 +62,35 @@ import { guestCapability } from "./guest-capabilities.mjs";
 // Rarely used or heavy views load on first use (audit UI-3): the terminal
 // and remote display (xterm, noVNC) once the home has painted, the others
 // when opened.
-const lazyNamed = (load, name) => lazy(() => load().then((module) => ({ default: module[name] })));
-const loadViews = () => import("./views");
+// A loader keeps its module once it has arrived, so a view whose code is
+// already here renders in the same pass, as an eager import did, instead of
+// suspending for a tick (a synchronous thenable resolves React.lazy at once).
+const loader = (importer) => {
+  let module = null, pending = null;
+  const load = () => pending ||= importer().then((value) => (module = value), (error) => { pending = null; throw error; });
+  load.loaded = () => module;
+  return load;
+};
+const lazyNamed = (load, name) => lazy(() => load.loaded()
+  ? { then: (resolve) => resolve({ default: load.loaded()[name] }) }
+  : load().then((module) => ({ default: module[name] })));
+const loadViews = loader(() => import("./views"));
 const TerminalView = lazyNamed(loadViews, "TerminalView");
 const RemoteView = lazyNamed(loadViews, "RemoteView");
 const TerminalPending = lazyNamed(loadViews, "TerminalPending");
-const SettingsPanel = lazyNamed(() => import("./settings"), "SettingsPanel");
-const TailscalePanel = lazyNamed(() => import("./tailscale"), "TailscalePanel");
-const MacOSAppWindow = lazyNamed(() => import("./macos-claude-window"), "MacOSAppWindow");
-const ClaudeDesktop = lazyNamed(() => import("./claude-desktop"), "ClaudeDesktop");
-const BrowserSettingsPage = lazyNamed(() => import("./browser-settings"), "BrowserSettingsPage");
-const ProjectDialog = lazyNamed(() => import("./project-dialog"), "ProjectDialog");
-const SafetyPanel = lazyNamed(() => import("./safety"), "SafetyPanel");
-const ClaudeSciencePanel = lazyNamed(() => import("./claude-science"), "ClaudeSciencePanel");
-const CodexSessionPane = lazyNamed(() => import("./codex-session-pane"), "CodexSessionPane");
+const SettingsPanel = lazyNamed(loader(() => import("./settings")), "SettingsPanel");
+const TailscalePanel = lazyNamed(loader(() => import("./tailscale")), "TailscalePanel");
+const MacOSAppWindow = lazyNamed(loader(() => import("./macos-claude-window")), "MacOSAppWindow");
+const ClaudeDesktop = lazyNamed(loader(() => import("./claude-desktop")), "ClaudeDesktop");
+const BrowserSettingsPage = lazyNamed(loader(() => import("./browser-settings")), "BrowserSettingsPage");
+const ProjectDialog = lazyNamed(loader(() => import("./project-dialog")), "ProjectDialog");
+const SafetyPanel = lazyNamed(loader(() => import("./safety")), "SafetyPanel");
+const ClaudeSciencePanel = lazyNamed(loader(() => import("./claude-science")), "ClaudeSciencePanel");
+const CodexSessionPane = lazyNamed(loader(() => import("./codex-session-pane")), "CodexSessionPane");
 // Fetch the terminal and display code while the workbench is idle, so opening
 // one does not wait for it.
 const preloadViews = () => {
-  const start = () => { void loadViews(); };
+  const start = () => { void loadViews().catch(() => {}); };
   if (typeof requestIdleCallback === "function") requestIdleCallback(start, { timeout: 2000 });
   else setTimeout(start, 300);
 };
