@@ -18,7 +18,9 @@ import (
 //   - While the host is short of memory, every VM gives back what it holds
 //     beyond its working set plus headroom: mostly page cache.
 //   - A VM above its fair share of the host shrinks toward it, for example
-//     when another VM starts.
+//     when another VM starts, unless it was used within memoryActiveWindow: the
+//     idle VMs give back first, and only a shortage of host memory (the bullet
+//     above) shrinks one that is in use.
 //   - Otherwise sizes stay as they are. Nothing grows only because memory is
 //     free, so a shrink is never undone by itself.
 //
@@ -61,6 +63,9 @@ type InstanceMemory struct {
 	// when the guest did not answer, and then GuestSilent is set.
 	GuestTotal, GuestAvailable int64
 	GuestSilent                bool
+	// Active is set by the balancer, not by the runtime: the workspace was
+	// used (browser traffic, a portal open, guest CPU) within memoryActiveWindow.
+	Active bool
 }
 
 const (
@@ -74,6 +79,9 @@ const (
 	// memorySilentSweeps is how many sweeps in a row a running guest may fail
 	// to report its memory before it grows back to its ceiling.
 	memorySilentSweeps = 2
+	// memoryActiveWindow is how long after its last use a workspace counts as
+	// active: it is spared the fair-share shrink while the host is not short.
+	memoryActiveWindow = time.Minute
 )
 
 // memoryBalancing is the elastic memory state of a server.
@@ -151,6 +159,11 @@ func (s *Server) balanceOnce() {
 		if _, owned := s.store.VMs[id]; !owned || s.starting[id] || s.cooling.changes[id] != nil {
 			fixed[id] = true
 		}
+		if s.activeLocked(id, now) {
+			entry := state.Instances[id]
+			entry.Active = true
+			state.Instances[id] = entry
+		}
 	}
 	s.mu.Unlock()
 	holdShrink := make(map[string]bool)
@@ -205,6 +218,19 @@ func (s *Server) balanceOnce() {
 		delete(s.memory.failures, change.id)
 		log.Printf("cage-tenant: workspace %s memory %s -> %s (%s)", change.id, mib(change.from), mib(change.to), change.reason)
 	}
+}
+
+// activeLocked reports whether a workspace was used within memoryActiveWindow.
+// Unlike lastActiveLocked it never writes, so it is safe while idle cooling is
+// off. Caller holds s.mu.
+func (s *Server) activeLocked(id string, now time.Time) bool {
+	last := s.cooling.activity[id]
+	if workspace := s.workspaces[id]; workspace != nil {
+		if io := workspace.lastActive(); io.After(last) {
+			last = io
+		}
+	}
+	return !last.IsZero() && now.Sub(last) < memoryActiveWindow
 }
 
 // memoryReserve is the host memory kept for the host itself.
@@ -276,6 +302,11 @@ func planMemory(state MemoryState, reserve, minimum int64, fixed, holdShrink, si
 		target, reason := max(need, share), "fair share of the host"
 		if pressure {
 			target, reason = need, "host memory is low"
+		} else if entry.Active {
+			// The fair share is a preparation for other VMs, not a response to a
+			// shortage, and what it takes is page cache the workspace in use is
+			// working with. Idle VMs give back first; a shortage still shrinks all.
+			continue
 		}
 		if entry.Limit-target >= memoryShrinkStep {
 			shrink = append(shrink, memoryChange{id: id, from: entry.Limit, to: max(target, roundUpMemory(entry.Limit-memoryShrinkStep)), reason: reason})
