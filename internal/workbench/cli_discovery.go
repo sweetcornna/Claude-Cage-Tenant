@@ -400,7 +400,7 @@ func (s *Server) watchGuestSessions(ctx context.Context) {
 				request[key] = value
 			}
 			request["known"], request["timeout"] = known, guestWatchTimeout.Seconds()
-			d.setWatching(true)
+			d.setWatching(ctx, true)
 			watchCtx, cancel := context.WithTimeout(ctx, guestWatchTimeout+5*time.Second)
 			stop := context.AfterFunc(epoch, cancel)
 			reply, outcome = s.residentRequest(watchCtx, "watch", request)
@@ -416,7 +416,7 @@ func (s *Server) watchGuestSessions(ctx context.Context) {
 			if lost++; outcome == residentLost && lost == 1 {
 				pause = 250 * time.Millisecond // a successor starts on the next request
 			} else {
-				d.setWatching(false)
+				d.setWatching(ctx, false)
 			}
 			select {
 			case <-ctx.Done():
@@ -437,9 +437,12 @@ func (s *Server) watchGuestSessions(ctx context.Context) {
 	}
 }
 
-func (d *cliDiscovery) setWatching(value bool) {
+// setWatching records whether the watch running under ctx answers. A watch
+// that was stopped no longer speaks for the watch: the next one may run
+// already. stop cancels ctx under d.mu, so this check cannot miss it.
+func (d *cliDiscovery) setWatching(ctx context.Context, value bool) {
 	d.mu.Lock()
-	if d.stopWatch != nil {
+	if d.stopWatch != nil && ctx.Err() == nil {
 		d.watching = value
 	}
 	d.mu.Unlock()

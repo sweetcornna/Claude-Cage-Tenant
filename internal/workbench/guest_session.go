@@ -23,6 +23,9 @@ const (
 	guestSessionReady = "CAGE-GUEST-SESSION 1"
 	// An open window polls at least every few seconds, so the idle period
 	// only matters after a pause; a reopen costs a key exchange and a login.
+	// The resident discovery helper shares it: a helper start also loads the
+	// channel helper, and a phone or window that comes back within two
+	// minutes finds it running. Idle, it is one sleeping python3 in the guest.
 	guestSessionIdle = 2 * time.Minute
 	// After a failed open, scripts use connections of their own until the
 	// retry time: 5 s after the first failure, doubling up to 30 s.
