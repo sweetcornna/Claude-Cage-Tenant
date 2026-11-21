@@ -638,6 +638,10 @@ button.large {
   border: 1px solid var(--line);
   border-radius: 6px;
 }
+.terminal-note-quiet {
+  color: var(--muted);
+  border-color: transparent;
+}
 .terminal-note button {
   background: transparent;
   border: 0;

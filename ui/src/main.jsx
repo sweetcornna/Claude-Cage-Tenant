@@ -20,6 +20,7 @@ import { api, normalizeURL, native, nativeAvailable } from "./api";
 import { clientKeyboard, clientStorageKey, getClientContext, isCloudWorkbench, isRemoteClient, runtimeURL, runtimeSocketURL } from "./client-context.mjs";
 import { shareClipboard } from "./shared-clipboard.mjs";
 import { RemoteView, TerminalView, Modal } from "./views";
+import { keepSame, reuseItems, terminalListDue } from "./poll-state.mjs";
 import { usePasswordVault } from "./password-vault";
 import { SettingsPanel } from "./settings";
 import { SetupProgress } from "./setup-progress";
@@ -140,6 +141,13 @@ function App() {
   const workspaceBox = useRef(null);
   const [dropSide, setDropSide] = useState(null);
   const terminalControls = useRef(new Map());
+  // One session object per tab object, so an unchanged tab passes the same props.
+  const terminalSessions = useRef(new WeakMap());
+  const terminalSession = (tab) => {
+    let session = terminalSessions.current.get(tab);
+    if (!session) terminalSessions.current.set(tab, session = { ...tab, id: tab.sessionId });
+    return session;
+  };
   const remote = useRef(),
     activeRef = useRef(active),
     lastBrowserTab = useRef(""),
@@ -738,17 +746,19 @@ function App() {
   useEffect(() => {
     let live = true,
       timer,
-      polling = false;
-    const poll = async () => {
-      if (!live || polling) return;
+      inflight = null,
+      queued = null;
+    // The last terminal list, read again only when the status reports that
+    // it changed (see terminalListDue).
+    let terminalItems = null, terminalRevision, terminalPolls = 0;
+    const run = async (force) => {
       clearTimeout(timer);
-      polling = true;
       let jobRunning = false;
       try {
         const next = await api("/status");
         if (!live) return;
         jobRunning = next.job.running;
-        setStatus(next);
+        setStatus(previous => keepSame(previous, next));
         setStartRequest(pending => pending?.id && pending.id === next.job.id ? null : pending);
         setConnectionError("");
         if (
@@ -768,7 +778,9 @@ function App() {
           const supportsBrowser = guestCapability(next, "browser");
           const fetchBrowser = supportsBrowser && !next.environment_update_required && (!browserStreamReady.current || !initialized.current);
           if (!supportsBrowser) setBrowserError("");
-          const [browserResult, t] = await Promise.all([
+          terminalPolls++;
+          const readTerminals = terminalListDue({ force, cached: Boolean(terminalItems), revision: next.terminals_revision, lastRevision: terminalRevision, polls: terminalPolls });
+          const [browserResult, fetched] = await Promise.all([
             fetchBrowser ? api("/browser/tabs").then(result => {
               if (live) setBrowserError("");
               return result;
@@ -776,9 +788,15 @@ function App() {
               if (live) setBrowserError(next.guest_system === "macos" ? "请在环境设置中同步 macOS 组件，并确认已登录客机图形账户。" : error.message);
               return null;
             }) : null,
-            api("/terminals"),
+            readTerminals ? api("/terminals") : null,
           ]);
           if (!live) return;
+          if (fetched) {
+            terminalItems = fetched;
+            terminalRevision = next.terminals_revision;
+            terminalPolls = 0;
+          }
+          const t = terminalItems;
           const b = supportsBrowser ? browserResult || browserSnapshot.current : { tabs: [] };
           const legacyMetadata = readLocal(clientStorageKey("cage-tab-layout"), {})[next.environment_identity_directory || next.environment_directory || next.workspace] || {};
           for (const item of t) {
@@ -793,7 +811,7 @@ function App() {
           }
           if (!live) return;
           browserSnapshot.current = b;
-          setBrowser(b);
+          setBrowser(previous => keepSame(previous, b));
           const all = [
             ...b.tabs,
             ...t.map((item) => ({
@@ -806,12 +824,12 @@ function App() {
           ];
           setTabs((previous) => {
             const map = new Map(all.map((item) => [item.id, item]));
-            return [
+            return reuseItems(previous, [
               ...previous
                 .filter((item) => map.has(item.id))
                 .map((item) => map.get(item.id)),
               ...all.filter((item) => !previous.some((p) => p.id === item.id)),
-            ];
+            ]);
           });
           if (!browserDismissed.current && initialized.current && b.active && b.active !== activeRef.current && !browserIds.current.has(b.active)) {
             setDesktopOpen(false);
@@ -835,13 +853,24 @@ function App() {
       } catch (e) {
         if (live) setConnectionError(e.message);
       } finally {
-        polling = false;
         if (live)
           timer = setTimeout(
             poll,
-            jobRunning ? 1200 : windowVisibleRef.current ? 3000 : 15000,
+            jobRunning ? 1200 : windowVisibleRef.current ? 5000 : 15000,
           );
       }
+    };
+    // Timer polls join one in flight. A requested refresh (after an action
+    // or when the window is shown) runs a fresh poll once it has finished.
+    const poll = (force = false) => {
+      if (!live) return Promise.resolve();
+      if (!inflight) {
+        inflight = run(force).finally(() => { inflight = null; });
+        return inflight;
+      }
+      if (!force) return inflight;
+      queued ||= inflight.then(() => { queued = null; return poll(true); });
+      return queued;
     };
     (async () => {
       try {
@@ -861,8 +890,8 @@ function App() {
         } catch {
           // Network settings remain available when the core cannot be read.
         }
-        refreshStatus.current = poll;
-        await poll();
+        refreshStatus.current = () => poll(true);
+        await poll(true);
       } catch (e) {
         if (live) setFatal(e.message);
       }
@@ -1684,7 +1713,7 @@ function App() {
                     {visible && terminalHeader(tab)}
                     <div className="pane-body">
                       <TerminalView
-                        session={{ ...tab, id: tab.sessionId }}
+                        session={terminalSession(tab)}
                         onLoginTab={({ id }) => showBrowserResult({ id, kind: "web", login: true, incognito: true, title: "账号授权" })}
                         onControls={(control) =>
                           control

@@ -17,7 +17,10 @@ import { api, writeClipboard, nativeAvailable } from "./api";
 import { runtimeSocketURL } from "./client-context.mjs";
 import { readClipboardContent, transferFiles, hasFiles, imagePayload, prepareClipboardPaste, sendImage } from "./image-transfer";
 import { terminalClipboardText } from "./terminal-clipboard.mjs";
-import { terminalKeepaliveMessage, terminalKeepaliveMs, terminalReconnectPlan } from "./terminal-reconnect.mjs";
+import {
+  terminalConnectTimeoutMs, terminalHistoryPlan, terminalKeepaliveMessage, terminalKeepaliveMs, terminalLiveness,
+  terminalNoticeDelayMs, terminalProbeMs, terminalReconnectPlan, terminalStreamPath, terminalWatchdogMs,
+} from "./terminal-reconnect.mjs";
 import { sendFiles, shellFilePaths } from "./file-transfer";
 import { installRemoteInput } from "./remote-input";
 import { useWindowVisibility } from "./window-visibility";
@@ -310,13 +313,13 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
     instance = useRef(),
     fit = useRef(),
     socket = useRef();
-  const [connected, setConnected] = useState(false),
-    [attempt, setAttempt] = useState(0),
+  // "connecting" until the first stream opens, then "open" or "retrying";
+  // "stalled" after repeated quick failures and "ended" once the session exits.
+  const [link, setLink] = useState("connecting"),
+    [notice, setNotice] = useState(false),
     [preparing, setPreparing] = useState(Boolean(session.cli_session_id && !session.closed));
   const revealStartup = useRef();
-  // Consecutive quick reconnect failures; survives each new connection attempt.
-  const reconnectFailures = useRef(0);
-  const [stalled, setStalled] = useState(false);
+  const reconnectNow = useRef();
   const closedRef = useRef(session.closed);
   closedRef.current = session.closed;
   const visibleRef = useRef(visible);
@@ -366,11 +369,9 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
     terminal.open(box.current);
     instance.current = terminal;
     fit.current = fitter;
-    const ws = new WebSocket(
-      runtimeSocketURL(`/terminals/${session.id}/stream`),
-    );
-    ws.binaryType = "arraybuffer";
-    socket.current = ws;
+    // One xterm lives as long as the view; streams come and go beneath it.
+    let ws = null;
+    const isOpen = () => ws?.readyState === WebSocket.OPEN;
     let startupPending = Boolean(session.cli_session_id && !session.closed);
     let startupVisible = !startupPending;
     setPreparing(startupPending);
@@ -400,7 +401,7 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
       if (!visibleRef.current) return;
       try {
         fitter.fit();
-        if (ws.readyState === WebSocket.OPEN)
+        if (isOpen())
           ws.send(
             JSON.stringify({
               type: "resize",
@@ -410,21 +411,17 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
           );
       } catch {}
     };
-    let openedAt = 0, reconnectTimer = null, keepalive = null, awaitVisible = null;
-    ws.onopen = () => {
-      openedAt = Date.now();
-      setConnected(true);
-      setStalled(false);
-      // Keep the stream from looking idle to proxies while someone can see it.
-      keepalive = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN && document.visibilityState === "visible") ws.send(terminalKeepaliveMessage);
-      }, terminalKeepaliveMs);
-      resize();
-      if (startupVisible && visibleRef.current && focusedRef.current) terminal.focus();
-    };
-    let historyFrame = false, replayingHistory = false;
+    // Stream state survives reconnects; the xterm keeps everything it showed.
+    // offset is the absolute position after the last byte received, or null
+    // before any history (or from a server that cannot resume).
+    const stream = { offset: null, heartbeats: false, lastReceived: 0, lastPing: 0, probe: 0 };
+    let failures = 0, openedAt = 0, ended = false;
+    let retryTimer = null, noticeTimer = null, probeTimer = null, openTimer = null, watchdog = null;
+    // Bytes still to come in the current replay, or one whole frame from a
+    // server without offsets. Replayed output never writes the clipboard.
+    let replayRemaining = 0, replayFrame = false, replaying = 0;
     const clipboardHandler = terminal.parser.registerOscHandler(52, async (data) => {
-      if (disposed || replayingHistory || !visibleRef.current || !focusedRef.current || !box.current?.contains(document.activeElement)) return true;
+      if (disposed || replaying > 0 || !visibleRef.current || !focusedRef.current || !box.current?.contains(document.activeElement)) return true;
       const text = terminalClipboardText(data);
       if (text === undefined) return true;
       try {
@@ -433,49 +430,140 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
       } catch { if (!disposed) onStatus("无法写入本机剪贴板"); }
       return true;
     });
-    ws.onmessage = (event) => {
+    // A reconnect that finishes quickly is never shown.
+    const armNotice = () => {
+      if (!noticeTimer) noticeTimer = setTimeout(() => { if (!disposed) setNotice(true); }, terminalNoticeDelayMs);
+    };
+    const clearNotice = () => {
+      clearTimeout(noticeTimer);
+      noticeTimer = null;
+      setNotice(false);
+    };
+    const receiveFrame = (event) => {
+      stream.lastReceived = Date.now();
+      stream.probe = 0;
       if (typeof event.data === "string") {
         let state;
         try { state = JSON.parse(event.data); } catch { return; }
         if (state.type === "cli-startup") {
           startupPending = state.pending;
           terminal.refresh(0, terminal.rows - 1);
-        }
-        if (state.type === "history") historyFrame = true;
+        } else if (state.type === "history") {
+          const plan = terminalHistoryPlan(stream.offset, state);
+          if (plan.reset) terminal.reset();
+          stream.offset = plan.offset;
+          if (plan.resumable) stream.heartbeats = true;
+          replayRemaining = plan.resumable ? plan.size : 0;
+          replayFrame = !plan.resumable;
+        } else if (state.type === "pong" || state.type === "heartbeat") stream.heartbeats = true;
+        else if (state.type === "exit") ended = true;
         return;
       }
-      if (historyFrame) {
-        historyFrame = false;
-        replayingHistory = true;
-        terminal.write(new Uint8Array(event.data), () => { replayingHistory = false; });
-      } else terminal.write(new Uint8Array(event.data));
+      const data = new Uint8Array(event.data);
+      const replay = replayFrame || replayRemaining > 0;
+      replayFrame = false;
+      replayRemaining = Math.max(0, replayRemaining - data.byteLength);
+      if (stream.offset !== null) stream.offset += data.byteLength;
+      if (!replay) return void terminal.write(data);
+      replaying++;
+      terminal.write(data, () => { replaying--; });
     };
-    ws.onclose = () => {
-      clearInterval(keepalive);
-      setConnected(false);
+    // lost handles the end of the current stream once, whether it closed or
+    // the watchdog gave up on it, and schedules the next attempt.
+    const lost = (current) => {
+      if (ws !== current) return;
+      ws = null;
+      socket.current = null;
+      clearInterval(watchdog);
+      clearTimeout(probeTimer);
+      clearTimeout(openTimer);
+      watchdog = probeTimer = openTimer = null;
+      current.onopen = current.onmessage = current.onclose = null;
+      // A dead path may never finish the closing handshake; do not wait for it.
+      try { current.close(); } catch { /* already closed */ }
+      if (disposed) return;
       reveal();
-      if (disposed || closedRef.current) return;
-      const plan = terminalReconnectPlan(reconnectFailures.current, openedAt ? Date.now() - openedAt : 0);
-      reconnectFailures.current = plan.failures;
-      if (!plan.delay) {
-        setStalled(true);
+      if (ended || closedRef.current) {
+        clearNotice();
+        setLink("ended");
         return;
       }
-      const retry = () => { if (!disposed && !closedRef.current) setAttempt((v) => v + 1); };
-      // A hidden page reconnects when it is shown again rather than in the background.
-      if (document.visibilityState === "visible") reconnectTimer = setTimeout(retry, plan.delay);
-      else {
-        awaitVisible = () => {
-          if (document.visibilityState !== "visible") return;
-          document.removeEventListener("visibilitychange", awaitVisible);
-          awaitVisible = null;
-          retry();
-        };
-        document.addEventListener("visibilitychange", awaitVisible);
+      const plan = terminalReconnectPlan(failures, openedAt ? Date.now() - openedAt : 0);
+      failures = plan.failures;
+      if (!plan.delay) {
+        clearNotice();
+        setLink("stalled");
+        return;
+      }
+      setLink((state) => (state === "connecting" ? state : "retrying"));
+      armNotice();
+      retryTimer = setTimeout(connect, plan.delay);
+    };
+    const keepalive = (probe) => {
+      const now = Date.now();
+      if (probe) stream.probe = now;
+      try {
+        ws.send(terminalKeepaliveMessage);
+        stream.lastPing = now;
+      } catch { /* the close event follows */ }
+    };
+    const check = () => {
+      if (!isOpen()) return;
+      const action = terminalLiveness({ ...stream, now: Date.now(), visible: document.visibilityState === "visible" });
+      if (action === "dead") lost(ws);
+      else if (action !== "idle") keepalive(action === "probe");
+    };
+    const connect = () => {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+      if (disposed || ended || ws) return;
+      const current = new WebSocket(runtimeSocketURL(terminalStreamPath(session.id, stream.offset)));
+      current.binaryType = "arraybuffer";
+      ws = current;
+      socket.current = current;
+      openedAt = 0;
+      replayRemaining = 0;
+      replayFrame = false;
+      setLink((state) => (state === "stalled" ? "retrying" : state));
+      armNotice();
+      openTimer = setTimeout(() => lost(current), terminalConnectTimeoutMs);
+      current.onopen = () => {
+        if (ws !== current) return;
+        clearTimeout(openTimer);
+        openTimer = null;
+        openedAt = stream.lastReceived = stream.lastPing = Date.now();
+        stream.probe = 0;
+        clearNotice();
+        setLink("open");
+        watchdog = setInterval(check, terminalWatchdogMs);
+        resize();
+        if (startupVisible && visibleRef.current && focusedRef.current) terminal.focus();
+      };
+      current.onmessage = (event) => { if (ws === current) receiveFrame(event); };
+      current.onclose = () => lost(current);
+    };
+    // Back from a hidden page, a sleeping computer or a network change:
+    // reconnect now, or confirm that an open but quiet stream still works.
+    const resume = (event) => {
+      if (disposed || ended || (event?.type === "visibilitychange" && document.visibilityState !== "visible")) return;
+      if (!ws) {
+        if (closedRef.current) return;
+        failures = 0;
+        connect();
+      } else if (isOpen() && stream.heartbeats && !stream.probe && Date.now() - stream.lastReceived >= terminalKeepaliveMs) {
+        keepalive(true);
+        clearTimeout(probeTimer);
+        probeTimer = setTimeout(check, terminalProbeMs + 100);
       }
     };
+    reconnectNow.current = () => {
+      failures = 0;
+      connect();
+    };
+    document.addEventListener("visibilitychange", resume);
+    window.addEventListener("online", resume);
     const send = (data) => {
-      if (disposed || ws.readyState !== WebSocket.OPEN) throw new Error("终端已断开，请重新连接后重试");
+      if (disposed || !isOpen()) throw new Error("终端已断开，请重新连接后重试");
       ws.send(JSON.stringify({ type: "input", data }));
     };
     terminal.onData((data) => {
@@ -489,14 +577,14 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
       void enqueue(async () => {
         const { value, error } = await ready;
         if (error) throw error;
-        if (disposed || !visibleRef.current || !focusedRef.current || ws.readyState !== WebSocket.OPEN) throw new Error("终端已切换或断开，请重新粘贴");
+        if (disposed || !visibleRef.current || !focusedRef.current || !isOpen()) throw new Error("终端已切换或断开，请重新粘贴");
         let text = value.text || "";
         if (value.files || value.fileSelection) {
-          const result = await sendFiles(value, "terminal", session.id, { valid: () => !disposed && visibleRef.current && focusedRef.current && ws.readyState === WebSocket.OPEN });
+          const result = await sendFiles(value, "terminal", session.id, { valid: () => !disposed && visibleRef.current && focusedRef.current && isOpen() });
           text = shellFilePaths(result.paths);
         }
         if (value.png) {
-          const result = await sendImage(value, "terminal", session.id, { valid: () => !disposed && visibleRef.current && focusedRef.current && ws.readyState === WebSocket.OPEN });
+          const result = await sendImage(value, "terminal", session.id, { valid: () => !disposed && visibleRef.current && focusedRef.current && isOpen() });
           text = shellFilePaths([result.path]);
         }
         if (disposed || !visibleRef.current || !focusedRef.current) throw new Error("终端已切换，请回到原终端重新粘贴");
@@ -622,12 +710,18 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
     const observer = new ResizeObserver(resize);
     observer.observe(box.current);
     resize();
+    connect();
     return () => {
       disposed = true;
       clearTimeout(startupTimer);
-      clearTimeout(reconnectTimer);
-      clearInterval(keepalive);
-      if (awaitVisible) document.removeEventListener("visibilitychange", awaitVisible);
+      clearTimeout(retryTimer);
+      clearTimeout(noticeTimer);
+      clearTimeout(probeTimer);
+      clearTimeout(openTimer);
+      clearInterval(watchdog);
+      document.removeEventListener("visibilitychange", resume);
+      window.removeEventListener("online", resume);
+      reconnectNow.current = null;
       revealStartup.current = null;
       startupRender.dispose();
       clipboardHandler.dispose();
@@ -637,11 +731,17 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
       host.removeEventListener("drop", onDrop);
       onControls?.(null);
       observer.disconnect();
-      ws.close();
+      if (ws) {
+        const current = ws;
+        ws = null;
+        socket.current = null;
+        current.onopen = current.onmessage = current.onclose = null;
+        current.close();
+      }
       terminal.dispose();
       instance.current = null;
     };
-  }, [session.id, attempt]);
+  }, [session.id]);
   useEffect(() => {
     if (visible) {
       fit.current?.fit();
@@ -659,6 +759,7 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
     instance.current.options.fontSize = appearance.codeFontSize;
     if (visibleRef.current) fit.current?.fit();
   }, [theme, variant, appearance.codeFontSize]);
+  const ended = session.closed || link === "ended";
   return (
     <div className={`terminal-view ${visible ? "" : "concealed"}`}>
       {session.workspace_notice && <p className="connection-banner" role="status">{session.workspace_notice}</p>}
@@ -671,13 +772,13 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
           <button onClick={() => revealStartup.current?.()}>显示启动过程</button>
         </div>
       )}
-      {!connected && (
-        <div className="terminal-note">
-          {session.closed
+      {link !== "open" && (ended || link === "stalled" || notice) && (
+        <div className={`terminal-note ${ended || link === "stalled" ? "" : "terminal-note-quiet"}`} role="status">
+          {ended
             ? "终端会话已结束。可点击项目右侧的终端图标新建终端。"
-            : stalled ? "终端连接已断开。" : "正在连接终端…"}
-          {!session.closed && (
-            <button onClick={() => { reconnectFailures.current = 0; setStalled(false); setAttempt((v) => v + 1); }}>
+            : link === "stalled" ? "终端连接已断开。" : link === "connecting" ? "正在连接终端…" : "正在重新连接…"}
+          {!ended && link === "stalled" && (
+            <button onClick={() => reconnectNow.current?.()}>
               <RefreshCw size={13} />
               重新连接
             </button>

@@ -698,6 +698,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	running := s.vmRunning()
+	terminals := s.terminalsRevision()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, e := os.Stat(filepath.Join(s.profile, "previous-profile.json"))
@@ -717,6 +718,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		"keyboard":         s.preferences.Keyboard, "auto_timezone": s.preferences.AutoTimezone, "job": s.jobs.snapshot(),
 		"location": s.location, "network_error": s.currentNetworkErrorLocked(), "can_restore": e == nil,
 		"safety": s.safety, "environment_update_required": s.guestUpdateRequired, "environment_update_error": s.guestUpdateError,
+		"terminals_revision": terminals,
 	}
 	if s.windowsGuest != nil {
 		view["guest_system"] = guestos.Windows11

@@ -9,7 +9,7 @@ for (const platform of ["darwin", "windows", "linux"]) {
     beforeNavigate: page => page.clock.install(),
   });
   const { page, state } = fixture;
-  let terminalSocket;
+  let terminalSocket, attachments = 0;
   const inputs = [];
   try {
     await page.route("**/api/terminals", route => {
@@ -21,6 +21,7 @@ for (const platform of ["darwin", "windows", "linux"]) {
     await page.routeWebSocket("**/api/**", socket => {
       if (!socket.url().includes("/terminals/")) return socket.close();
       terminalSocket = socket;
+      attachments++;
       socket.onMessage(message => { const value = JSON.parse(message); if (value.type === "input") inputs.push(value.data); });
       socket.send(JSON.stringify({ type: "cli-startup", pending: true }));
       socket.send(Buffer.from(warning.slice(0, 22)));
@@ -53,22 +54,18 @@ for (const platform of ["darwin", "windows", "linux"]) {
     await page.keyboard.type("hello");
     await page.waitForFunction(() => document.querySelector(".xterm-helper-textarea") === document.activeElement);
 
-    // A new attachment can be waiting for login. It must become interactive
-    // without channel readiness, and the user can reveal it immediately.
+    // A dropped stream reconnects by itself beneath the same terminal. The
+    // revealed screen is not hidden again, and the reconnect button is only
+    // offered after repeated failures.
+    const attached = attachments;
     terminalSocket.close();
-    await page.getByRole("button", { name: "重新连接", exact: true }).click();
-    await page.getByText("正在准备 Claude 会话…", { exact: true }).waitFor();
+    for (let i = 0; i < 400 && attachments === attached; i++) await new Promise(resolve => setTimeout(resolve, 25));
+    assert.ok(attachments > attached, "a dropped terminal stream must reconnect on its own");
     terminalSocket.send(Buffer.from("\x1b[2J\x1b[HSelect login method\r\n1. Claude account"));
-    await page.clock.fastForward(8100);
-    await page.clock.resume();
-    await page.locator(".terminal-host").waitFor({ state: "visible" });
-    assert.ok((await page.locator(".xterm-rows").textContent()).includes("Select login method"));
-    terminalSocket.close();
-    await page.getByRole("button", { name: "重新连接", exact: true }).click();
-    await page.getByText("正在准备 Claude 会话…", { exact: true }).waitFor();
-    await page.getByRole("button", { name: "显示启动过程", exact: true }).click();
-    await page.locator(".terminal-host").waitFor({ state: "visible" });
+    await page.waitForFunction(() => document.querySelector(".xterm-rows")?.textContent.includes("Select login method"));
+    assert.equal(await page.locator(".terminal-host").isVisible(), true);
+    assert.equal(await page.getByRole("button", { name: "重新连接", exact: true }).count(), 0);
     assert.deepEqual(fixture.errors, []);
-    console.log(`PASS: ${platform} hides split confirmation output, waits for repaint, restores focus, and exposes stalled/login output`);
+    console.log(`PASS: ${platform} hides split confirmation output, waits for repaint, restores focus, and reconnects without hiding the terminal`);
   } finally { await fixture.browser.close(); }
 }
