@@ -5,6 +5,7 @@ import (
 	"log"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -22,7 +23,10 @@ import (
 //     free, so a shrink is never undone by itself.
 //
 // Shrinking moves at most memoryShrinkStep per sweep and never below the
-// guest's working set (MemTotal - MemAvailable) plus headroom.
+// guest's working set (MemTotal - MemAvailable) plus headroom. A guest that
+// stops answering for memorySilentSweeps sweeps in a row may be thrashing
+// after a shrink, so it gets its memory back: at once, or one step per sweep
+// while the host is short.
 
 // MemoryBalancer is implemented by runtimes that can resize a running
 // workspace's memory without a restart.
@@ -54,8 +58,9 @@ type InstanceMemory struct {
 	// reliably.
 	Hotplugged bool
 	// GuestTotal and GuestAvailable come from the guest's /proc/meminfo. Zero
-	// when the guest did not answer.
+	// when the guest did not answer, and then GuestSilent is set.
 	GuestTotal, GuestAvailable int64
+	GuestSilent                bool
 }
 
 const (
@@ -66,6 +71,9 @@ const (
 	memoryHeadroom   = 1 << 30
 	// memoryShrinkPause is how long a failed shrink of one VM is not retried.
 	memoryShrinkPause = time.Minute
+	// memorySilentSweeps is how many sweeps in a row a running guest may fail
+	// to report its memory before it grows back to its ceiling.
+	memorySilentSweeps = 2
 )
 
 // memoryBalancing is the elastic memory state of a server.
@@ -77,6 +85,8 @@ type memoryBalancing struct {
 	pause    map[string]time.Time
 	failures map[string]string
 	failure  string
+	// silent counts the sweeps in a row each running guest did not answer.
+	silent map[string]int
 }
 
 type memoryChange struct {
@@ -90,7 +100,7 @@ func (s *Server) startMemoryBalancer() {
 	if s.cfg.MemoryInterval == 0 || !ok || !runtime.ElasticMemory() {
 		return
 	}
-	s.memory = memoryBalancing{runtime: runtime, changes: make(map[string]bool), pause: make(map[string]time.Time), failures: make(map[string]string)}
+	s.memory = memoryBalancing{runtime: runtime, changes: make(map[string]bool), pause: make(map[string]time.Time), failures: make(map[string]string), silent: make(map[string]int)}
 	reserve := "the larger of 2 GiB and 15% of host memory"
 	if s.cfg.MemoryReserve > 0 {
 		reserve = mib(s.cfg.MemoryReserve)
@@ -151,7 +161,19 @@ func (s *Server) balanceOnce() {
 			delete(s.memory.pause, id)
 		}
 	}
-	for _, change := range planMemory(state, s.cfg.MemoryReserve, s.memoryMin(), fixed, holdShrink) {
+	silent := make(map[string]bool)
+	for id := range s.memory.silent {
+		if entry := state.Instances[id]; entry.Status != "Running" || !entry.GuestSilent {
+			delete(s.memory.silent, id)
+		}
+	}
+	for id, entry := range state.Instances {
+		if entry.Status == "Running" && entry.GuestSilent {
+			s.memory.silent[id]++
+			silent[id] = s.memory.silent[id] >= memorySilentSweeps
+		}
+	}
+	for _, change := range planMemory(state, s.cfg.MemoryReserve, s.memoryMin(), fixed, holdShrink, silent) {
 		if s.context.Err() != nil {
 			return
 		}
@@ -198,8 +220,9 @@ func roundUpMemory(size int64) int64   { return roundDownMemory(size + memoryUni
 
 // planMemory decides the next size of every running VM it may resize, grows
 // first. fixed VMs keep their size but count against the host; holdShrink VMs
-// may only grow.
-func planMemory(state MemoryState, reserve, minimum int64, fixed, holdShrink map[string]bool) []memoryChange {
+// may only grow; silent VMs have not reported their memory for several sweeps
+// and grow back to the ceiling.
+func planMemory(state MemoryState, reserve, minimum int64, fixed, holdShrink, silent map[string]bool) []memoryChange {
 	if state.HostTotal <= 0 || state.Ceiling <= 0 {
 		return nil
 	}
@@ -214,6 +237,7 @@ func planMemory(state MemoryState, reserve, minimum int64, fixed, holdShrink map
 	pressure := state.HostAvailable < 2*reserve || state.HostStall >= 10
 	var adjustable []string
 	var pinned int64
+	var grow, shrink []memoryChange
 	for id, entry := range state.Instances {
 		switch {
 		case entry.Status == "Running" && !fixed[id] && entry.GuestTotal > 0:
@@ -221,14 +245,21 @@ func planMemory(state MemoryState, reserve, minimum int64, fixed, holdShrink map
 		case entry.Status == "Running" || entry.Status == "Frozen":
 			// A frozen VM keeps its memory until the kernel swaps it out.
 			pinned += entry.Limit
+			if entry.Status == "Running" && !fixed[id] && silent[id] && entry.Limit < hardCap {
+				to := hardCap
+				if pressure {
+					to = min(hardCap, roundUpMemory(entry.Limit+memoryShrinkStep))
+				}
+				grow = append(grow, memoryChange{id: id, from: entry.Limit, to: to, reason: "guest did not answer"})
+			}
 		}
 	}
+	slices.SortFunc(grow, func(a, b memoryChange) int { return strings.Compare(a.id, b.id) })
 	if len(adjustable) == 0 {
-		return nil
+		return grow
 	}
 	slices.Sort(adjustable)
 	share := min(hardCap, max(floor, roundDownMemory((state.HostTotal-reserve-pinned)/int64(len(adjustable)))))
-	var grow, shrink []memoryChange
 	for _, id := range adjustable {
 		entry := state.Instances[id]
 		used := entry.GuestTotal - entry.GuestAvailable

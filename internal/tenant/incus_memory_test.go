@@ -63,7 +63,7 @@ func TestIncusMemoryStateReadsHostProfileAndGuests(t *testing.T) {
 	want := map[string]InstanceMemory{
 		running: {Status: "Running", Limit: 8 * testGiB, GuestTotal: 8189952 << 10, GuestAvailable: 1990000 << 10},
 		frozen:  {Status: "Frozen", Limit: 10 * testGiB, Hotplugged: true},
-		silent:  {Status: "Running", Limit: 10 * testGiB},
+		silent:  {Status: "Running", Limit: 10 * testGiB, GuestSilent: true},
 	}
 	if len(state.Instances) != len(want) {
 		t.Fatalf("instances %+v", state.Instances)

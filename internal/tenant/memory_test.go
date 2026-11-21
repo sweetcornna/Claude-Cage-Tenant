@@ -45,7 +45,7 @@ func TestMemoryPlanShrinksLab1HostTowardTheWorkingSet(t *testing.T) {
 	state, id := lab1()
 	var limits []int64
 	for range 10 {
-		changes := planMemory(state, 0, DefaultMemoryMin, nil, nil)
+		changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, nil)
 		if len(changes) == 0 {
 			break
 		}
@@ -66,7 +66,7 @@ func TestMemoryPlanShrinksLab1HostTowardTheWorkingSet(t *testing.T) {
 	state, id = lab1()
 	limits = nil
 	for range 10 {
-		changes := planMemory(state, 0, DefaultMemoryMin, nil, nil)
+		changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, nil)
 		if len(changes) == 0 {
 			break
 		}
@@ -80,16 +80,16 @@ func TestMemoryPlanShrinksLab1HostTowardTheWorkingSet(t *testing.T) {
 	// Memory stall alone also counts as pressure.
 	state, _ = lab1()
 	state.HostAvailable = 10 * testGiB
-	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil); len(changes) != 0 {
+	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, nil); len(changes) != 0 {
 		t.Fatalf("shrank without host pressure: %+v", changes)
 	}
 	state.HostStall = 12
-	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil); len(changes) != 1 || changes[0].to != 9728*testMiB {
+	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, nil); len(changes) != 1 || changes[0].to != 9728*testMiB {
 		t.Fatalf("memory stall ignored: %+v", changes)
 	}
 	// A larger reserve reclaims earlier.
 	state.HostStall, state.HostAvailable = 0, 6*testGiB
-	if changes := planMemory(state, 4*testGiB, DefaultMemoryMin, nil, nil); len(changes) != 1 {
+	if changes := planMemory(state, 4*testGiB, DefaultMemoryMin, nil, nil, nil); len(changes) != 1 {
 		t.Fatalf("configured reserve ignored: %+v", changes)
 	}
 }
@@ -101,7 +101,7 @@ func TestMemoryPlanSharesTheHostBetweenRunningVMs(t *testing.T) {
 		ids[0]: runningVM(10*testGiB, 9890*testMiB, 3783*testMiB),
 	}}
 	// One VM: its share is the ceiling and nothing moves without pressure.
-	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil); len(changes) != 0 {
+	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, nil); len(changes) != 0 {
 		t.Fatalf("single VM resized without pressure: %+v", changes)
 	}
 	// A second VM boots at the ceiling with a 1 GiB working set. The share is
@@ -110,7 +110,7 @@ func TestMemoryPlanSharesTheHostBetweenRunningVMs(t *testing.T) {
 	state.Instances[ids[1]] = runningVM(10*testGiB, 9890*testMiB, 8866*testMiB)
 	final := map[string]int64{}
 	for range 20 {
-		changes := planMemory(state, 0, DefaultMemoryMin, nil, nil)
+		changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, nil)
 		if len(changes) == 0 {
 			break
 		}
@@ -129,7 +129,7 @@ func TestMemoryPlanSharesTheHostBetweenRunningVMs(t *testing.T) {
 	// the busy guest keeps what it needs.
 	state.Instances[ids[2]] = runningVM(10*testGiB, 9890*testMiB, 8866*testMiB)
 	for range 20 {
-		changes := planMemory(state, 0, DefaultMemoryMin, nil, nil)
+		changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, nil)
 		if len(changes) == 0 {
 			break
 		}
@@ -142,7 +142,7 @@ func TestMemoryPlanSharesTheHostBetweenRunningVMs(t *testing.T) {
 	}
 	// When a VM stops, nothing grows back by itself.
 	delete(state.Instances, ids[2])
-	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil); len(changes) != 0 {
+	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, nil); len(changes) != 0 {
 		t.Fatalf("grew without need: %+v", changes)
 	}
 }
@@ -158,12 +158,12 @@ func TestMemoryPlanCountsFrozenAndUnresizableVMs(t *testing.T) {
 	}}
 	// Reserve 15% (4915 MiB); 16 GiB is pinned by the frozen, busy and silent
 	// VMs, so the one resizable VM may keep 11468 MiB, rounded down to 11264.
-	changes := planMemory(state, 0, DefaultMemoryMin, map[string]bool{busy: true}, nil)
+	changes := planMemory(state, 0, DefaultMemoryMin, map[string]bool{busy: true}, nil, nil)
 	if len(changes) != 1 || changes[0].id != running || changes[0].to != 16*testGiB-memoryShrinkStep {
 		t.Fatalf("unexpected plan %+v", changes)
 	}
 	for range 20 {
-		changes = planMemory(state, 0, DefaultMemoryMin, map[string]bool{busy: true}, nil)
+		changes = planMemory(state, 0, DefaultMemoryMin, map[string]bool{busy: true}, nil, nil)
 		if len(changes) == 0 {
 			break
 		}
@@ -180,31 +180,31 @@ func TestMemoryPlanGrowsAShortGuestAtOnce(t *testing.T) {
 	// its working set plus headroom in one step.
 	state := MemoryState{HostTotal: 15 * testGiB, HostAvailable: testGiB, HostStall: 30, Ceiling: 10 * testGiB,
 		Instances: map[string]InstanceMemory{id: runningVM(4*testGiB, 3900*testMiB, 200*testMiB)}}
-	changes := planMemory(state, 0, DefaultMemoryMin, nil, map[string]bool{id: true})
+	changes := planMemory(state, 0, DefaultMemoryMin, nil, map[string]bool{id: true}, nil)
 	// 3700 MiB used + 1 GiB headroom + 196 MiB kernel memory, rounded up.
 	if len(changes) != 1 || changes[0].to != 5120*testMiB || changes[0].reason != "guest needs memory" {
 		t.Fatalf("short guest plan %+v", changes)
 	}
 	// A shortfall smaller than the shrink hysteresis still grows.
 	state.Instances[id] = runningVM(4*testGiB, 3900*testMiB, 900*testMiB)
-	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil); len(changes) != 1 || changes[0].to != 4352*testMiB {
+	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, nil); len(changes) != 1 || changes[0].to != 4352*testMiB {
 		t.Fatalf("small shortfall plan %+v", changes)
 	}
 	// Growth stops at the ceiling and at host memory minus the reserve.
 	state.Instances[id] = runningVM(12*testGiB, 12*testGiB-100*testMiB, 0)
 	state.Ceiling = 64 * testGiB
-	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil); len(changes) != 1 || changes[0].to != 15*testGiB-2304*testMiB {
+	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, nil); len(changes) != 1 || changes[0].to != 15*testGiB-2304*testMiB {
 		t.Fatalf("host growth cap %+v", changes)
 	}
 	state.Ceiling = 10 * testGiB
 	state.Instances[id] = runningVM(9*testGiB, 9*testGiB-100*testMiB, 0)
-	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil); len(changes) != 1 || changes[0].to != 10*testGiB {
+	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, nil); len(changes) != 1 || changes[0].to != 10*testGiB {
 		t.Fatalf("ceiling growth cap %+v", changes)
 	}
 	// A hotplugged VM may still grow, but never shrinks.
 	state.Ceiling, state.HostStall = 10*testGiB, 30
 	state.Instances[id] = InstanceMemory{Status: "Running", Limit: 10 * testGiB, GuestTotal: 9890 * testMiB, GuestAvailable: 9 * testGiB, Hotplugged: true}
-	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil); len(changes) != 0 {
+	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, nil); len(changes) != 0 {
 		t.Fatalf("hotplugged VM shrank: %+v", changes)
 	}
 }
@@ -215,32 +215,32 @@ func TestMemoryPlanHysteresisAndBounds(t *testing.T) {
 		Instances: map[string]InstanceMemory{id: runningVM(8448*testMiB, 8098*testMiB, 1991*testMiB)}}
 	// The lab1 working set needs 8192 MiB: 256 MiB above it is below the
 	// 512 MiB hysteresis.
-	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil); len(changes) != 0 {
+	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, nil); len(changes) != 0 {
 		t.Fatalf("change below hysteresis: %+v", changes)
 	}
 	// An idle guest never goes below -memory-min.
 	state.Instances[id] = runningVM(3*testGiB, 2900*testMiB, 2800*testMiB)
-	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil); len(changes) != 1 || changes[0].to != 2560*testMiB {
+	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, nil); len(changes) != 1 || changes[0].to != 2560*testMiB {
 		t.Fatalf("idle guest plan %+v", changes)
 	}
 	state.Instances[id] = runningVM(2560*testMiB, 2460*testMiB, 2400*testMiB)
-	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil); len(changes) != 1 || changes[0].to != 2048*testMiB {
+	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, nil); len(changes) != 1 || changes[0].to != 2048*testMiB {
 		t.Fatalf("idle guest second step %+v", changes)
 	}
 	state.Instances[id] = runningVM(2048*testMiB, 1948*testMiB, 1900*testMiB)
-	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil); len(changes) != 0 {
+	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, nil); len(changes) != 0 {
 		t.Fatalf("shrank below the minimum: %+v", changes)
 	}
 	// A host smaller than the reserve plus the ceiling caps VMs below it.
 	small := MemoryState{HostTotal: 6 * testGiB, HostAvailable: 5 * testGiB, Ceiling: 8 * testGiB,
 		Instances: map[string]InstanceMemory{id: runningVM(8*testGiB, 7900*testMiB, 7*testGiB)}}
-	if changes := planMemory(small, 0, DefaultMemoryMin, nil, nil); len(changes) != 1 || changes[0].to != 7680*testMiB {
+	if changes := planMemory(small, 0, DefaultMemoryMin, nil, nil, nil); len(changes) != 1 || changes[0].to != 7680*testMiB {
 		t.Fatalf("small host plan %+v", changes)
 	}
 	// A profile below the gateway minimum is never resized.
 	tiny := MemoryState{HostTotal: 6 * testGiB, HostAvailable: testGiB, Ceiling: 900 * testMiB,
 		Instances: map[string]InstanceMemory{id: runningVM(900*testMiB, 800*testMiB, 700*testMiB)}}
-	if changes := planMemory(tiny, 0, DefaultMemoryMin, nil, nil); len(changes) != 0 {
+	if changes := planMemory(tiny, 0, DefaultMemoryMin, nil, nil, nil); len(changes) != 0 {
 		t.Fatalf("tiny profile plan %+v", changes)
 	}
 }
@@ -400,4 +400,69 @@ func writeTestFile(t *testing.T, name, content string, mode os.FileMode) string 
 		t.Fatal(err)
 	}
 	return name
+}
+
+func TestMemoryPlanReturnsMemoryToASilentGuest(t *testing.T) {
+	id, other := strings.Repeat("a", 32), strings.Repeat("b", 32)
+	state := MemoryState{HostTotal: 15 * testGiB, HostAvailable: 8 * testGiB, Ceiling: 10 * testGiB, Instances: map[string]InstanceMemory{
+		id:    {Status: "Running", Limit: 6 * testGiB, GuestSilent: true},
+		other: runningVM(4*testGiB, 3900*testMiB, 2*testGiB),
+	}}
+	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, nil); len(changes) != 0 {
+		t.Fatalf("one missed probe resized: %+v", changes)
+	}
+	silent := map[string]bool{id: true}
+	changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, silent)
+	if len(changes) != 1 || changes[0].id != id || changes[0].to != 10*testGiB || changes[0].reason != "guest did not answer" {
+		t.Fatalf("silent guest plan %+v", changes)
+	}
+	// One step per sweep while the host is short.
+	state.HostAvailable = testGiB
+	changes = planMemory(state, 0, DefaultMemoryMin, nil, nil, silent)
+	if len(changes) != 2 || changes[0].id != id || changes[0].to != 6656*testMiB {
+		t.Fatalf("silent guest under pressure %+v", changes)
+	}
+	// A VM being prepared or cooled, or already at its ceiling, is left alone.
+	if changes := planMemory(state, 0, DefaultMemoryMin, map[string]bool{id: true}, nil, silent); len(changes) != 1 || changes[0].id != other {
+		t.Fatalf("busy silent guest resized: %+v", changes)
+	}
+	state.Instances[id] = InstanceMemory{Status: "Running", Limit: 10 * testGiB, GuestSilent: true}
+	if changes := planMemory(state, 0, DefaultMemoryMin, nil, nil, silent); len(changes) != 1 || changes[0].id != other {
+		t.Fatalf("silent guest at its ceiling resized: %+v", changes)
+	}
+}
+
+func TestTenantElasticMemoryRestoresAGuestThatStopsAnswering(t *testing.T) {
+	base := newFixture(t, false)
+	base.server.Close()
+	runtime := &memoryRuntime{fakeRuntime: base.runtime, elastic: true}
+	base.config.Runtime, base.config.MemoryInterval = runtime, 10*time.Minute
+	base.openServer()
+	login, _ := base.login("register", "alice")
+	record := base.create(login, "quiet")
+	base.connect(login, record.ID)
+	runtime.state = MemoryState{HostTotal: 15 * testGiB, HostAvailable: 8 * testGiB, Ceiling: 10 * testGiB, Instances: map[string]InstanceMemory{
+		record.ID: {Status: "Running", Limit: 6 * testGiB, GuestSilent: true},
+	}}
+	base.server.balanceOnce()
+	if changes := runtime.changes(); len(changes) != 0 {
+		t.Fatalf("resized after one missed probe: %+v", changes)
+	}
+	// It answers again: the count starts over.
+	runtime.mu.Lock()
+	runtime.state.Instances[record.ID] = runningVM(6*testGiB, 5900*testMiB, 3*testGiB)
+	runtime.mu.Unlock()
+	base.server.balanceOnce()
+	runtime.mu.Lock()
+	runtime.state.Instances[record.ID] = InstanceMemory{Status: "Running", Limit: 6 * testGiB, GuestSilent: true}
+	runtime.mu.Unlock()
+	base.server.balanceOnce()
+	if changes := runtime.changes(); len(changes) != 0 {
+		t.Fatalf("missed probes counted across an answer: %+v", changes)
+	}
+	base.server.balanceOnce()
+	if changes := runtime.changes(); len(changes) != 1 || changes[0].to != 10*testGiB {
+		t.Fatalf("silent guest not restored: %+v", changes)
+	}
+	base.state(login, record.ID, ready)
 }

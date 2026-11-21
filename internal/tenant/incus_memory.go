@@ -75,7 +75,7 @@ func (r *IncusRuntime) MemoryState(ctx context.Context) (MemoryState, error) {
 			running = append(running, id)
 		}
 	}
-	guests := make([][2]int64, len(running))
+	guests := make([]InstanceMemory, len(running))
 	var probes sync.WaitGroup
 	slots := make(chan struct{}, 4)
 	for index, id := range running {
@@ -85,15 +85,13 @@ func (r *IncusRuntime) MemoryState(ctx context.Context) (MemoryState, error) {
 			probe, cancel := context.WithTimeout(ctx, 5*time.Second)
 			total, available, err := r.guestMemory(probe, id)
 			cancel()
-			if err == nil {
-				guests[index] = [2]int64{total, available}
-			}
+			guests[index] = InstanceMemory{GuestTotal: total, GuestAvailable: available, GuestSilent: err != nil}
 		})
 	}
 	probes.Wait()
 	for index, id := range running {
 		entry := state.Instances[id]
-		entry.GuestTotal, entry.GuestAvailable = guests[index][0], guests[index][1]
+		entry.GuestTotal, entry.GuestAvailable, entry.GuestSilent = guests[index].GuestTotal, guests[index].GuestAvailable, guests[index].GuestSilent
 		state.Instances[id] = entry
 	}
 	return state, nil
