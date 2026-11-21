@@ -12,6 +12,7 @@ import (
 	"github.com/sylvinus/agent-vm/internal/cage"
 	"github.com/sylvinus/agent-vm/internal/diagnostics"
 	"github.com/sylvinus/agent-vm/internal/guestos"
+	"github.com/sylvinus/agent-vm/internal/guestprofile"
 	"github.com/sylvinus/agent-vm/internal/host"
 	"github.com/sylvinus/agent-vm/internal/hostimage"
 	"io"
@@ -112,6 +113,7 @@ type Server struct {
 	mobileCLI                                        mobileCLIStore
 	conversationMu                                   sync.Mutex
 	mobileConnectMu                                  sync.Mutex
+	mobileUploads                                    mobileUploads
 	audioClients                                     int
 	projectShares                                    map[string]*projectShare
 	projectErrors                                    []projectShareError
@@ -345,6 +347,7 @@ func (s *Server) handler() http.Handler {
 	s.agentRoutes(mux)
 	s.agentNativeRoutes(mux)
 	s.mobileCLIRoutes(mux)
+	s.mobileControlRoutes(mux)
 	s.mobileSurfaceRoutes(mux)
 	mux.HandleFunc("GET /api/mobile-pair", s.phoneStatus)
 	mux.HandleFunc("POST /api/mobile-pair", s.pairPhone)
@@ -925,21 +928,37 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	s.launch(w, "start", func() error {
-		if err := s.prepareGuestProfile(input.GuestProfile, input.System); err != nil {
+	s.launch(w, "start", s.startRun(input.GuestProfile, input.System))
+}
+
+// startRun is the start job of an installed guest. The phone's start and
+// restart use it with no installation input, like the desktop's start.
+func (s *Server) startRun(options *guestprofile.Options, system string) func() error {
+	if s.windowsGuest != nil {
+		return s.startWindowsGuest
+	}
+	if s.macosGuest != nil {
+		return s.startMacOSGuest
+	}
+	return func() error {
+		if err := s.prepareGuestProfile(options, system); err != nil {
 			return err
 		}
 		if err := s.prepareEnvironment(); err != nil {
 			return err
 		}
 		return s.startEnvironment(true)
-	})
+	}
 }
 func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 	s.requestStop(w, false)
 }
 
 func (s *Server) requestStop(w http.ResponseWriter, logout bool) {
+	s.requestStopWith(w, logout, func(w http.ResponseWriter, job Job) { jsonReply(w, job) })
+}
+
+func (s *Server) requestStopWith(w http.ResponseWriter, logout bool, reply func(http.ResponseWriter, Job)) {
 	if err := s.requireStorageReady(); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -964,7 +983,7 @@ func (s *Server) requestStop(w http.ResponseWriter, logout bool) {
 	if logout {
 		kind = "logout"
 	}
-	s.launch(w, kind, s.stopEnvironment)
+	s.launchJob(w, kind, s.stopEnvironment, reply)
 }
 
 func (s *Server) cookieName() string { u, _ := url.Parse(s.origin); return cookieName + "_" + u.Port() }
