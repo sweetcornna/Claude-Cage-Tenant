@@ -44,11 +44,15 @@ func TestEnvironmentStartClosesTheResidentHelper(t *testing.T) {
 	s.cliDiscovery.mu.Lock()
 	s.cliDiscovery.retryAt = time.Now().Add(time.Minute)
 	s.cliDiscovery.mu.Unlock()
+	s.scienceLast.set(&claudeScienceState{Supported: true, Running: true, Ready: true, Port: 47800})
 	// The start goes no further than the closes in this fixture.
 	s.storageRecoveryError = "fixture"
 	_ = s.startEnvironment(false)
 	if !residentClosed(s) {
 		t.Fatal("a start left the resident helper's connection to the old guest open")
+	}
+	if _, kept := s.scienceLast.get(); kept {
+		t.Fatal("a start kept the old guest's Claude Science state for status polls")
 	}
 	if !s.cliDiscovery.usable() {
 		t.Fatal("a start kept the resident helper's back-off")
@@ -60,11 +64,15 @@ func TestEnvironmentStopClosesTheGuestSessions(t *testing.T) {
 	s.controlSession.mu.Lock()
 	control := s.controlSession.epoch
 	s.controlSession.mu.Unlock()
+	s.scienceLast.set(&claudeScienceState{Supported: true, Running: true, Ready: true, Port: 47800})
 	if err := s.stopEnvironment(); err != nil {
 		t.Fatal(err)
 	}
 	if !residentClosed(s) {
 		t.Fatal("a stop left the resident helper's connection open")
+	}
+	if _, kept := s.scienceLast.get(); kept {
+		t.Fatal("a stop kept the old guest's Claude Science state for status polls")
 	}
 	s.controlSession.mu.Lock()
 	closed := s.controlSession.epoch != control

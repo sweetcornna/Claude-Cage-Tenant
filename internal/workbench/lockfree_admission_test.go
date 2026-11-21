@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/sylvinus/agent-vm/internal/cage"
 )
 
@@ -133,6 +134,42 @@ func TestDesktopVisibilityRetriesWaitForTheGuest(t *testing.T) {
 		defer s.desktopViews.op.Unlock()
 		return s.desktopViews.known && s.desktopViews.shown
 	})
+}
+
+// A job that begins while held lists rely on the guest watch pauses the watch
+// without sending the lists to look at the guest themselves; after the job the
+// watch catches up with what changed meanwhile.
+func TestAJobPausesTheGuestWatchWithoutSendingListsToTheGuest(t *testing.T) {
+	s, id, project := metadataFixture(t)
+	home, logins, _ := residentGuest(t, s)
+	record, err := s.mobileCLI.record(s.profile, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history := filepath.Join(home, ".claude", "projects", "fixture", record.CLIID+".jsonl")
+	writeTranscript(t, history, map[string]any{"cwd": guestPath(project), "type": "user", "uuid": uuid.NewString(), "message": map[string]string{"content": "guest title"}})
+	setGuestReady(s, true)
+	for range 3 {
+		phoneList(t, s, "")
+	}
+	changes, stop := s.subscribeGuestChanges() // as a held list does
+	t.Cleanup(stop)
+	eventually(t, "the watch to answer", 10*time.Second, func() bool { _, _, watching := changes(); return watching })
+	s.setJobForTest(Job{ID: "job", Kind: "environment-tools", Running: true})
+	// The watch sent before the job reports this change.
+	_, before, _ := changes()
+	writeTranscript(t, history, map[string]any{"type": "custom-title", "customTitle": "before the pause"})
+	eventually(t, "the change the watch saw", 10*time.Second, func() bool { _, at, _ := changes(); return at.After(before) })
+	_, reported, _ := changes()
+	started := logins()
+	// Then it pauses and keeps its word: held lists do not look themselves.
+	writeTranscript(t, history, map[string]any{"type": "custom-title", "customTitle": "during the job"})
+	time.Sleep(2 * time.Second)
+	if _, at, watching := changes(); !watching || at.After(reported) || logins() != started {
+		t.Fatalf("during the job: watching %v, a change reported %v, %d logins", watching, at.After(reported), logins()-started)
+	}
+	s.setJobForTest(Job{ID: "job", Kind: "environment-tools", Running: false})
+	eventually(t, "the watch to catch up after the job", 10*time.Second, func() bool { _, at, _ := changes(); return at.After(reported) })
 }
 
 // The guest watch is a lock-free guest call too: while a job owns the guest it
