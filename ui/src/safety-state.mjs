@@ -8,7 +8,45 @@ export function isSafetyCheckMessage(message) {
   return typeof message === "string" && /关键(?:检查|检测)(?:尚未|未|失败|证据不完整)|完成关键检查|外网(?:未放行|保持关闭)|浏览器配置检查未通过/.test(message);
 }
 
+// Gate state plus, when it describes that state, the server's explanation
+// (status.safety.explanation): why networking is closed or at risk, what
+// happens next and what the user can do. Older servers send none.
 export function networkState(status, now = Date.now()) {
+  const state = gateState(status, now);
+  const explanation = networkExplanation(status?.safety?.explanation, state.mode, now);
+  return explanation ? { ...state, explanation } : state;
+}
+
+function networkExplanation(value, mode, now) {
+  if (!value || typeof value !== "object" || typeof value.state !== "string") return null;
+  const fits =
+    value.state === "unconfirmed"
+      ? mode === "open"
+      : value.state === "rechecking"
+        ? mode === "closed" || mode === "checking"
+        : mode === "closed";
+  if (!fits) return null;
+  const at = (text) => {
+    const time = Date.parse(text);
+    return Number.isFinite(time) ? time : null;
+  };
+  const seconds = (time) => (time === null ? null : Math.max(0, Math.ceil((time - now) / 1000)));
+  const recheckAt = at(value.recheck_at);
+  const leaseUntil = at(value.lease_until);
+  return {
+    state: value.state,
+    reason: typeof value.reason === "string" ? value.reason : "",
+    next: typeof value.next === "string" ? value.next : "",
+    advice: Array.isArray(value.advice) ? value.advice.filter((item) => typeof item === "string") : [],
+    memoryShort: value.memory_short === true,
+    recheckAt,
+    recheckInSeconds: seconds(recheckAt),
+    leaseUntil,
+    leaseEndsInSeconds: seconds(leaseUntil),
+  };
+}
+
+function gateState(status, now) {
   if (!status?.vm_running) return { mode: "stopped", label: "环境已停止" };
   const gate = status.safety?.gate;
   if (!gate) return { mode: "unknown", label: "外网状态待确认" };
