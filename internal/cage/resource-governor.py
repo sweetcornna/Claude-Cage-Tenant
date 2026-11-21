@@ -22,6 +22,7 @@ effort: when a step fails the guest runs on without it. On exit, and from
 ExecStopPost after a crash, the limits are reset.
 """
 import os
+import pwd
 import signal
 import stat
 import subprocess
@@ -36,6 +37,11 @@ UPTIME = '/proc/uptime'
 MOUNTS = '/proc/mounts'
 SYSTEMCTL = ['/usr/bin/systemctl']
 CLASSES = (('control', 'system.slice'), ('sessions', 'user.slice'), ('browser', 'cage-browser.slice'))
+# The sessions' user, and the browser's: on Ubuntu guests snap Chromium runs
+# in a scope of the browser user's own slice under user.slice, so that slice
+# belongs to the browser class, not to the sessions.
+SESSION_USER = 'cage'
+BROWSER_USER = 'cage-browser'
 MIB = 1 << 20
 FRESH = 10.0
 STEP = 64 * MIB
@@ -91,26 +97,54 @@ def some_avg10(text):
     return 0.0
 
 
+def user_slice(name):
+    try:
+        return 'user.slice/user-%d.slice' % pwd.getpwnam(name).pw_uid
+    except KeyError:
+        return None
+
+
+def cgroup(path):
+    if path is None:
+        return None
+    base = os.path.join(CGROUP, path)
+    try:
+        entry = {'current': value(read(os.path.join(base, 'memory.current'))), 'stall': 0.0, 'low': 0, 'high': 0, 'max': 0}
+    except (OSError, ValueError):
+        return None
+    for key, name in (('low', 'memory.low'), ('high', 'memory.high'), ('max', 'memory.max')):
+        try:
+            entry[key] = value(read(os.path.join(base, name)))
+        except (OSError, ValueError):
+            pass
+    try:
+        entry['stall'] = some_avg10(read(os.path.join(base, 'memory.pressure')))
+    except (OSError, ValueError):
+        pass
+    return entry
+
+
 def classes():
     found = {}
     for name, unit in CLASSES:
-        base = os.path.join(CGROUP, unit)
-        try:
-            entry = {'current': value(read(os.path.join(base, 'memory.current'))), 'stall': 0.0, 'low': 0, 'high': 0, 'max': 0}
-        except (OSError, ValueError):
-            continue
-        for key, name_ in (('low', 'memory.low'), ('high', 'memory.high'), ('max', 'memory.max')):
-            try:
-                entry[key] = value(read(os.path.join(base, name_)))
-            except (OSError, ValueError):
-                pass
-        try:
-            entry['stall'] = some_avg10(read(os.path.join(base, 'memory.pressure')))
-        except (OSError, ValueError):
-            pass
-        found[name] = entry
+        entry = cgroup(unit)
+        if entry:
+            found[name] = entry
+    browser_user = cgroup(user_slice(BROWSER_USER))
+    if browser_user:
+        if 'sessions' in found:
+            found['sessions']['current'] = max(found['sessions']['current'] - browser_user['current'], 0)
+        if 'browser' in found:
+            found['browser']['current'] += browser_user['current']
+            found['browser']['stall'] = max(found['browser']['stall'], browser_user['stall'])
+        else:
+            found['browser'] = browser_user
+    # The sessions' own slice carries the probes and the terminals: its stall,
+    # not the browser user's, is the sessions' stall.
+    session_user = cgroup(user_slice(SESSION_USER))
+    if session_user and 'sessions' in found:
+        found['sessions']['stall'] = session_user['stall']
     return found
-
 
 def plan(size, control, sessions):
     """planGuestClasses in guest_allocation.go, for a guest of size bytes."""
@@ -185,11 +219,20 @@ class Governor:
         self.applied[(unit, prop)] = size
 
     def apply(self, limits):
-        steps = [('cage-browser.slice', 'MemoryHigh', limits['browser_high']),
-                 ('cage-browser.slice', 'MemoryMax', limits['browser_max'])]
+        browsers = ['cage-browser.slice']
+        sessions = ['user.slice']
+        for slices, user in ((browsers, BROWSER_USER), (sessions, SESSION_USER)):
+            path = user_slice(user)
+            if path and os.path.isdir(os.path.join(CGROUP, path)):
+                slices.append(os.path.basename(path))
+        steps = []
+        for unit in browsers:
+            steps += [(unit, 'MemoryHigh', limits['browser_high']), (unit, 'MemoryMax', limits['browser_max'])]
         if recursive_protection():
-            steps += [('system.slice', 'MemoryLow', limits['control_low']),
-                      ('user.slice', 'MemoryLow', limits['sessions_low'])]
+            # The sessions' user slice claims all of user.slice's protection,
+            # so none is left over for the browser user's slice.
+            steps.append(('system.slice', 'MemoryLow', limits['control_low']))
+            steps += [(unit, 'MemoryLow', limits['sessions_low']) for unit in sessions]
         for unit, prop, size in steps:
             try:
                 self.set(unit, prop, size)
@@ -233,8 +276,12 @@ def report(stamp, found):
 
 def reset():
     governor = Governor()
-    for unit, prop in (('cage-browser.slice', 'MemoryHigh'), ('cage-browser.slice', 'MemoryMax'),
-                       ('system.slice', 'MemoryLow'), ('user.slice', 'MemoryLow')):
+    steps = [('cage-browser.slice', 'MemoryHigh'), ('cage-browser.slice', 'MemoryMax'), ('system.slice', 'MemoryLow'), ('user.slice', 'MemoryLow')]
+    for user, props in ((BROWSER_USER, ('MemoryHigh', 'MemoryMax')), (SESSION_USER, ('MemoryLow',))):
+        path = user_slice(user)
+        if path and os.path.isdir(os.path.join(CGROUP, path)):
+            steps += [(os.path.basename(path), prop) for prop in props]
+    for unit, prop in steps:
         try:
             governor.set(unit, prop, 0, force=True)
         except (OSError, subprocess.SubprocessError):

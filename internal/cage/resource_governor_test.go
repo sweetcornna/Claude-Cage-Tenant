@@ -2,6 +2,7 @@ package cage
 
 import (
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -9,6 +10,9 @@ import (
 // The governor runs as root in the guest; its own tests use a fake cgroup
 // root, /run directory and systemctl.
 func TestResourceGovernorPython(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the governor and its fakes are for Linux guests")
+	}
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("python3 is unavailable")

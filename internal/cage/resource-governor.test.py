@@ -45,6 +45,13 @@ class Guest:
         governor.UPTIME = str(self.root / 'proc' / 'uptime')
         governor.MOUNTS = str(self.root / 'proc' / 'mounts')
         governor.SYSTEMCTL = [str(recorder)]
+        governor.user_slice = lambda name: {'cage': 'user.slice/user-1000.slice', 'cage-browser': 'user.slice/user-1001.slice'}.get(name)
+
+    def user_slice(self, uid, current, pressure):
+        directory = self.root / 'cgroup' / 'user.slice' / ('user-%d.slice' % uid)
+        directory.mkdir()
+        (directory / 'memory.current').write_text('%d\n' % current)
+        (directory / 'memory.pressure').write_text('some avg10=%s avg60=0.00 avg300=0.00 total=1\n' % pressure)
 
     def limits(self, text, age=0):
         path = self.root / 'run' / 'in' / 'limits'
@@ -140,6 +147,27 @@ class GovernorTest(unittest.TestCase):
         (Path(governor.CGROUP) / 'cgroup.controllers').unlink()
         self.assertEqual(governor.main(['governor']), 0)
         self.assertEqual(self.guest.called(), [])
+
+    def test_ubuntu_snap_browser_counts_as_browser(self):
+        # snap Chromium runs under the browser user's slice in user.slice.
+        self.guest.user_slice(1000, 400 * MIB, '12.00')
+        self.guest.user_slice(1001, 1200 * MIB, '40.00')
+        (Path(governor.CGROUP) / 'user.slice' / 'memory.current').write_text('%d\n' % (1600 * MIB))
+        found = governor.classes()
+        self.assertEqual(found['sessions']['current'], 400 * MIB)
+        self.assertEqual(found['sessions']['stall'], 12.0)
+        self.assertEqual(found['browser']['current'], 2900 * MIB)
+        self.assertEqual(found['browser']['stall'], 40.0)
+        governor.Governor().once()
+        calls = self.guest.called()
+        for unit in ('cage-browser.slice', 'user-1001.slice'):
+            self.assertTrue(any(call.startswith('set-property --runtime %s MemoryHigh=' % unit) for call in calls), calls)
+            self.assertTrue(any(call.startswith('set-property --runtime %s MemoryMax=' % unit) for call in calls), calls)
+        for unit in ('user.slice', 'user-1000.slice'):
+            self.assertTrue(any(call.startswith('set-property --runtime %s MemoryLow=' % unit) for call in calls), calls)
+        self.assertFalse(any(call.startswith('set-property --runtime user-1001.slice MemoryLow') for call in calls), calls)
+        governor.reset()
+        self.assertIn('set-property --runtime user-1001.slice MemoryMax=infinity', self.guest.called())
 
     def test_failed_steps_do_not_stop_the_governor(self):
         governor.SYSTEMCTL = ['/nonexistent/systemctl']
