@@ -47,6 +47,11 @@ func mobileNetwork(running bool, safety safetyState, now time.Time) map[string]a
 			view["mode"] = gate.Mode
 		}
 	}
+	// Why networking is closed or at risk and what happens next; absent while
+	// nothing is pending. Older apps ignore it.
+	if running && safety.Explanation != nil {
+		view["explanation"] = safety.Explanation
+	}
 	return view
 }
 
@@ -104,6 +109,7 @@ func (s *Server) mobileEnvironment(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	ready := s.ready && !s.closing
+	s.refreshNetworkExplanationLocked(time.Now())
 	view := map[string]any{
 		"ready": ready, "vm_running": running, "guest_system": system,
 		"workload_ready":              ready && running && system != "windows-remote",

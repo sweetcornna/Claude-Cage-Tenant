@@ -101,10 +101,39 @@ func (s *Server) proxyState(ctx context.Context, p managedproxy.Store, cfg cage.
 						}
 					}
 				}
+				label = s.networkStateLabel(state, label)
 			}
 		}
 	}
 	return state, label, running, active
+}
+
+// networkStateLabel words the proxy state with the network explanation.
+// Clients switch on state, which never changes here; only the label does.
+func (s *Server) networkStateLabel(state, label string) string {
+	s.mu.Lock()
+	explanation := s.safety.Explanation
+	s.mu.Unlock()
+	if explanation == nil {
+		return label
+	}
+	switch {
+	case state == "ready" && explanation.State == networkUnconfirmed:
+		return "已联网，监测重试中"
+	case state != "paused":
+		return label
+	case explanation.State == networkWaitingMemory:
+		return "外网未放行：环境内存不足，等待自动重检"
+	case explanation.State == networkRecheckScheduled:
+		return "外网未放行：等待自动重检"
+	case explanation.State == networkRechecking:
+		return "外网未放行：正在自动重检"
+	case explanation.State == networkCheckRequired:
+		return "外网未放行：需要重新检测"
+	case explanation.State == networkPausedState:
+		return "外网已手动暂停"
+	}
+	return label
 }
 func (s *Server) proxyMutation(w http.ResponseWriter, r *http.Request) {
 	var input proxyInput

@@ -94,3 +94,50 @@ test("offline browser previews allow guest loopback only", () => {
   assert.equal(isGuestLocalURL("http://192.168.5.2:17777"), false);
   assert.equal(isGuestLocalURL("https://example.com"), false);
 });
+
+test("the server's explanation rides along only with the state it describes", () => {
+  const now = Date.parse("2026-11-21T08:20:00Z");
+  const closed = {
+    vm_running: true,
+    safety: {
+      gate: { mode: "closed", until: "0001-01-01T00:00:00Z" },
+      explanation: {
+        state: "waiting_memory",
+        reason: "环境内存不足（可用约 46 MB，共 2.8 GB），联网许可到期前仍无法读取浏览器时区和语言，外网已暂停",
+        next: "外网暂停中。自动完整重检正在等待内存压力缓解，最迟约 60 秒后也会进行，通过后自动恢复联网。",
+        recheck_at: "2026-11-21T08:21:00Z",
+        memory_short: true,
+        advice: ["在隔离浏览器中关闭或刷新占用内存较多的标签页，或结束环境里不需要的程序", 7],
+        updated_at: "2026-11-21T08:20:00Z",
+      },
+    },
+  };
+  const state = networkState(closed, now);
+  assert.equal(state.mode, "closed");
+  assert.equal(state.label, "外网已关闭");
+  assert.equal(state.explanation.state, "waiting_memory");
+  assert.equal(state.explanation.memoryShort, true);
+  assert.equal(state.explanation.recheckInSeconds, 60);
+  assert.equal(state.explanation.leaseEndsInSeconds, null);
+  assert.deepEqual(state.explanation.advice, ["在隔离浏览器中关闭或刷新占用内存较多的标签页，或结束环境里不需要的程序"]);
+  assert.match(state.explanation.reason, /环境内存不足/);
+
+  const open = {
+    vm_running: true,
+    safety: {
+      gate: { mode: "open", until: "2026-11-21T08:20:45Z" },
+      explanation: { state: "unconfirmed", reason: "联网监测暂时无法读取系统时区和语言", next: "外网暂时保持开放，但联网许可没有延长。", lease_until: "2026-11-21T08:20:45Z", memory_short: false },
+    },
+  };
+  const unconfirmed = networkState(open, now);
+  assert.equal(unconfirmed.mode, "open");
+  assert.equal(unconfirmed.explanation.state, "unconfirmed");
+  assert.equal(unconfirmed.explanation.leaseEndsInSeconds, 45);
+
+  // A stale explanation never contradicts the gate itself.
+  assert.equal(networkState({ ...closed, safety: { ...closed.safety, gate: open.safety.gate } }, now).explanation, undefined);
+  assert.equal(networkState({ ...open, safety: { ...open.safety, gate: closed.safety.gate } }, now).explanation, undefined);
+  assert.equal(networkState({ ...closed, vm_running: false }, now).explanation, undefined);
+  // Older servers send no explanation; the result is unchanged.
+  assert.deepEqual(networkState({ vm_running: true, safety: { gate: closed.safety.gate } }, now), { mode: "closed", label: "外网已关闭" });
+});

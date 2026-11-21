@@ -69,6 +69,8 @@ type EgressGate struct {
 	timer                             *time.Timer
 	connections                       map[*gateConn]struct{}
 	probeRequests                     int
+	// lease replaces GateLease when shorter; see ShortenLeaseForTest.
+	lease time.Duration
 }
 
 func NewEgressGate(cfg Config) (*EgressGate, error) {
@@ -288,8 +290,23 @@ func (g *EgressGate) Renew(reportID string) error {
 	return nil
 }
 
+// ShortenLeaseForTest makes this gate's later grants and renewals last d
+// instead of GateLease, so tests of the workbench monitors can reach a lease
+// deadline. It only ever shortens a lease: d not below GateLease is ignored.
+func (g *EgressGate) ShortenLeaseForTest(d time.Duration) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if d > 0 && d < GateLease {
+		g.lease = d
+	}
+}
+
 func (g *EgressGate) armReportLeaseLocked(report SafetyReport) {
-	until := time.Now().Add(GateLease)
+	lease := GateLease
+	if g.lease > 0 && g.lease < GateLease {
+		lease = g.lease
+	}
+	until := time.Now().Add(lease)
 	if expiry := report.CreatedAt.Add(SafetyReportLifetime); expiry.Before(until) {
 		until = expiry
 	}
