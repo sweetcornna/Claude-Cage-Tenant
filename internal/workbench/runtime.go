@@ -471,11 +471,25 @@ func (s *Server) runCage(args ...string) error {
 	}
 	return nil
 }
+
+// closeGuestSessions ends the long-lived connections to the guest, which a
+// start, stop or restart leaves pointing at a guest that is gone, and the
+// resident helper's back-off with them: the next guest is tried afresh.
+// Without it a connection whose packets are lost stays up until ssh gives up
+// (30 s), and requests on it time out and back the helper off for a minute.
+func (s *Server) closeGuestSessions() {
+	s.controlSession.close()
+	s.nativeControl.close()
+	s.cliDiscovery.mu.Lock()
+	s.cliDiscovery.retryAt = time.Time{}
+	s.cliDiscovery.mu.Unlock()
+	s.cliDiscovery.resident.close()
+}
+
 func (s *Server) startEnvironment(syncTimezone bool) error {
 	s.desktopViews.reset()
 	s.browserViews.reset()
-	s.controlSession.close()
-	s.nativeControl.close()
+	s.closeGuestSessions()
 	s.desktopStatus.invalidate()
 	defer s.desktopStatus.invalidate()
 	if err := s.requireStorageReady(); err != nil {
@@ -679,6 +693,7 @@ func retryAttach(ctx context.Context, attach func() error) error {
 func (s *Server) stopEnvironment() (returned error) {
 	s.desktopStatus.invalidate()
 	defer s.desktopStatus.invalidate()
+	s.closeGuestSessions()
 	explicitStop := s.jobs.snapshot().Kind == "stop"
 	defer func() {
 		if explicitStop && returned == nil {
