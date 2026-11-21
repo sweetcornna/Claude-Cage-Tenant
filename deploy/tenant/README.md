@@ -358,3 +358,29 @@ incus --force-local --project cage-tenant profile set default \
 `restricted.virtual-machines.lowlevel=allow` 会让该项目接受所有低级 VM 配置，例如 `raw.qemu` 和 `raw.apparmor`。网关仍拒绝这条以外的全部 `raw.*`，但 Incus 本身不再拦截，项目里的这类限制只剩网关校验一道。只在只有网关能访问 Incus socket 时这样设置。设置后，VM 下次启动时生效。在 VM 内执行 `cut -c6 /sys/bus/virtio/drivers/virtio_balloon/virtio*/features`，输出 `1` 表示来宾已协商该特性（第 6 个字符对应特性位 5，即 `VIRTIO_BALLOON_F_REPORTING`）。这项设置本轮没有在 KVM 宿主上实测。
 
 VM 内嵌套运行的 Super Cage 客机（QEMU 5.1 及以上；仅 Linux 宿主上的 QEMU）默认开启同一特性，嵌套客机释放的内存会先回到租户 VM，再由上面的设置或网关的 balloon 回到宿主。
+
+## 10. 经 vsock 直连工作台（VM 模式，可选）
+
+默认每条到工作台的连接都启动一个 `incus exec … socat`，字节经 incusd 和 guest agent 转发。网关每开一个 WebSocket 或一条新的池内连接，都要先付一次 exec 启动的时间，画面流量也经过 incusd 的 exec 中继。加 `-incus-vsock` 后，网关改为每个工作区经同一条 exec 启动一个常驻的 `socat`，让它在 VM 的 vsock 端口上监听并转发到工作台的回环端口；之后网关直接连 VM 的 vsock 地址，新连接只是一次套接字连接。该选项默认关闭，只用于虚拟机：容器与宿主共用内核和 vsock 命名空间，容器里的 vsock 监听会被其他容器连上，所以容器永远走 exec，`-incus-instance-type container` 加 `-incus-vsock` 会被拒绝启动。
+
+**与默认路径的隔离差异，启用前先读。** 默认路径要求有 Incus socket 权限；vsock 没有文件权限层，宿主上任何本地进程都能向 VM 的 vsock 端口发起连接，并访问工作台的未认证端点（其余端点仍要工作台自己的会话 Cookie）。其他租户的 VM 到不了该端口，因为 virtio-vsock 只连接宿主和来宾、不在来宾之间转发（见下面的验证项）。因此只在专用宿主上启用，宿主上不运行不受信任的本地进程。`socat` 的 vsock 监听是 VM 内新增的监听，仍然只有宿主能连，不经过任何网络；第 1 节「控制端口只监听回环」对 TCP 端口仍然成立。
+
+**回退。** 直连只是优化，失败时用回今天的路径：
+
+- 桥接监听起来后，网关先经 vsock 发一个普通 HTTP 请求，确认到达工作台的 HTTP 服务；随后工作区握手（`/api/launch`、`/api/session`、`/api/client/about`）也走 vsock。探测失败时本次直接用 exec，握手失败时这次配备尝试作废、重试改用 exec；两种情况下该实例 5 分钟内不再尝试 vsock，没用的桥接进程立即结束。
+- 某次 vsock 连接失败时，在同一次拨号里改用 exec，请求和流看不到失败；该工作区此后不再试 vsock，该实例 5 分钟内不再尝试。
+- 来宾的 `socat` 不支持 vsock、内核没有 vsock、网关进程的 systemd 限制了 `AF_VSOCK`、`volatile.vsock_id` 缺失，都只是回退，不影响工作区可用。
+
+日志每个工作区一行：`dials its workbench through vsock (CID …, port …)` 表示在用直连；`uses incus exec; the vsock path is unavailable: …` 给出回退原因；`the vsock path ended (…)` 表示运行中退回 exec。回退不会让工作区报错，所以要靠这些日志确认直连真的在用。
+
+**在 KVM 宿主上逐项验证**（这一轮没有在真实宿主上跑过）：
+
+1. `incus --force-local --project cage-tenant config get cage-<id> volatile.vsock_id` 有数字（≥ 3）。
+2. 来宾的 `socat` 支持 vsock：`incus --force-local --project cage-tenant exec cage-<id> -- /usr/bin/socat -V | grep -i vsock` 有输出（需要 socat 1.7.4 以上）。
+3. 加 `-incus-vsock` 重启网关，打开一个工作区，日志出现 `dials its workbench through vsock`。宿主上 `ps -eo args | grep -c 'exec .* socat VSOCK-LISTEN'` 对每个工作区为 1。
+4. 反复打开和关闭终端标签、刷新页面：`ps -eo args | grep -c 'socat STDIO'` 保持不变。默认路径下每个新连接都会让它加 1。
+5. 延迟：浏览器 Network 面板里，WebSocket 升级的「等待服务器响应」时间应比默认路径少约一次 `time incus --force-local --project cage-tenant exec cage-<id> -- true` 的耗时。再对比宿主 incusd 的 CPU：浏览器画面流动时应下降。
+6. 隔离：在另一台租户 VM 里用 `python3 -c 'import socket; s=socket.socket(socket.AF_VSOCK); s.connect((<目标 CID>, <端口>))'` 连目标 VM 的 CID 和该端口，必须失败；嵌套客机（VM 内的 Super Cage 本机模式）同样不能连到宿主或其他 VM 的工作台。
+7. 冻结和解冻：让工作区空闲到冻结（第 7 节），再打开工作台；网关恢复实例后新连接仍走 vsock（`ps` 里桥接进程还在），已有的流在冻结时由网关断开、浏览器自动重连，这是已有行为。
+8. 回退：在 VM 里 `pkill -f VSOCK-LISTEN`，随后打开新终端，工作台仍然可用，网关日志出现 `the vsock path ended`，`ps` 里 `socat STDIO` 的数量重新随连接增加。
+9. 网关重启：重启后桥接进程不会出现第二个（已有监听被复用），关闭网关会让桥接进程退出；VM 关机时桥接进程随之消失。
