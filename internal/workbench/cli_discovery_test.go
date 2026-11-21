@@ -20,6 +20,24 @@ import (
 	"github.com/google/uuid"
 )
 
+func TestCLIDiscoveryHelper(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 unavailable")
+	}
+	if output, err := exec.Command(python, "-I", "cli_discovery_test.py").CombinedOutput(); err != nil {
+		t.Fatalf("resident discovery helper: %v\n%s", err, output)
+	}
+}
+
+func TestCLIDiscoveryCommandSize(t *testing.T) {
+	// One argument of a Linux command line holds at most 128 KiB.
+	t.Logf("resident helper command: %d bytes", len(guestLoginCommand(cliDiscoveryCommand())))
+	if size := len(guestLoginCommand(cliDiscoveryCommand())); size > 32<<10 {
+		t.Fatalf("resident helper command uses %d bytes", size)
+	}
+}
+
 // observedGuest keeps the real host bootstrap and SSH path and replaces only
 // the guest helper with one that prints the observation file.
 func observedGuest(t *testing.T, s *Server, home string) func([]terminalConversation) {
@@ -311,5 +329,137 @@ func TestSessionListsUseOneResidentGuestHelper(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if got := title(); got != "renamed in the guest" || logins() != 3 {
 		t.Fatalf("after the helper ended: title %q, %d logins", got, logins())
+	}
+}
+
+func TestHeldSessionListAnswersHostChanges(t *testing.T) {
+	s, id, _ := metadataFixture(t)
+	_, first := sessionList(t, s, "")
+	started := time.Now()
+	if code, _ := sessionList(t, s, "?after="+first.Revision+"&wait=1"); code != http.StatusNoContent || time.Since(started) < time.Second {
+		t.Fatalf("an unchanged held list answered %d after %v", code, time.Since(started))
+	}
+	held := make(chan sessionListAnswer, 1)
+	go func() {
+		_, answer := sessionList(t, s, "?after="+first.Revision+"&wait=20")
+		held <- answer
+	}()
+	time.Sleep(300 * time.Millisecond)
+	renamed := time.Now()
+	if w := request(s, "POST", "/api/cli/sessions/"+id+"/metadata", s.origin, `{"title":"保持等待时改名"}`, true); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	select {
+	case answer := <-held:
+		if len(answer.Sessions) != 1 || answer.Sessions[0].Title != "保持等待时改名" || time.Since(renamed) > 3*time.Second {
+			t.Fatalf("held list = %+v after %v", answer, time.Since(renamed))
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a held list missed a rename")
+	}
+	s.cliDiscovery.mu.Lock()
+	watchers := s.cliDiscovery.watchers
+	s.cliDiscovery.mu.Unlock()
+	if watchers != 0 {
+		t.Fatalf("%d watchers remain", watchers)
+	}
+}
+
+func TestHeldSessionListWakesOnGuestChange(t *testing.T) {
+	s, id, project := metadataFixture(t)
+	home, logins, _ := residentGuest(t, s)
+	record, err := s.mobileCLI.record(s.profile, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history := filepath.Join(home, ".claude", "projects", "fixture", record.CLIID+".jsonl")
+	writeTranscript(t, history, map[string]any{"cwd": guestPath(project), "type": "user", "uuid": uuid.NewString(), "message": map[string]string{"content": "guest title"}})
+	s.ready = true
+	sessionList(t, s, "")
+	_, current := sessionList(t, s, "")
+	held := make(chan sessionListAnswer, 1)
+	go func() {
+		code, answer := sessionList(t, s, "?after="+current.Revision+"&wait=20")
+		if code != http.StatusOK {
+			t.Errorf("held list answered %d", code)
+		}
+		held <- answer
+	}()
+	time.Sleep(500 * time.Millisecond)
+	changed := time.Now()
+	writeTranscript(t, history, map[string]any{"type": "custom-title", "customTitle": "named while held"})
+	select {
+	case answer := <-held:
+		if len(answer.Sessions) != 1 || answer.Sessions[0].Title != "named while held" {
+			t.Fatalf("held list = %+v", answer)
+		}
+		if elapsed := time.Since(changed); elapsed > 4*time.Second {
+			t.Fatalf("the guest change took %v to arrive", elapsed)
+		}
+		t.Logf("guest change reached the held list after %v", time.Since(changed))
+	case <-time.After(15 * time.Second):
+		t.Fatal("a held list missed a guest change")
+	}
+	if logins() != 2 {
+		t.Fatalf("waiting opened %d more logins", logins()-2)
+	}
+}
+
+func TestHeldSessionViewAnswersGuestReply(t *testing.T) {
+	s, id, project := metadataFixture(t)
+	home, logins, _ := residentGuest(t, s)
+	record, err := s.mobileCLI.record(s.profile, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history := filepath.Join(home, ".claude", "projects", "fixture", record.CLIID+".jsonl")
+	writeTranscript(t, history, map[string]any{"cwd": guestPath(project), "type": "user", "uuid": uuid.NewString(), "message": map[string]string{"content": "question"}})
+	s.ready = true
+	sessionList(t, s, "")
+	sessionList(t, s, "")
+	read := func(query string) (int, mobileSession) {
+		w := request(s, "GET", "/api/mobile/cli/sessions/"+id+query, s.origin, "", true)
+		var view mobileSession
+		if w.Code == http.StatusOK {
+			if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return w.Code, view
+	}
+	_, view := read("")
+	query := fmt.Sprintf("?after=%d&epoch=%s", view.Revision, view.Generation)
+	started := time.Now()
+	if code, _ := read(query + "&wait=1"); code != http.StatusNoContent || time.Since(started) < time.Second {
+		t.Fatalf("an unchanged held view answered %d after %v", code, time.Since(started))
+	}
+	held := make(chan mobileSession, 1)
+	go func() {
+		code, view := read(query + "&wait=20")
+		if code != http.StatusOK {
+			t.Errorf("held view answered %d", code)
+		}
+		held <- view
+	}()
+	time.Sleep(500 * time.Millisecond)
+	replied := time.Now()
+	writeTranscript(t, history, map[string]any{"cwd": guestPath(project), "type": "assistant", "uuid": uuid.NewString(), "message": map[string]any{"content": []map[string]string{{"type": "text", "text": "answer"}}}})
+	select {
+	case view := <-held:
+		if len(view.Turns) != 1 || view.Turns[0].Text != "answer" {
+			t.Fatalf("held view = %+v", view.Turns)
+		}
+		if elapsed := time.Since(replied); elapsed > 2*time.Second {
+			t.Fatalf("the reply took %v to arrive", elapsed)
+		}
+		t.Logf("guest reply reached the held view after %v", time.Since(replied))
+	case <-time.After(15 * time.Second):
+		t.Fatal("a held view missed the reply")
+	}
+	if logins() != 2 {
+		t.Fatalf("waiting opened %d more logins", logins()-2)
+	}
+	if code, _ := read(query + "&wait=x"); code != http.StatusBadRequest {
+		t.Fatalf("a malformed wait answered %d", code)
 	}
 }

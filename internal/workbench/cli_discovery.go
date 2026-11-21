@@ -46,6 +46,15 @@ type cliDiscovery struct {
 	installed bool      // the channel helper it loads is in the guest
 	retryAt   time.Time // after a failure, no resident requests until then
 	viewKeys  map[string]residentView
+	// Held list requests share one guest watch, which runs only while at
+	// least one of them waits.
+	watchers  int
+	stopWatch context.CancelFunc
+	watching  bool          // the guest watch is answering
+	changed   chan struct{} // closed when the watch saw the guest change
+	changedAt time.Time
+	lastInput map[string]any // the latest resident discovery's request
+	lastHash  string         // and the guest's digest of its answer
 }
 
 // residentView is what the last resident view of a session was read from.
@@ -189,6 +198,7 @@ func (s *Server) residentCLIChannel(ctx context.Context, mode string, input any,
 			return false
 		}
 		*output = answer.Sessions
+		s.cliDiscovery.observed(input, answer.Hash)
 		return true
 	case *terminalConversation:
 		if mode != "view" {
@@ -218,4 +228,158 @@ func (d *cliDiscovery) noteView(id string, input map[string]any, key string) {
 		d.viewKeys = map[string]residentView{}
 	}
 	d.viewKeys[id] = residentView{input: input, key: key}
+}
+
+const (
+	// guestWatchTimeout bounds one watch request; the guest answers at once
+	// when its discovery differs from the last one the host saw.
+	guestWatchTimeout = 20 * time.Second
+	guestWatchRetry   = 5 * time.Second
+)
+
+func (d *cliDiscovery) observed(input any, hash string) {
+	request, ok := input.(map[string]any)
+	if !ok {
+		return
+	}
+	d.mu.Lock()
+	d.lastInput, d.lastHash = request, hash
+	d.mu.Unlock()
+}
+
+// subscribe registers a held list request. changes returns a channel that is
+// closed when the guest's sessions change, with the time of that change;
+// watching reports whether the guest watch is answering, so the caller knows
+// whether it must look at the guest itself.
+func (s *Server) subscribeGuestChanges() (changes func() (<-chan struct{}, time.Time, bool), stop func()) {
+	d := &s.cliDiscovery
+	d.mu.Lock()
+	if d.changed == nil {
+		d.changed = make(chan struct{})
+	}
+	d.watchers++
+	if d.watchers == 1 {
+		ctx, cancel := context.WithCancel(s.lifetimeContext())
+		d.stopWatch = cancel
+		go s.watchGuestSessions(ctx)
+	}
+	d.mu.Unlock()
+	changes = func() (<-chan struct{}, time.Time, bool) {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return d.changed, d.changedAt, d.watching
+	}
+	var once sync.Once
+	stop = func() {
+		once.Do(func() {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			d.watchers--
+			if d.watchers == 0 && d.stopWatch != nil {
+				d.stopWatch()
+				d.stopWatch, d.watching = nil, false
+			}
+		})
+	}
+	return changes, stop
+}
+
+// watchGuestSessions asks the resident helper to answer once its discovery
+// differs from the last one the host saw, and wakes the held requests.
+func (s *Server) watchGuestSessions(ctx context.Context) {
+	d := &s.cliDiscovery
+	for ctx.Err() == nil {
+		d.mu.Lock()
+		input, known := d.lastInput, d.lastHash
+		d.mu.Unlock()
+		epoch, unlocked := s.account.access()
+		var reply json.RawMessage
+		ok := false
+		if input != nil && unlocked {
+			request := make(map[string]any, len(input)+2)
+			for key, value := range input {
+				request[key] = value
+			}
+			request["known"], request["timeout"] = known, guestWatchTimeout.Seconds()
+			d.setWatching(true)
+			watchCtx, cancel := context.WithTimeout(ctx, guestWatchTimeout+5*time.Second)
+			stop := context.AfterFunc(epoch, cancel)
+			reply, ok = s.residentRequest(watchCtx, "watch", request)
+			stop()
+			cancel()
+		}
+		var answer struct {
+			Hash    string `json:"hash"`
+			Changed bool   `json:"changed"`
+		}
+		if !ok || json.Unmarshal(reply, &answer) != nil || answer.Hash == "" {
+			d.setWatching(false)
+			select {
+			case <-ctx.Done():
+			case <-time.After(guestWatchRetry):
+			}
+			continue
+		}
+		if answer.Changed {
+			d.mu.Lock()
+			if d.lastHash == known {
+				d.lastHash = answer.Hash
+			}
+			close(d.changed)
+			d.changed, d.changedAt = make(chan struct{}), time.Now()
+			d.mu.Unlock()
+		}
+	}
+}
+
+func (d *cliDiscovery) setWatching(value bool) {
+	d.mu.Lock()
+	if d.stopWatch != nil {
+		d.watching = value
+	}
+	d.mu.Unlock()
+}
+
+// awaitSessionView waits until a held view may have changed: the resident
+// helper answers when the files and processes the last view was read from
+// change; other sessions are looked at again at the client's own pace.
+func (s *Server) awaitSessionView(ctx context.Context, view mobileSession, deadline time.Time) bool {
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return false
+	}
+	pause := time.Second
+	if !view.Active {
+		pause = 4 * time.Second
+	}
+	if !view.TerminalAvailable && view.Provider != codexProvider {
+		pause = 250 * time.Millisecond // host-run sessions change in this process
+	} else if view.TerminalAvailable {
+		s.cliDiscovery.mu.Lock()
+		last, ok := s.cliDiscovery.viewKeys[view.ID]
+		s.cliDiscovery.mu.Unlock()
+		if epoch, unlocked := s.account.access(); ok && unlocked {
+			request := make(map[string]any, len(last.input)+2)
+			for key, value := range last.input {
+				request[key] = value
+			}
+			request["key"], request["timeout"] = last.key, remaining.Seconds()
+			waitCtx, cancel := context.WithTimeout(ctx, remaining+5*time.Second)
+			stop := context.AfterFunc(epoch, cancel)
+			_, answered := s.residentRequest(waitCtx, "view-wait", request)
+			stop()
+			cancel()
+			if answered || ctx.Err() != nil {
+				return ctx.Err() == nil
+			}
+		}
+	}
+	timer := time.NewTimer(min(pause, remaining))
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
