@@ -110,6 +110,19 @@ func codexOwner(bound bool, guest string) string {
 	return guest
 }
 
+// codexPhoneLoad counts the Codex sessions whose phone turn runs, by account.
+func (m *mobileCLIStore) codexPhoneLoad() map[string]int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	load := map[string]int{}
+	for id, owner := range m.codexOwner {
+		if account := m.catalog[id].CodexAccountID; owner == "phone" && account != "" {
+			load[account]++
+		}
+	}
+	return load
+}
+
 // forgetCodexDesktop drops the guest's report of a desktop lease once this
 // server's terminal for the session has ended; the next look says afresh.
 func (m *mobileCLIStore) forgetCodexDesktop(id string) {

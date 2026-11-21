@@ -373,6 +373,8 @@ func (s *Server) allocateCodexAccount(previous codexAccountList, workspace strin
 		readings, _ = read(ctx, ids) // Retain the last snapshot when SSH is unavailable.
 		cancel()
 	}
+	// A phone turn of a Codex session uses its account as a terminal would.
+	phone := s.mobileCLI.codexPhoneLoad()
 	m := &s.codexAccounts
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -409,6 +411,9 @@ func (s *Server) allocateCodexAccount(previous codexAccountList, workspace strin
 		} else {
 			active[id]++
 		}
+	}
+	for id, count := range phone {
+		active[id] += count
 	}
 	preferred := ""
 	if recent := m.recent[workspace]; now.Sub(recent.at) < claudeProjectAffinity {
