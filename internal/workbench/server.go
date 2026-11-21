@@ -112,6 +112,7 @@ type Server struct {
 	terminals                                        terminalManager
 	mobileCLI                                        mobileCLIStore
 	conversationMu                                   sync.Mutex
+	cliDiscovery                                     cliDiscovery
 	mobileConnectMu                                  sync.Mutex
 	mobileUploads                                    mobileUploads
 	audioClients                                     int
