@@ -52,10 +52,23 @@ function installCanvasFit(client, session) {
 }
 
 // Counts painted frames and keeps the last painted frame on screen while a
-// resumed stream still shows the guest's empty desktop.
+// resumed stream still shows the guest's empty desktop. Also times the paint
+// path: message handling (parsing and decoding) and the drawing of decoded
+// rectangles, see window.__cagePerf.
 function installFrameHooks(client, session, perf) {
   const display = client._display;
   const flip = display.flip.bind(display);
+  const handlers = client._sock._eventHandlers;
+  const handle = handlers.message;
+  handlers.message = () => {
+    const started = performance.now();
+    try { handle(); } finally { perf.handled(performance.now() - started); }
+  };
+  const scan = display._scanRenderQ.bind(display);
+  display._scanRenderQ = () => {
+    const started = performance.now();
+    try { scan(); } finally { perf.drew(performance.now() - started); }
+  };
   let probe;
   const empty = () => {
     const source = display._backbuffer;

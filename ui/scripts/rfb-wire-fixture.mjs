@@ -11,14 +11,16 @@ import { createHash } from "node:crypto";
 // echoBinary: answer a client that offers the "binary" subprotocol with it,
 // as websockify does. Off, the server selects none, as Cage servers before
 // cage-display.v1 do; a browser then refuses a client that offered one.
-export async function startDisplay(upstream, { frameInterval = 50, sharedClipboard = false, displayControl = false, holdFor = 60_000, emptyFor = 0, frame: frameSource, echoBinary = false } = {}) {
+export async function startDisplay(upstream, { frameInterval = 50, sharedClipboard = false, displayControl = false, holdFor = 60_000, emptyFor = 0, frame: frameSource, echoBinary = false, size = { width: 640, height: 480 } } = {}) {
   const stats = { connections: 0, closed: 0, frames: 0, clipboardConnections: 0, clipboardUpdates: [], keys: [], control: [], requests: [], protocols: [], closeCodes: [], pointers: [] };
   const sockets = new Set();
   const displays = new Set();
   const clipboardWriters = new Set();
   const sharedWriters = new Set(), sharedSockets = new Set();
   const terminalWriters = new Set();
-  let width = 640, height = 480, framesPaused = false;
+  let width = size.width, height = size.height, framesPaused = false;
+  // replay: whole FramebufferUpdate messages sent in turn, one per request.
+  let replay = null, replayIndex = 0;
   const server = http.createServer((req, res) => {
     if (req.url.startsWith("/api/")) {
       res.writeHead(503); res.end("Unmocked fixture request"); return;
@@ -126,7 +128,13 @@ export async function startDisplay(upstream, { frameInterval = 50, sharedClipboa
         timer = setInterval(() => {
           if (framesPaused || socket.writableLength > frame.length * 2) return;
           // A held stream's server answers requests; the legacy one pushes.
-          if (control) { if (!asked) return; asked--; }
+          if (control || replay) { if (!asked) return; asked--; }
+          if (replay) {
+            const message = replay[replayIndex++ % replay.length];
+            stats.replayBytes = (stats.replayBytes || 0) + message.length;
+            send(message); stats.frames++;
+            return;
+          }
           paint(stats.frames);
           send(frame); stats.frames++;
         }, frameInterval);
@@ -147,7 +155,7 @@ export async function startDisplay(upstream, { frameInterval = 50, sharedClipboa
         if (!length) { socket.destroy(); return; }
         if (rfb.length < length) return;
         if (type === 5) { stats.pointer = { x: rfb.readUInt16BE(2), y: rfb.readUInt16BE(4) }; stats.pointers.push({ ...stats.pointer, at: Date.now() }); }
-        if (type === 3) { stats.requests.push({ incremental: Boolean(rfb[1]), at: Date.now() }); if (control) asked = 1; }
+        if (type === 3) { stats.requests.push({ incremental: Boolean(rfb[1]), at: Date.now() }); if (control || replay) asked = 1; }
         if (type === 4) stats.keys.push({ down: Boolean(rfb[1]), symbol: rfb.readUInt32BE(4) });
         if (type === 248 && (rfb.readUInt32BE(4) & 0x80000000)) {
           const response = Buffer.from(rfb.subarray(0, length));
@@ -200,6 +208,9 @@ export async function startDisplay(upstream, { frameInterval = 50, sharedClipboa
     url: `http://127.0.0.1:${server.address().port}`,
     stats,
     pauseFrames(paused) { framesPaused = paused; },
+    // Recorded-style updates for a measurement: an array of FramebufferUpdate
+    // messages (see tightJpegUpdate). Requests are answered from it in turn.
+    replay(messages) { replay = messages; replayIndex = 0; },
     clipboard(text) { for (const write of clipboardWriters) write(text); },
     sharedClipboard(value) { for (const write of sharedWriters) write(value); },
     terminalOutput(text) { for (const write of terminalWriters) write(text); },
@@ -211,4 +222,20 @@ export async function startDisplay(upstream, { frameInterval = 50, sharedClipboa
       await new Promise((resolve) => server.close(resolve));
     },
   };
+}
+
+// One FramebufferUpdate with a Tight JPEG rectangle, as Xtigervnc sends a
+// scrolled page at quality 8.
+export function tightJpegUpdate(jpeg, { x = 0, y = 0, width, height }) {
+  const length = jpeg.length;
+  const compact = length < 128 ? [length] : length < 16384 ? [(length & 127) | 128, length >> 7]
+    : [(length & 127) | 128, ((length >> 7) & 127) | 128, length >> 14];
+  const header = Buffer.alloc(4 + 12 + 1 + compact.length);
+  header.writeUInt16BE(1, 2); // one rectangle
+  header.writeUInt16BE(x, 4); header.writeUInt16BE(y, 6);
+  header.writeUInt16BE(width, 8); header.writeUInt16BE(height, 10);
+  header.writeInt32BE(7, 12); // Tight
+  header[16] = 0x90; // JPEG
+  Buffer.from(compact).copy(header, 17);
+  return Buffer.concat([header, jpeg]);
 }

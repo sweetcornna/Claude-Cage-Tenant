@@ -39,7 +39,7 @@ export function createPerfRegistry(now = () => globalThis.performance?.now() ?? 
       id: ++sequence, kind, url, reconnect: reconnects[kind], protocol: "",
       openedAt: now(), connectedAt: 0, firstFrameAt: 0, closedAt: 0, closeCode: 0,
       framesPainted: 0, framesHeld: 0, bytesReceived: 0, messages: 0, holds: 0, resumes: 0,
-      updateIntervals: [], inputToFrame: [], lastFrameAt: 0, pendingInputAt: 0,
+      updateIntervals: [], inputToFrame: [], handleMs: [], drawMs: [], lastFrameAt: 0, pendingInputAt: 0,
       connected(protocol = "") { entry.protocol = protocol; entry.connectedAt = now(); },
       received(bytes) { entry.messages++; entry.bytesReceived += bytes; },
       // A paint follows input when input arrived since the last paint.
@@ -53,6 +53,10 @@ export function createPerfRegistry(now = () => globalThis.performance?.now() ?? 
         if (entry.pendingInputAt) { record(entry.inputToFrame, at - entry.pendingInputAt); entry.pendingInputAt = 0; }
       },
       held() { entry.framesHeld++; },
+      // Main-thread time spent parsing and decoding stream messages, and
+      // drawing decoded rectangles: the paint path.
+      handled(ms) { record(entry.handleMs, ms); },
+      drew(ms) { record(entry.drawMs, ms); },
       hidden() { entry.holds++; entry.pendingInputAt = 0; entry.lastFrameAt = 0; },
       shown() { entry.resumes++; entry.lastFrameAt = 0; },
       closed(code = 0) { if (!entry.closedAt) { entry.closedAt = now(); entry.closeCode = code; } },
@@ -68,6 +72,7 @@ export function createPerfRegistry(now = () => globalThis.performance?.now() ?? 
           holds: entry.holds, resumes: entry.resumes,
           framesPerSecond: live > 0 ? round(entry.framesPainted * 1000 / live) : null,
           updateIntervalMs: describe(entry.updateIntervals), inputToFrameMs: describe(entry.inputToFrame),
+          handleMs: describe(entry.handleMs), drawMs: describe(entry.drawMs),
         };
       },
     };
