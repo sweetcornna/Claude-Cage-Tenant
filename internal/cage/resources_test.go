@@ -385,3 +385,16 @@ func TestAgentProfileFromTheInstanceLayout(t *testing.T) {
 		t.Fatalf("profile %q", got)
 	}
 }
+
+func TestResourceStatusStaysWithinItsReadLimit(t *testing.T) {
+	sample := ResourceSample{Total: 6 << 30, Available: 1 << 30, Boot: strings.Repeat("b", 36)}
+	status := ResourceStatus{Version: 1, Maximum: 6 << 30, Target: 6 << 30, Guest: &sample, Machine: &MachineMemory{Total: 8 << 30, Boot: 8 << 30, Role: RoleDedicated},
+		Classes: []GuestClass{{Name: "control", Current: 1 << 30}, {Name: "sessions", Current: 1 << 30}, {Name: "browser", Current: 4 << 30, High: 4 << 30, Max: 5 << 30}},
+		Advice: &ResourceAdvice{Message: "环境内存已用满手动设置的 32 GB。改为自动（推荐）后可以调到 32 GB，需要重启环境。", MemoryBytes: 32 << 30, RestartRequired: true},
+		Summary: "主机和环境的内存都紧张，环境只增加到刚好够用的 32 GB。", NextAction: "关闭主机上暂时不用的程序，环境可以获得更多内存。",
+		Error: "读取资源用量失败：" + strings.Repeat("原因", 100) + "。暂时保持当前内存分配，恢复读取后自动继续；若持续出现，请在设置中导出诊断包。"}
+	data, err := json.Marshal(status)
+	if err != nil || len(data) > 8<<10 {
+		t.Fatalf("status is %d bytes: %v", len(data), err)
+	}
+}
