@@ -9,6 +9,7 @@ import http from "node:http";
 import { auditBrowser } from "./browser-audit.mjs";
 import { BrowserVault } from "./browser-vault.mjs";
 import { LoginBrowser } from "./browser-login.mjs";
+import { isScienceURL, publicScienceURL, readScienceConfig, scienceLink, scienceTitle } from "./browser-science.mjs";
 import { PrivateBrowser } from "./browser-private.mjs";
 import { browserCookies } from "./browser-cookies.mjs";
 import { BrowserExtensions, extensionUploadLimit } from "./browser-extensions.mjs";
@@ -42,7 +43,7 @@ function rememberSelection() {
   const tab = targets.get(activeId);
   if (tab && !tab.login && !tab.incognito)
     try {
-      writeFileSync(selectionFile, JSON.stringify({ url: tab.url }), {
+      writeFileSync(selectionFile, JSON.stringify({ url: publicScienceURL(tab.url, sciencePort()) }), {
         mode: 0o600,
       });
     } catch {}
@@ -59,7 +60,7 @@ const splitURL = `chrome-extension://${extensionId}/control.html`;
 const settingsURL = `chrome-extension://${extensionId}/settings.html`;
 const extensionRepairURL = "chrome://extensions/?cage-browser-controller";
 const isSettingsTab = tab => tab.url === settingsURL || tab.url.startsWith(settingsURL + "#");
-const publicURL = tab => isSettingsTab(tab) ? "cage://settings" + new URL(tab.url).hash : tab.url;
+const publicURL = tab => isSettingsTab(tab) ? "cage://settings" + new URL(tab.url).hash : publicScienceURL(tab.url, sciencePort());
 let splitView = null, splitSession, splitTarget, splitOpening, resizeTimer;
 const favicons = new Map(), faviconRequests = new Map(), documents = new Map();
 
@@ -627,6 +628,36 @@ async function restartEditor(workspace) {
   }
   throw new Error("编辑器尚未恢复，请稍后重试。");
 }
+// Claude Science (phase 1) opens in an ordinary tab, kind "science". The
+// tab given the last link is remembered with the daemon start it was for.
+// While that daemon runs, the tab is only brought forward, wherever it is
+// (during sign-in it is on claude.ai). A newer daemon has a new session, so
+// a tab on the daemon's origin gets the new link, or a new tab is opened.
+let scienceTab = { id: "", startedAt: "" };
+function sciencePort() {
+  return readScienceConfig()?.port;
+}
+function isScienceTab(tab) {
+  return !tab.login && !tab.incognito && isScienceURL(tab.url, sciencePort());
+}
+async function openScience({ url, started_at: startedAt = "", fresh = false }) {
+  const link = scienceLink(url, sciencePort());
+  if (typeof startedAt !== "string" || startedAt.length > 64) throw new Error("Claude Science 状态无效");
+  const remembered = targets.get(scienceTab.id);
+  if (remembered && !remembered.login && !remembered.incognito && fresh !== true && startedAt && startedAt === scienceTab.startedAt) {
+    await activate(remembered.targetId, true);
+    return { id: remembered.targetId, kind: "science", title: scienceTitle, reused: true };
+  }
+  const existing = remembered && isScienceTab(remembered) ? remembered : [...targets.values()].find(isScienceTab);
+  let id;
+  if (existing) {
+    await activate(existing.targetId, true);
+    await cdp("Page.navigate", { url: link }, await session(existing.targetId));
+    id = existing.targetId;
+  } else id = (await newTab(link)).id;
+  scienceTab = { id, startedAt };
+  return { id, kind: "science", title: scienceTitle, reused: false };
+}
 async function tabState() {
   await Promise.allSettled([...auditCreations]);
   const { targetInfos } = await cdp("Target.getTargets");
@@ -656,6 +687,7 @@ async function refreshNavigation() {
 function displayTitle(tab) {
   if (isSettingsTab(tab)) return "设置";
   if (tab.login) return "账号授权";
+  if (isScienceTab(tab)) return scienceTitle;
   if (tab.url === "about:blank") return "新标签页";
   const title = tab.title;
   if (
@@ -687,7 +719,7 @@ function publicState() {
       url: publicURL(t),
       document: documents.get(t.targetId) || "",
       favicon: favicons.get(t.targetId) || "",
-      kind: isSettingsTab(t) ? "browser-settings" : t.url.startsWith("http://127.0.0.1:18080/") ? "editor" : "web",
+      kind: isSettingsTab(t) ? "browser-settings" : t.url.startsWith("http://127.0.0.1:18080/") ? "editor" : isScienceTab(t) ? "science" : "web",
       workspace: t.url.startsWith("http://127.0.0.1:18080/") ? new URL(t.url).searchParams.get("folder") || config.workspace : undefined,
     })),
   };
@@ -958,6 +990,7 @@ const server = http.createServer(async (req, res) => {
       if (req.url === "/new") return newTab(input.url || undefined, input.incognito === true);
       if (req.url === "/editor") return editor(input.workspace || config.workspace);
       if (req.url === "/editor-restart") return restartEditor(input.workspace);
+      if (req.url === "/science") return openScience(input);
       if (req.url === "/ime") {
         if (!["browser", "desktop"].includes(input.target)) throw new Error("Input target is invalid");
         if (input.target === "browser" && input.mode !== "cancel" &&
