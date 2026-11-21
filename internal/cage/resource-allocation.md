@@ -383,6 +383,16 @@ Ubuntu guests: snap Chromium runs in a scope under the browser user's slice in u
 counts user.slice/user-<cage-browser uid>.slice as browser (use, stall, MemoryHigh/MemoryMax), subtracts it
 from the sessions, takes the sessions' stall from user-<cage uid>.slice and sets that slice's MemoryLow
 equal to user.slice's, so no protection is left over for the browser user's slice.
+Accounts (review 2, R2-3): new environments have random account names (internal/guestprofile), so the
+governor takes both from its unit: Environment=CAGE_SESSION_USER=cage and CAGE_BROWSER_USER=cage-browser,
+rewritten by the same rename rules as every other account reference (guestprofile linuxAccountRules has a
+prefix for each; nothing else in any template contains them, TestGovernorAccountRulesMatchOnlyItsUnit).
+A name is resolved when getpwnam knows it (a browser user without a slice, Debian, is resolved). When
+either is missing, malformed, unknown or both are the same uid, the governor does not guess: it limits
+only cage-browser.slice, protects only system.slice, sets user.slice MemoryLow=0, reports no class (the
+host agent falls back to the whole guest's pressure), writes "accounts unresolved <roles>" to the state
+file and says which names in the journal. TestRenderedGovernorFindsTheProfileUsers runs the governor and
+unit rendered by Config.SetupScript/StartScript for no profile and two random ones in a fake guest.
 Not built (moved to the follow-up with the browser-agent endpoint): the chromium.d hook, Delegate= and
 agent/chromium leaves, adoption of sessions into cage-sessions.slice (no single spawn point owned here:
 terminals, claude and codex arrive by several SSH paths), memory.high on the sessions.
