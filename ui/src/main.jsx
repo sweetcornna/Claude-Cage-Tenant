@@ -1,5 +1,5 @@
 import { shortcut, primaryModifier } from "./platform.mjs";
-import React, { useEffect, useRef, useState } from "react";
+import React, { Suspense, lazy, useEffect, useRef, useState } from "react";
 import {
   Clock3,
   LoaderCircle,
@@ -13,20 +13,18 @@ import {
 import { api, normalizeURL, native, nativeAvailable } from "./api";
 import { clientKeyboard, clientStorageKey, getClientContext, isCloudWorkbench, isRemoteClient, runtimeURL, runtimeSocketURL } from "./client-context.mjs";
 import { shareClipboard } from "./shared-clipboard.mjs";
-import { RemoteView, TerminalView, Modal } from "./views";
+import { Modal } from "./modal";
 import { keepSame, reuseItems, terminalListDue } from "./poll-state.mjs";
 import { usePasswordVault } from "./password-vault";
-import { SettingsPanel } from "./settings";
 import { validGuestChoice } from "./guest-system-picker";
 import { AppearanceProvider } from "./appearance";
-import { EnvironmentShield } from "./environment-shield";
-import { TailscalePanel } from "./tailscale";
 import { WorkspaceSidebar } from "./workspace-sidebar";
-import { useCLISessions, sessionsChanged } from "./cli-sessions";
+import { useCLISessions, sessionsChanged, SessionListView, useSessionSnapshot } from "./cli-sessions";
+import { archiveCopy, codexMenuLabel, codexSessionAccountLabel, codexSessionAction, isCodexSession, isCodexTab, READONLY_REASONS, SESSION_PROVIDERS } from "./session-provider.mjs";
+import { CodexTerminalActions, CodexTerminalDetail } from "./codex-terminal-header";
+import { NetworkStatusButton } from "./network-explanation";
 import { TerminalMenu } from "./terminal-menu";
 import { InitializationGate } from "./initialization";
-import { MacOSAppWindow } from "./macos-claude-window";
-import { ClaudeDesktop } from "./claude-desktop";
 import { ClaudeAccountsPanel, useClaudeAccounts } from "./claude-accounts";
 import { CodexAccountsPanel, useCodexAccounts } from "./codex-accounts";
 import { codexTerminalDetail, codexTerminalLabel, codexTerminalSupported } from "./codex-accounts-state.mjs";
@@ -34,10 +32,8 @@ import { AccountProvider, AccountGate, useAccount } from "./account";
 import { BrowserHeader, BrowserTabRail, TerminalHeader, ExpandSidebar, ExpandPane } from "./pane-headers";
 import { useDownloadNotifications, useDesktopFiles } from "./browser-downloads";
 import { BrowserUploads } from "./browser-uploads";
-import { BrowserSettingsPage } from "./browser-settings";
 import { AudioControls, useAudioOutput } from "./audio";
 import { EnvironmentClock } from "./environment-clock";
-import { ProjectDialog } from "./project-dialog";
 import {
   readLocal,
   orderedTabs,
@@ -47,7 +43,6 @@ import {
   projectGroups,
   tabName,
 } from "./workspace-state.mjs";
-import { SafetyPanel } from "./safety";
 import { EnvironmentRestartContext, SafetyChecklistContext, SafetyMessage } from "./safety-message";
 import { networkState, isGuestLocalURL, needsEnvironmentRestart } from "./safety-state.mjs";
 import { needsProxySetup } from "./onboarding-state.mjs";
@@ -60,6 +55,33 @@ import { AppUpdateButton, useAppUpdates } from "./app-updates";
 import "./appearance.css";
 import { stopAndExit } from "./quit";
 import { guestCapability } from "./guest-capabilities.mjs";
+
+// Rarely used or heavy views load on first use (audit UI-3): the terminal
+// and remote display (xterm, noVNC) once the home has painted, the others
+// when opened.
+const lazyNamed = (load, name) => lazy(() => load().then((module) => ({ default: module[name] })));
+const loadViews = () => import("./views");
+const TerminalView = lazyNamed(loadViews, "TerminalView");
+const RemoteView = lazyNamed(loadViews, "RemoteView");
+const SettingsPanel = lazyNamed(() => import("./settings"), "SettingsPanel");
+const TailscalePanel = lazyNamed(() => import("./tailscale"), "TailscalePanel");
+const MacOSAppWindow = lazyNamed(() => import("./macos-claude-window"), "MacOSAppWindow");
+const ClaudeDesktop = lazyNamed(() => import("./claude-desktop"), "ClaudeDesktop");
+const BrowserSettingsPage = lazyNamed(() => import("./browser-settings"), "BrowserSettingsPage");
+const ProjectDialog = lazyNamed(() => import("./project-dialog"), "ProjectDialog");
+const SafetyPanel = lazyNamed(() => import("./safety"), "SafetyPanel");
+const CodexSessionPane = lazyNamed(() => import("./codex-session-pane"), "CodexSessionPane");
+// Fetch the terminal and display code while the workbench is idle, so opening
+// one does not wait for it.
+const preloadViews = () => {
+  const start = () => { void loadViews(); };
+  if (typeof requestIdleCallback === "function") requestIdleCallback(start, { timeout: 2000 });
+  else setTimeout(start, 300);
+};
+const quiet = <div className="client-loading" role="status">正在载入…</div>;
+// The read-only pane of a Codex session is a management page "session:<id>":
+// opening anything else closes it, as for the other pages.
+const sessionPanePrefix = "session:";
 
 function App() {
   const { account } = useAccount();
@@ -85,6 +107,7 @@ function App() {
   }, []);
   const terminalTrigger = useRef(null);
   const appUpdates = useAppUpdates();
+  useEffect(preloadViews, []);
   const [recoveringEditor, setRecoveringEditor] = useState(false);
   const windowVisible = useWindowVisibility();
   const windowVisibleRef = useRef(windowVisible);
@@ -139,7 +162,7 @@ function App() {
   const terminalSessions = useRef(new WeakMap());
   const terminalSession = (tab) => {
     let session = terminalSessions.current.get(tab);
-    if (!session) terminalSessions.current.set(tab, session = { ...tab, id: tab.sessionId });
+    if (!session) terminalSessions.current.set(tab, session = { ...tab, id: tab.sessionId, ...(isCodexTab(tab) && { cli_session_id: undefined }) });
     return session;
   };
   const remote = useRef(),
@@ -167,7 +190,10 @@ function App() {
     busy = Boolean(status?.job?.running),
     showHome = storageRecovery || !desktopOpen && (home || !status?.vm_running || !current);
   const setupProgress = status?.job?.setup_progress && (busy || status.job.error);
-  const cliSessions = useCLISessions(Boolean(status && !busy && !storageRecovery && guestCapability(status, "claude-cli")), windowVisible);
+  const sessionList = useCLISessions(Boolean(status && !busy && !storageRecovery && guestCapability(status, "claude-cli")), windowVisible);
+  const sessionCapabilities = useSessionSnapshot(sessionList, (list) => list.capabilities);
+  const sessionsHeld = useSessionSnapshot(sessionList, (list) => list.held);
+  const sessionPane = managementPage.startsWith(sessionPanePrefix) ? managementPage.slice(sessionPanePrefix.length) : "";
   useEffect(() => {
     if (storageRecovery) {
       setDesktopOpen(false);
@@ -491,7 +517,7 @@ function App() {
   const createTerminal = async (path, kind, loginAccountId) => {
     setTerminalChoice(null);
     const codex = kind === "codex" || kind === "codex-login";
-    const result = await api("/terminals", {
+    const result = await api(kind === "codex" && sessionCapabilities.sessions ? "/terminals?providers=" + SESSION_PROVIDERS : "/terminals", {
       workspace: path, kind,
       ...(loginAccountId && (codex ? { codex_account_id: loginAccountId } : { claude_account_id: loginAccountId })),
     });
@@ -519,9 +545,21 @@ function App() {
     setHome(false);
     setActive(tab.id);
   };
+  const showSessionPane = session => {
+    setTailnetLogin(null);
+    setManagementPage(sessionPanePrefix + session.id);
+    if (session.workspace) setSelectedProject(session.workspace);
+  };
+  // Resolves the error text when the session could not be opened.
   const openSessionTerminal = async session => {
-    if (session.running) return;
-    if (sessionOpenRequest.current?.id === session.id) return;
+    const codex = isCodexSession(session);
+    if (codex) {
+      // Codex rows stay clickable while another device writes: read-only then.
+      const choice = codexSessionAction(session, tabs);
+      if (choice.action === "focus") { void select(choice.tabId); return ""; }
+      if (choice.action === "readonly") { showSessionPane(session); return ""; }
+    } else if (session.running) return "";
+    if (sessionOpenRequest.current?.id === session.id) return "";
     sessionOpenRequest.current?.controller.abort();
     const controller = new AbortController();
     const request = { id: session.id, controller };
@@ -537,11 +575,21 @@ function App() {
       if (!terminal) throw new Error("终端状态已变化，请重新打开会话");
       showTerminal(terminal);
       sessionsChanged();
+      return "";
     } catch (error) {
       if (sessionOpenRequest.current === request && error.code !== "connection_changed") {
-        const message = (controller.signal.aborted ? controller.signal.reason : error).message;
+        const reason = (controller.signal.aborted ? controller.signal.reason : error).message;
+        // The list was older than the owner: show the session read-only.
+        if (codex && error.status === 409 && Object.values(READONLY_REASONS).includes(reason) && !managementPage.startsWith(sessionPanePrefix)) {
+          showSessionPane(session);
+          sessionsChanged();
+          return "";
+        }
+        const message = codex ? "无法打开 Codex 会话：" + reason : reason;
         setSessionOpenError({ id: session.id, message });
+        return message;
       }
+      return "";
     } finally {
       clearTimeout(timer);
       if (sessionOpenRequest.current === request) {
@@ -550,11 +598,12 @@ function App() {
       }
     }
   };
-  const archiveSession = async (session, anchor) => {
-    await confirm({title:"归档这段会话？", body:"归档会关闭关联终端。历史将保留，可从设置中的已归档会话恢复。", confirm:"归档会话", pendingLabel:"正在归档…", anchor,
+  const archiveSession = async (session, anchor, closing = false) => {
+    await confirm({...archiveCopy(session, { closing }), pendingLabel:"正在归档…", anchor,
       submit: async () => {
         await api("/cli/sessions/" + session.id + "/archive", {});
         setTabs(list => list.filter(tab => tab.cli_session_id !== session.id));
+        if (managementPage === sessionPanePrefix + session.id) setManagementPage("");
         sessionsChanged();
         refreshStatus.current?.();
       },
@@ -570,7 +619,7 @@ function App() {
     newTerminal(contentWorkspace, event?.currentTarget?.tagName === "BUTTON"
       ? event.currentTarget : terminalTrigger.current);
   const terminalMenuAt = (location) => terminalChoice?.anchor?.dataset.terminalLocation === location && (
-    <TerminalMenu choice={terminalChoice} busy={busy} codex={codexTerminalSupported(system)}
+    <TerminalMenu choice={terminalChoice} busy={busy} codex={codexTerminalSupported(system)} codexLabel={codexMenuLabel(sessionCapabilities)}
       onClose={() => setTerminalChoice(null)}
       onSelect={(kind) => createTerminal(terminalChoice.path, kind).catch((e) => notify(e.message))} />
   );
@@ -606,7 +655,9 @@ function App() {
   };
   const closeTab = async (tab, anchor) => {
     if (macGuest && tab.native_window) { closeBrowser(); return; }
-    if (tab.cli_session_id) return archiveSession({id:tab.cli_session_id, title:tab.title}, anchor);
+    // A live bound Codex tab archives on close; one whose Codex has quit only goes.
+    if (tab.cli_session_id && !(isCodexTab(tab) && tab.closed)) return archiveSession({id:tab.cli_session_id, title:tab.title,
+      ...(isCodexTab(tab) && { provider:"codex", owner:"desktop" })}, anchor, isCodexTab(tab));
     if (tab.kind === "terminal") {
       if (
         !tab.closed &&
@@ -666,7 +717,8 @@ function App() {
       if (internal) { await openBrowserSettings(internal[1] || "general"); return; }
       const url = normalizeURL(address);
       if (network.mode !== "open" && !isGuestLocalURL(url)) {
-        setSafetyOpen(true);
+        if (network.explanation) window.dispatchEvent(new Event("cage-network-explain"));
+        else setSafetyOpen(true);
         notify("请先完成关键检查，再访问外部网站。");
         return;
       }
@@ -851,7 +903,10 @@ function App() {
         if (live)
           timer = setTimeout(
             poll,
-            jobRunning ? 1200 : windowVisibleRef.current ? 5000 : 15000,
+            // While a job runs (start, stop, checks) the page follows it closely:
+            // the status handler reads local state only (container state and
+            // Windows components are cached server-side), audit LC-1.
+            jobRunning ? 400 : windowVisibleRef.current ? 5000 : 15000,
           );
       }
     };
@@ -1260,8 +1315,10 @@ function App() {
   }
   const claudeLabels = new Map(claudeProfiles.accounts?.map((account) => [account.id, account.label || account.email]));
   const claudeNumbers = new Map(claudeProfiles.accounts?.map((account, index) => [account.id, index + 1]));
-  const numberedSessions = cliSessions.sessions.map((session) => ({ ...session,
-    claudeAccountNumber: claudeNumbers.get(session.account_id) }));
+  // Rows come from the list store inside the views that show them (SessionListView).
+  const numberSessions = (sessions) => sessions.map((session) => isCodexSession(session)
+    ? { ...session, codexAccountLabel: codexSessionAccountLabel(session, codexProfiles.accounts) }
+    : { ...session, claudeAccountNumber: claudeNumbers.get(session.account_id) });
   const terminalAccountName = (tab) => claudeLabels.get(tab.claude_account_id) ||
     (tab.terminalKind === "claude-login" ? "新账号登录" : tab.claude_account_id ? "Claude 账号" : "");
   const displayTabs = orderedTabs(tabs, metadata).map((tab) =>
@@ -1370,11 +1427,18 @@ function App() {
     const detail = tab?.terminalKind === "claude-login" ? `登录 · ${account || "新账号"}`
       : account ? `Claude · ${account}${tab.claude_account_source === "default" ? "（启动时账号）" : ""}` : codexTerminalDetail(tab, codexProfiles.accounts);
     const location = split && tab ? `heading-${tab.id}` : "heading";
+    // A bound Codex terminal: its account and state, stop, rename, pin and reopen.
+    const codexBound = isCodexTab(tab) && tab.cli_session_id;
     return <TerminalHeader tab={tab} project={projectName(path, groups)} metadata={metadata}
-      contentWorkspace={path} terminalDetail={detail} terminalDetailHint={tab?.claude_account_source === "default"
+      contentWorkspace={path} terminalDetail={codexBound ? <CodexTerminalDetail store={sessionList} tab={tab}
+        label={codexTerminalLabel(tab, codexProfiles.accounts)} /> : detail} terminalDetailHint={tab?.claude_account_source === "default"
         ? "此终端按启动时的普通终端登录标记。若普通终端已换号，请重新打开工作会话确认身份。" : detail}
       busy={busy} onHome={() => setHome(true)}
-      sidebarButton={sidebarButton(paneSide(tab?.id))} exitButton={expandButton(tab)}
+      sidebarButton={sidebarButton(paneSide(tab?.id))} exitButton={codexBound ? <>
+        <CodexTerminalActions store={sessionList} tab={tab} pinned={Boolean(metadata[tab.id]?.pinned)} busy={busy}
+          onPin={() => pinTab(tab.id)} onRename={() => renameTab(tab)}
+          onReopen={() => openSessionTerminal({ id: tab.cli_session_id, provider: "codex", workspace: tab.workspace, title: tab.title })} />
+        {expandButton(tab)}</> : expandButton(tab)}
       location={location} triggerRef={!tab || tab.id === active ? terminalTrigger : undefined}
       menu={terminalMenuAt(location)} onClose={() => closeTab(tab)} />;
   };
@@ -1516,7 +1580,7 @@ function App() {
         inert={settingsOpen || undefined}
       >
         {!sidebarCollapsed && (
-          <WorkspaceSidebar
+          <SessionListView store={sessionList}>{(list) => <WorkspaceSidebar
             onClaudeAccounts={() => setManagementPage("claude-accounts")}
             claudeAccountsOpen={managementPage === "claude-accounts"}
             onCodexAccounts={() => setManagementPage("codex-accounts")}
@@ -1528,10 +1592,10 @@ function App() {
             projects={projects}
             projectGroups={groups}
             tabs={displayTabs}
-            sessions={numberedSessions}
-            sessionError={cliSessions.error}
-            sessionRefreshing={cliSessions.loading}
-            onSessionRefresh={cliSessions.refresh}
+            sessions={numberSessions(list.sessions)}
+            sessionError={list.error}
+            sessionRefreshing={list.loading}
+            onSessionRefresh={() => sessionList.refresh({ user: true })}
             onProjectRefresh={projectFilesCached ? refreshProjectFiles : undefined}
             projectRefreshing={projectRefreshing}
             onSessionOpen={openSessionTerminal}
@@ -1541,7 +1605,7 @@ function App() {
             onSessionPin={pinSession}
             onSessionRename={session => setRename({id:session.id, title:session.title, session:true})}
             saved={metadata}
-            active={managementPage ? "" : active}
+            active={sessionPane ? sessionPanePrefix + sessionPane : managementPage ? "" : active}
             home={!managementPage && showHome}
             busy={busy || storageRecovery}
             ready={status.ready}
@@ -1580,7 +1644,7 @@ function App() {
             onCollapse={() =>
               persist("cage-sidebar-collapsed", true, setSidebarCollapsed)
             }
-          />
+          />}</SessionListView>
         )}
         <div className="workbench-main">
           {!managementPage && showHome && terminalHeader(null)}
@@ -1607,13 +1671,22 @@ function App() {
               </button>
             </div>
           )}
-          {managementPage && (
+          {sessionPane && (
+            <Suspense fallback={<main className="management-page" aria-busy="true"><div className="client-loading" role="status">正在打开会话…</div></main>}>
+              <CodexSessionPane id={sessionPane} store={sessionList} held={sessionsHeld} accounts={codexProfiles.accounts}
+                projectOf={(path) => projectName(path, groups)} titleId={managementPage + "-title"} sidebarButton={sidebarButton()}
+                busy={busy || Boolean(storageRecovery)} onContinue={openSessionTerminal} onArchive={(session, anchor) => archiveSession(session, anchor)}
+                onOpenWeb={(url) => openBrowserPage(url, false)} />
+            </Suspense>
+          )}
+          {managementPage && !sessionPane && (
             <main className="management-page" aria-labelledby={managementPage + "-title"}>
               <header className="chrome management-header">
                 {sidebarButton()}
                 <h1 id={managementPage + "-title"} tabIndex={-1}>{managementPage === "tailscale" ? "Tailscale" : managementPage === "codex-accounts" ? "Codex 账号管理" : "Claude 账号管理"}</h1>
               </header>
               <div className="management-content">
+                <Suspense fallback={quiet}>
                 {managementPage === "tailscale" ? <TailscalePanel status={status}
                   onOpenBrowser={async url => Boolean(await openBrowserPage(url, false))}
                   onOpenLogin={async (value) => {
@@ -1630,12 +1703,14 @@ function App() {
                   login={(id) => createTerminal(workspace, "codex-login", id)} /> : <ClaudeAccountsPanel store={claudeProfiles} tabs={tabs} onConfirm={confirm}
                   running={status.vm_running} environmentBusy={busy || storageRecovery}
                   login={(id) => createTerminal(workspace, "claude-login", id)} />}
+                </Suspense>
               </div>
             </main>
           )}
           <main className={`workspace ${split ? "workspace-split" : ""}`} ref={workspaceBox} hidden={Boolean(managementPage)}
             style={{ "--split-left": `${100 * (dualBrowser && nativeSplit?.fraction || 0.5)}%` }}>
             {dropSide && <div aria-hidden="true" className={`split-drop split-${dropSide}`}>{dropSide === "left" ? "放到左侧" : "放到右侧"}</div>}
+            <Suspense fallback={desktopOpen ? quiet : null}>
             {!storageRecovery && desktopOpen && macGuest && <MacOSAppWindow key="claude-desktop" uploads={desktopFiles.uploads} keyboard={status.keyboard} remoteRef={remote}
               onStatus={notify} onFallback={(text, message) => setTransfer({ text, message })} visible={!settingsOpen && !managementPage} onConfirm={confirm}
               sidebarCollapsed={sidebarCollapsed} onExpand={() => persist("cage-sidebar-collapsed", false, setSidebarCollapsed)} />}
@@ -1648,6 +1723,7 @@ function App() {
               sidebarCollapsed={sidebarCollapsed}
               onExpand={() => persist("cage-sidebar-collapsed", false, setSidebarCollapsed)}
             />}
+            </Suspense>
             {status.environment_update_required && !busy && (
               <div className="environment-update-banner" role="status">
                 <span>{status.environment_update_error || "环境组件需要更新。请先保存编辑器中的文件。"}</span>
@@ -1658,10 +1734,12 @@ function App() {
               <>
                 {macGuest && !desktopOpen && !showHome && webPanes.length > 0 && (
                   <section className={`pane-lane browser-lane split-${paneSide(webPanes[0].id)}`}>
+                    <Suspense fallback={null}>
                     {status.ready && <MacOSAppWindow key="chrome" browser onOpenPage={openBrowserPage} visible={!settingsOpen} uploads={desktopFiles.uploads}
                       keyboard={status.keyboard} remoteRef={remote} onStatus={notify}
                       sidebarCollapsed={sidebarCollapsed} onExpand={() => persist("cage-sidebar-collapsed", false, setSidebarCollapsed)}
                       onFallback={(text, message) => setTransfer({ text, message })} />}
+                    </Suspense>
                   </section>
                 )}
                 {!macGuest && !desktopOpen && !showHome && webPanes.length > 0 && (
@@ -1679,6 +1757,7 @@ function App() {
                     <div className="pane-body" onPointerDownCapture={() => {
                       if (!dualBrowser && liveBrowser?.id !== active) focusHeader(liveBrowser);
                     }}>
+                      <Suspense fallback={null}>
                       {status.ready && liveBrowser?.kind === "browser-settings" && <BrowserSettingsPage
                         key={`${liveBrowser.id}:${browserSettingsRevision}`} tab={liveBrowser} tabs={tabs}
                         currentHome={settings.browser_home_url} layout={browserTabLayout}
@@ -1692,6 +1771,7 @@ function App() {
                         guestPlatform={status.guest_system} systemClipboard={browser.capabilities?.systemClipboard !== false}
                         tabId={liveBrowser?.id} onStatus={notify}
                         onFallback={(text, message) => setTransfer({ text, message })} />}
+                      </Suspense>
                       {!status.ready && <div className="view-overlay">
                         <RefreshCw /><h3>浏览器连接暂时不可用</h3>
                         <p>环境和终端仍可运行；恢复浏览器不会停止现有终端。</p>
@@ -1708,6 +1788,7 @@ function App() {
                     onPointerDownCapture={() => focusHeader(tab)} onFocusCapture={() => focusHeader(tab)}>
                     {visible && terminalHeader(tab)}
                     <div className="pane-body">
+                      <Suspense fallback={null}>
                       <TerminalView
                         session={terminalSession(tab)}
                         onLoginTab={({ id }) => showBrowserResult({ id, kind: "web", login: true, incognito: true, title: "账号授权" })}
@@ -1721,13 +1802,14 @@ function App() {
                         onStatus={notify}
                         onAccountChanged={view => { if (view?.desktop_terminal_id && view.desktop_terminal_id !== tab.sessionId) void openSessionTerminal({id:tab.cli_session_id}); }}
                       />
+                      </Suspense>
                     </div>
                   </section>;
                 })}
               </>
             )}
             {showHome && (
-              <WorkbenchHome
+              <SessionListView store={sessionList}>{(list) => <WorkbenchHome
                 status={status}
                 storageRecovery={storageRecovery}
                 setupProgress={setupProgress}
@@ -1748,9 +1830,13 @@ function App() {
                 contentWorkspace={contentWorkspace}
                 groups={groups}
                 projects={projects}
-                sessions={numberedSessions}
+                sessions={numberSessions(list.sessions)}
                 tabs={tabs}
                 openingSession={openingSession}
+                sessionOpenError={sessionOpenError}
+                canRecheck={Boolean(status.ready && status.safety?.gate && !busy)}
+                onRechecked={() => refreshStatus.current?.()}
+                onNetworkDetails={() => setSafetyOpen(true)}
                 onSessionOpen={openSessionTerminal}
                 onSettings={openSettings}
                 onDetails={() => setDetails(true)}
@@ -1777,18 +1863,14 @@ function App() {
                 onEditor={openEditor}
                 onOpenProject={(path) => setProjectDialog({ path })}
                 terminalMenuAt={terminalMenuAt}
-              />
+              />}</SessionListView>
             )}
           </main>
           <footer className="status-bar">
             {sidebarCollapsed && <AppUpdateButton updates={appUpdates} />}
-            <button onClick={() => setSafetyOpen(true)} title="网络与隔离检查">
-              <EnvironmentShield
-                size={14}
-                healthy={status.ready && network.mode === "open"}
-              />
-              <span>{running ? network.label : "网络检查"}</span>
-            </button>
+            <NetworkStatusButton network={network} running={running} healthy={status.ready && network.mode === "open"}
+              canRecheck={Boolean(status.ready && status.safety?.gate && !busy)} onRechecked={() => refreshStatus.current?.()}
+              onDetails={() => setSafetyOpen(true)} />
             <span className="status-divider" />
             <button onClick={() => openSettings("network")}>
               <MapPin size={12} />
@@ -1862,6 +1944,7 @@ function App() {
         </div>
       </div>
       <BrowserUploads requests={status.ready ? browser.uploads : []} onStatus={notify} />
+      <Suspense fallback={null}>
       {settingsOpen && (
         <SettingsPanel
           current={settings}
@@ -1887,6 +1970,7 @@ function App() {
           }}
         />
       )}
+      </Suspense>
       {rename && (
         <Modal
           title="重命名标签"
@@ -1994,6 +2078,7 @@ function App() {
           </div>
         </Modal>
       )}
+      <Suspense fallback={null}>
       {safetyOpen && (
         <SafetyPanel
           status={
@@ -2014,6 +2099,7 @@ function App() {
           onConfirm={confirm}
         />
       )}
+      </Suspense>
       {toast && (
         <div className="toast" role="status" key={toast}>
           <EnvironmentRestartContext.Provider value={null}>

@@ -5,6 +5,13 @@
 }
 .sidebar-session > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .sidebar-session > svg { flex: none; color: var(--muted); }
+/* A Codex session another device or process writes (workspace-tabs.jsx). */
+.sidebar-tab .session-owner-chip { flex: none; margin-left: auto; min-height: 1.2857rem; padding: 0 7px; font-weight: 500; }
+.sidebar-tab .tab-pin + .session-owner-chip,
+.sidebar-tab .session-owner-chip + .session-activity { margin-left: 0; }
+/* Home rows of Codex sessions (workbench-home.jsx). */
+.home-recent .home-owner { display: inline-flex; flex: none; align-items: center; gap: 8px; margin-right: 6px; }
+.home-recent .home-row-error { margin: -2px 16px 10px 44px; color: var(--error); font-size: var(--fs-caption); line-height: 1.5; overflow-wrap: anywhere; }
 .sidebar-session-open-error { margin: 2px 8px 10px; color: var(--muted); font-size: .8571rem; line-height: 1.5; overflow-wrap: anywhere; }
 .settings-content.settings-content--archives { padding: 32px clamp(24px, 4vw, 64px); }
 .archived-sessions { display: grid; gap: 28px; min-width: 0; width: 100%; max-width: 1120px; margin-inline: auto; }

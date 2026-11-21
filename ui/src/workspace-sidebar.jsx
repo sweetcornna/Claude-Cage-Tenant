@@ -23,7 +23,8 @@ import { BrandMark } from "./brand";
 import claudeLogo from "./claude-logo.svg";
 import { projectName } from "./workspace-state.mjs";
 import { WorkspaceTabs } from "./workspace-tabs";
-import { projectSessionRows, sessionKey } from "./session-order.mjs";
+import { sessionKey } from "./session-order.mjs";
+import { mixedSessionRows } from "./session-provider.mjs";
 import { AccountMenu } from "./account";
 import { useSSHNavigation } from "./remote-hosts";
 import { GuestSystemIcon } from "./guest-system-icon";
@@ -217,8 +218,10 @@ export function WorkspaceSidebar({
           const group = projectGroups.find(group => group.workspace === path);
           const folders = group?.folders || [path];
           const project = projectName(path, projectGroups);
-          const rows = projectSessionRows(tabs.filter(tab => tab.kind === "terminal" && folders.includes(tab.workspace)),
-            sessions.filter(session => folders.includes(session.workspace)), saved, saved.sessionOrder?.[path], sessionBaseline.current);
+          const rows = mixedSessionRows(tabs.filter(tab => tab.kind === "terminal" && folders.includes(tab.workspace)),
+            sessions.filter(session => folders.includes(session.workspace)), saved, saved.sessionOrder?.[path], sessionBaseline.current)
+            // A Codex session's account reads like its open tab's: "Codex · 工作".
+            .map(row => row.historySession?.codexAccountLabel ? { ...row, claudeLabel: "Codex · " + row.historySession.codexAccountLabel } : row);
           const rowMetadata = { ...saved };
           for (const row of rows) rowMetadata[row.id] = { ...saved[row.id], pinned: row.sessionPinned };
           const expanded = !collapsed[path];
