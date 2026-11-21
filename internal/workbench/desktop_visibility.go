@@ -83,7 +83,7 @@ func displayRetryDelay(n int) time.Duration {
 	return min(time.Duration(n)*time.Second, 5*time.Second)
 }
 
-const displayRetryLimit = 6
+const displayRetryLimit = 8
 
 // settle brings the guest in line with demand in the background, so a viewer
 // never waits for the guest and a failed change never refuses it. Calls
