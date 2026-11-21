@@ -348,9 +348,21 @@ func (s *Server) createTerminalLocked(input terminalRequest) (*terminalSession, 
 	// It always runs from the guest home, without loading project settings.
 	workspace := s.workspace()
 	var err error
+	var selection claudeSelection
+	selected := false // selection was made together with the project connection
 	if input.Kind != "claude-login" {
 		if s.macOSLegacyWorkspace(sharedRecord) != "" {
 			workspace, err = s.projectWorkspace(sharedRecord.Workspace)
+		} else if managed && (sharedRecord == nil || !sharedRecord.Terminal) {
+			// Opening the project's shares and choosing an account both wait on
+			// guest reads, and neither needs the other's result.
+			var connect func() error
+			if workspace, connect, err = s.prepareProject(input.Workspace, false); err == nil {
+				selection, err = connectAndSelect(connect, func() (claudeSelection, error) {
+					return s.selectTerminalClaudeAccount(command, input.ClaudeAccountID, false, workspace)
+				})
+				selected = true
+			}
 		} else {
 			workspace, err = s.connectProject(input.Workspace, false)
 		}
@@ -375,13 +387,12 @@ func (s *Server) createTerminalLocked(input terminalRequest) (*terminalSession, 
 			script = "exec /usr/local/libexec/cage-macos-terminal " + shellescape.Quote(macOSProjectPath(s.macosGuest.User, workspace))
 		}
 	}
-	var selection claudeSelection
 	var finished func()
 	if managed {
 		login := input.Kind == "claude-login"
 		if sharedRecord != nil && sharedRecord.Terminal {
 			selection = sharedRecord.Account
-		} else {
+		} else if !selected {
 			selection, err = s.selectTerminalClaudeAccount(command, input.ClaudeAccountID, login, workspace)
 		}
 		if err != nil {
@@ -464,6 +475,20 @@ func (s *Server) createTerminalLocked(input terminalRequest) (*terminalSession, 
 	return session, err
 }
 
+// connectAndSelect runs the project connection and the account selection at
+// the same time and returns when both are done, so the caller still holds the
+// environment lock until neither is running. A project error wins over a
+// selection error, as it did when they ran one after the other.
+func connectAndSelect(connect func() error, selectAccount func() (claudeSelection, error)) (claudeSelection, error) {
+	connected := make(chan error, 1)
+	go func() { connected <- connect() }()
+	selection, selectErr := selectAccount()
+	if err := <-connected; err != nil {
+		return claudeSelection{}, err
+	}
+	return selection, selectErr
+}
+
 func validClaudeGuestID(id string) bool { return id == "default" || validClaudeID(id) }
 
 func (s *Server) selectTerminalClaudeAccount(command, requested string, login bool, workspace string) (claudeSelection, error) {
@@ -481,7 +506,9 @@ func (s *Server) readClaudeGuestSnapshot(ctx context.Context, id string) (claude
 	if s.windowsGuest != nil {
 		return s.readWindowsClaudeAccount(ctx, "snapshot", id, "")
 	}
-	return s.readClaudeGuestReport(ctx, id, claudeSnapshotCommand(id))
+	// A snapshot only reads, and the accounts pages and every launch ask for
+	// it, so it shares the guest's control connection.
+	return s.readClaudeGuestReportVia(ctx, id, claudeSnapshotCommand(id), s.guestQuick)
 }
 
 func (s *Server) readClaudeGuestUsage(ctx context.Context, id, subject string) (claudeGuestSnapshot, error) {
@@ -494,12 +521,19 @@ func (s *Server) readClaudeGuestUsage(ctx context.Context, id, subject string) (
 	return s.readClaudeGuestReport(ctx, id, claudeGuestReportCommand(id, subject))
 }
 
+// readClaudeGuestReport runs command over a connection of its own. Usage and
+// login recovery use it: they can run long or change the account, which a
+// shared connection is not for.
 func (s *Server) readClaudeGuestReport(ctx context.Context, id, command string) (claudeGuestSnapshot, error) {
+	return s.readClaudeGuestReportVia(ctx, id, command, s.guest)
+}
+
+func (s *Server) readClaudeGuestReportVia(ctx context.Context, id, command string, run func(context.Context, string) ([]byte, error)) (claudeGuestSnapshot, error) {
 	var snapshot claudeGuestSnapshot
 	if !validClaudeGuestID(id) {
 		return snapshot, errors.New("Claude 账号 ID 无效")
 	}
-	data, err := s.guest(ctx, command)
+	data, err := run(ctx, command)
 	if err != nil || json.Unmarshal(data, &snapshot) != nil {
 		return snapshot, errors.New("无法读取账号状态，请确认环境已启动并同步环境组件")
 	}
