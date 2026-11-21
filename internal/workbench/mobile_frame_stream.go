@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -181,8 +182,27 @@ type phoneFrame struct {
 	unchanged bool
 }
 
-// parsePhoneFrame names a frame by the guest's tag, or by a hash of the whole
-// reply when the guest has none (the Linux, Windows and macOS desktops).
+// phoneFrameDigest names a frame by its fields in sorted key order, so a guest
+// that serializes the same frame with another key order or spacing (a Swift
+// dictionary, for one) still gets the same name.
+func phoneFrameDigest(fields map[string]json.RawMessage) string {
+	names := make([]string, 0, len(fields))
+	for name := range fields {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	sum := sha256.New()
+	for _, name := range names {
+		sum.Write([]byte(name))
+		sum.Write([]byte{0})
+		sum.Write(bytes.TrimSpace(fields[name]))
+		sum.Write([]byte{0})
+	}
+	return hex.EncodeToString(sum.Sum(nil)[:16])
+}
+
+// parsePhoneFrame names a frame by the guest's tag, or by a digest of its
+// fields when the guest has none (the Linux, Windows and macOS desktops).
 func parsePhoneFrame(body []byte, after string) (phoneFrame, bool) {
 	var f phoneFrame
 	if json.Unmarshal(body, &f.fields) != nil || f.fields == nil {
@@ -196,8 +216,7 @@ func parsePhoneFrame(body []byte, after string) (phoneFrame, bool) {
 	case f.unchanged:
 		f.tag = after
 	default:
-		sum := sha256.Sum256(body)
-		f.tag = hex.EncodeToString(sum[:16])
+		f.tag = phoneFrameDigest(f.fields)
 	}
 	return f, true
 }

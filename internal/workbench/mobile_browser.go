@@ -338,7 +338,9 @@ func (s *Server) phoneSurfaceExecute(call *phoneCall, w http.ResponseWriter, r *
 	}
 	// A frame read may rely on a verdict up to a second old: what it guards is
 	// starting a capture. Pixels are only released after a fresh check below.
-	if !s.phoneNetwork(r.Context(), &state.network, op == "frame") {
+	// A read that first has to send the guest its deferred open acts on the
+	// guest, so it gets the fresh check like an action.
+	if !s.phoneNetwork(r.Context(), &state.network, op == "frame" && b.startJob == "" && b.openInput.ID == "") {
 		s.retirePhoneSurface(surface, b)
 		http.Error(w, "请在电脑启动 Super Cage，并确保网络检查已放行。", 409)
 		return

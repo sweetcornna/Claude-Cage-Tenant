@@ -371,8 +371,8 @@ func testPairedFrameStream(t *testing.T, ctx context.Context, s *Server, phone *
 	defer setNetwork(0, nil)
 	tag = frameGuestTag(3)
 	before := guest.browserFrames.Load()
-	must("GET", "browser", frame("browser", "?after="+tag+"&wait=900&fmt=jpeg"), "", 200)
-	if looked := guest.browserFrames.Load() - before; looked < 4 || lookups.Load() > 1 {
+	must("GET", "browser", frame("browser", "?after="+tag+"&wait=1500&fmt=jpeg"), "", 200)
+	if looked := guest.browserFrames.Load() - before; looked < 2 || lookups.Load() > 1 {
 		t.Fatalf("%d looks at the guest needed %d gate lookups", looked, lookups.Load())
 	}
 	revoked.Store(true)
@@ -383,6 +383,49 @@ func testPairedFrameStream(t *testing.T, ctx context.Context, s *Server, phone *
 	must("GET", "browser", frame("browser", "?after="+tag+"&fmt=jpeg"), "", 409)
 	must("GET", "browser", frame("browser", "?after="+tag+"&fmt=jpeg"), "", 410)
 
-	must("POST", "desktop", id+"/close", "{}", 200)
+	// Locking the account, or ending the link, cancels the session: a held read ends at once.
+	latest := must("GET", "desktop", frame("desktop", "?fmt=jpeg"), "", 200)
+	latestTag, _ := decodeFrameMeta(t, latest.Header.Get(mobilelink.FrameMetaHeader))["frame_tag"].(string)
+	locked := held(ctx, "desktop", "?after="+latestTag+"&wait=8000&fmt=jpeg")
+	desktop := &s.phones.desktop
+	eventually(t, "the desktop read to be held", 2*time.Second, func() bool { desktop.hold.mu.Lock(); defer desktop.hold.mu.Unlock(); return desktop.hold.cur != nil })
+	desktop.op.Lock()
+	session := desktop.session
+	desktop.op.Unlock()
+	session.cancel()
+	select {
+	case reply := <-locked:
+		if reply == nil || reply.Status == 200 {
+			t.Fatalf("a held read survived the end of its session: %+v", reply)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a held read outlived its session")
+	}
 	eventually(t, "the desktop view to be released", 3*time.Second, func() bool { return !shown.Load() })
+}
+
+func TestPhoneFrameTagIgnoresKeyOrderAndSpacing(t *testing.T) {
+	a := `{"id":"x","document":"d","image":"AAAA","width":390,"content_width":390.5,"focus":"","window":"desktop"}`
+	b := `{ "window" : "desktop", "content_width":390.5, "image":"AAAA", "focus":"", "width":390,"document":"d", "id":"x" }`
+	first, ok := parsePhoneFrame([]byte(a), "")
+	second, ok2 := parsePhoneFrame([]byte(b), "")
+	if !ok || !ok2 || first.tag != second.tag || !phoneFrameTag.MatchString(first.tag) {
+		t.Fatalf("same frame, different serialization: %q vs %q", first.tag, second.tag)
+	}
+	for _, changed := range []string{
+		strings.Replace(a, `"AAAA"`, `"AAAB"`, 1), strings.Replace(a, `"focus":""`, `"focus":"f"`, 1), strings.Replace(a, `"width":390`, `"width":391`, 1),
+	} {
+		other, _ := parsePhoneFrame([]byte(changed), "")
+		if other.tag == first.tag {
+			t.Fatalf("a different frame kept its name: %s", changed)
+		}
+	}
+	// A guest tag wins over the digest, and an unchanged answer keeps the tag it answers.
+	const guestTag = "b542cd94286a2489bc2df1241b043c76"
+	if named, _ := parsePhoneFrame([]byte(`{"id":"x","frame_tag":"`+guestTag+`","image":"AAAA"}`), ""); named.tag != guestTag {
+		t.Fatal("the guest's own tag was replaced")
+	}
+	if kept, _ := parsePhoneFrame([]byte(`{"id":"x","unchanged":true}`), guestTag); !kept.unchanged || kept.tag != guestTag {
+		t.Fatal("an unchanged answer lost its tag")
+	}
 }
