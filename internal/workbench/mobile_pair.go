@@ -49,7 +49,7 @@ func (s *Server) phoneFile() string { return filepath.Join(s.profile, "mobile-pa
 // The transport proof grants only phone operations and is revoked with the
 // active room. It never grants native desktop administration to a session cookie.
 func (s *Server) pairedPhoneRoom(r *http.Request) context.Context {
-	if r.URL.Path != "/api/mobile/device" && !strings.HasPrefix(r.URL.Path, "/api/mobile/cli/") && !strings.HasPrefix(r.URL.Path, "/api/mobile/browser/") && !strings.HasPrefix(r.URL.Path, "/api/mobile/desktop/") {
+	if !phoneRoomRoute(r.URL.Path) {
 		return nil
 	}
 	s.phones.mu.Lock()
@@ -58,6 +58,20 @@ func (s *Server) pairedPhoneRoom(r *http.Request) context.Context {
 		return nil
 	}
 	return s.phones.roomCtx
+}
+
+// phoneRoomRoute is a route a paired phone may use through its room.
+func phoneRoomRoute(path string) bool {
+	switch path {
+	case "/api/mobile/device", "/api/mobile/environment", "/api/mobile/terminals":
+		return true
+	}
+	for _, prefix := range []string{"/api/mobile/cli/", "/api/mobile/browser/", "/api/mobile/desktop/", "/api/mobile/environment/", "/api/mobile/terminals/", "/api/mobile/files/"} {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) restorePhone() error {

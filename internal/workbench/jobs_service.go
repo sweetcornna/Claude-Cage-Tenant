@@ -27,7 +27,7 @@ func (s *Server) submitJob(kind string, run func() error) (Job, error) {
 	}
 	intentFailed := false
 	job, err := s.jobs.submit(&s.op, kind, s.safety.pauseVersion, func() error {
-		if kind == "safety" || (s.macosGuest == nil && (kind == "start" || kind == "restore")) {
+		if kind == "safety" || (s.macosGuest == nil && (kind == "start" || kind == "restart" || kind == "restore")) {
 			if err := s.saveNetworkIntentLocked(false); err != nil {
 				intentFailed = true
 				return err

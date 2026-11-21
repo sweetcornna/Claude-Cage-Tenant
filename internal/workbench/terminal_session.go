@@ -36,6 +36,10 @@ type terminalSession struct {
 	file                  terminalPTY
 	exitCode              int
 	history               []byte
+	written               uint64        // bytes ever appended to history
+	changed               chan struct{} // closed and replaced on output and exit
+	ended                 bool          // exitCode is final
+	sequence              int
 	closed                bool
 	clients               map[chan []byte]bool
 	done                  chan struct{}
@@ -52,7 +56,7 @@ func (t *terminalSession) ownsConversation() bool {
 }
 
 func newTerminalSession(file terminalPTY) *terminalSession {
-	return &terminalSession{file: file, exitCode: -1, clients: map[chan []byte]bool{}, done: make(chan struct{}), inputs: make(chan string, 8), stopping: make(chan struct{})}
+	return &terminalSession{file: file, exitCode: -1, clients: map[chan []byte]bool{}, done: make(chan struct{}), inputs: make(chan string, 8), stopping: make(chan struct{}), changed: make(chan struct{})}
 }
 
 // exitStatus is the process's exit code after the session ends; -1 while it
@@ -225,6 +229,8 @@ func (t *terminalSession) run() {
 	}
 	t.mu.Lock()
 	t.exitCode = terminalExitCode(waitErr)
+	t.ended = true
+	t.notifyLocked()
 	for channel := range t.clients {
 		close(channel)
 		delete(t.clients, channel)
@@ -242,9 +248,11 @@ func (t *terminalSession) read() {
 			t.mu.Lock()
 			if t.kind != "claude-login" {
 				t.history = append(t.history, chunk...)
+				t.written += uint64(len(chunk))
 				if len(t.history) > 512<<10 {
 					t.history = t.history[len(t.history)-(512<<10):]
 				}
+				t.notifyLocked()
 			}
 			for channel := range t.clients {
 				select {
@@ -260,4 +268,50 @@ func (t *terminalSession) read() {
 			break
 		}
 	}
+}
+
+// notifyLocked wakes every phone reader waiting for output or the exit.
+func (t *terminalSession) notifyLocked() {
+	if t.changed != nil {
+		close(t.changed)
+	}
+	t.changed = make(chan struct{})
+}
+
+// terminalOutput is the scrollback after a byte offset of the whole output.
+type terminalOutput struct {
+	Data     []byte
+	Next     uint64
+	Reset    bool
+	Closed   bool
+	ExitCode *int
+	changed  <-chan struct{}
+}
+
+// outputAfter returns at most limit kept bytes after the absolute offset.
+// An offset outside the kept scrollback restarts from its oldest byte.
+func (t *terminalSession) outputAfter(after uint64, limit int) terminalOutput {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.changed == nil {
+		t.changed = make(chan struct{})
+	}
+	oldest := t.written - uint64(len(t.history))
+	out := terminalOutput{changed: t.changed}
+	if after < oldest || after > t.written {
+		after, out.Reset = oldest, true
+	}
+	start := int(after - oldest)
+	end := min(len(t.history), start+limit)
+	out.Data = make([]byte, end-start)
+	copy(out.Data, t.history[start:end])
+	out.Next = after + uint64(end-start)
+	if t.ended && out.Next == t.written {
+		out.Closed = true
+		if t.exitCode >= 0 {
+			code := t.exitCode
+			out.ExitCode = &code
+		}
+	}
+	return out
 }

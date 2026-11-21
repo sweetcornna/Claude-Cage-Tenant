@@ -19,6 +19,15 @@ func (s *Server) newTerminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session, err := s.createTerminal(input)
+	if err != nil {
+		terminalFailure(w, err)
+		return
+	}
+	jsonReply(w, session.summary())
+}
+
+// terminalFailure maps a terminal admission error for the desktop and phone.
+func terminalFailure(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, errTerminalsClosed):
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -26,26 +35,31 @@ func (s *Server) newTerminal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusConflict)
 	case errors.Is(err, errTerminalStart):
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-	case err != nil:
-		requestError(w, err)
+	case errors.Is(err, errMobileLocked):
+		http.Error(w, err.Error(), http.StatusLocked)
 	default:
-		jsonReply(w, session.summary())
+		requestError(w, err)
 	}
 }
 
 func (s *Server) closeTerminal(w http.ResponseWriter, r *http.Request) {
-	if terminal := s.terminals.get(r.PathValue("id")); terminal != nil {
-		if id, _ := terminal.summary()["cli_session_id"].(string); id != "" {
-			if err := s.setSessionArchived(id, true, nil); err != nil {
-				requestError(w, err)
-				return
-			}
-			jsonReply(w, map[string]bool{"ok": true})
-			return
+	if err := s.closeTerminalID(r.PathValue("id")); err != nil {
+		requestError(w, err)
+		return
+	}
+	jsonReply(w, map[string]bool{"ok": true})
+}
+
+// A terminal sharing a Claude Code session is archived with its session;
+// any other terminal ends and is removed.
+func (s *Server) closeTerminalID(id string) error {
+	if terminal := s.terminals.get(id); terminal != nil {
+		if shared, _ := terminal.summary()["cli_session_id"].(string); shared != "" {
+			return s.setSessionArchived(shared, true, nil)
 		}
 	}
-	s.terminals.remove(r.PathValue("id"))
-	jsonReply(w, map[string]bool{"ok": true})
+	s.terminals.remove(id)
+	return nil
 }
 
 func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
@@ -130,11 +144,15 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case "resize":
-			if input.Cols > 1 && input.Cols < 600 && input.Rows > 1 && input.Rows < 400 {
+			if validTerminalSize(input.Cols, input.Rows) {
 				if err := session.file.Resize(input.Cols, input.Rows); err != nil {
 					return
 				}
 			}
 		}
 	}
+}
+
+func validTerminalSize(cols, rows uint16) bool {
+	return cols > 1 && cols < 600 && rows > 1 && rows < 400
 }
