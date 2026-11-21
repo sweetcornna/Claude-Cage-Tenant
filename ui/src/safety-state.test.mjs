@@ -7,6 +7,8 @@ import {
   canonicalExitPolicy,
   isSafetyCheckMessage,
   needsEnvironmentRestart,
+  countdownText,
+  explanationView,
 } from "./safety-state.mjs";
 
 test("check failures and incomplete evidence link to the checklist without tagging unrelated errors", () => {
@@ -140,4 +142,54 @@ test("the server's explanation rides along only with the state it describes", ()
   assert.equal(networkState({ ...closed, vm_running: false }, now).explanation, undefined);
   // Older servers send no explanation; the result is unchanged.
   assert.deepEqual(networkState({ vm_running: true, safety: { gate: closed.safety.gate } }, now), { mode: "closed", label: "外网已关闭" });
+});
+
+test("each explained state reads calmly, with its countdown and the advice as given", () => {
+  const now = Date.parse("2026-11-21T08:20:00Z");
+  const status = (explanation, gate = { mode: "closed", until: "2026-11-21T08:19:00Z" }) => ({ vm_running: true, ready: true, safety: { gate, explanation } });
+  const open = { mode: "open", until: "2026-11-21T09:20:00Z" };
+  const view = (explanation, gate) => explanationView(networkState(status(explanation, gate), now).explanation, now);
+  const advice = ["关闭占用内存较多的标签页", "需要时调高内存上限，可以调到 6 GB"];
+
+  const unconfirmed = view({ state: "unconfirmed", reason: "联网监测暂时无法读取系统时区和语言", next: "外网暂时保持开放。", lease_until: "2026-11-21T08:20:45Z" }, open);
+  assert.equal(unconfirmed.tone, "quiet");
+  assert.equal(unconfirmed.label, "已联网 · 监测重试中");
+  assert.equal(unconfirmed.recheck, false, "a manual check would close the network that is still up");
+  assert.equal(unconfirmed.countdown.seconds, 45);
+  assert.match(unconfirmed.countdown.text, /联网许可约 45 秒后到期/);
+
+  const memory = view({ state: "waiting_memory", reason: "环境内存不足（可用约 46 MB，共 2.8 GB）", next: "外网暂停中。", recheck_at: "2026-11-21T08:21:00Z", memory_short: true, advice });
+  assert.equal(memory.tone, "warn");
+  assert.equal(memory.title, "外网已暂停：环境内存不足");
+  assert.equal(memory.countdown.text, "最迟约 1 分钟后自动完整重检。");
+  assert.deepEqual(memory.advice, advice, "later advice (\"可以调到 N GB\") is shown as given");
+  assert.equal(memory.recheck, true);
+  assert.equal(memory.memoryShort, true);
+
+  const scheduled = view({ state: "recheck_scheduled", reason: "联网许可到期前未能确认", next: "外网暂停中，稍后自动重检。", recheck_at: "2026-11-21T08:22:05Z" });
+  assert.equal(scheduled.countdown.text, "约 2 分 5 秒后自动重检。");
+  assert.equal(scheduled.label, "外网未放行 · 等待自动重检");
+  const later = view({ state: "recheck_scheduled", reason: "r", next: "当前操作完成后自动重检。" });
+  assert.equal(later.countdown, null, "no time: the next sentence says when");
+
+  const rechecking = view({ state: "rechecking", reason: "r", next: "通过后自动恢复联网。" }, { mode: "checking", until: "2026-11-21T08:25:00Z" });
+  assert.equal(rechecking.recheck, false);
+  assert.equal(rechecking.label, "外网未放行 · 正在自动重检");
+
+  const required = view({ state: "check_required", reason: "出口地区与设置不符", next: "需要你重新检测。" });
+  assert.equal(required.tone, "alarm");
+  assert.equal(required.recheck, true);
+
+  const paused = view({ state: "paused", reason: "你已暂停外网", next: "重新检测通过后恢复联网。" });
+  assert.equal(paused.label, "外网已手动暂停");
+  assert.equal(paused.tone, "warn");
+
+  // A due time that passed reads "即将", never a negative number.
+  assert.equal(view({ state: "recheck_scheduled", reason: "r", next: "n", recheck_at: "2026-11-21T08:19:00Z" }).countdown.text, "即将自动重检。");
+  // An unknown state is treated as needing the user.
+  assert.equal(view({ state: "surprise", reason: "r", next: "n" }).tone, "alarm");
+  // No explanation (an older server): nothing to show, today's text stays.
+  assert.equal(explanationView(networkState(status(undefined), now).explanation, now), null);
+  assert.equal(countdownText(59), "约 59 秒后");
+  assert.equal(countdownText(120), "约 2 分钟后");
 });

@@ -46,6 +46,56 @@ function networkExplanation(value, mode, now) {
   };
 }
 
+// What the workbench says about the gate when the server explains it
+// (networkState(...).explanation): a short label for the status bar, a title,
+// the server's reason and next step, a countdown and the advice as given.
+// unconfirmed (still online) is a quiet hint; only check_required is an alarm.
+const EXPLAINED = {
+  unconfirmed: { tone: "quiet", label: "已联网 · 监测重试中", title: "联网监测正在重试", countdown: "lease", recheck: false },
+  waiting_memory: { tone: "warn", label: "外网未放行 · 内存不足", title: "外网已暂停：环境内存不足", countdown: "recheck", recheck: true },
+  recheck_scheduled: { tone: "warn", label: "外网未放行 · 等待自动重检", title: "外网已暂停，等待自动重检", countdown: "recheck", recheck: true },
+  rechecking: { tone: "warn", label: "外网未放行 · 正在自动重检", title: "正在自动重检", countdown: "", recheck: false },
+  check_required: { tone: "alarm", label: "外网未放行 · 需要重新检测", title: "外网需要重新检测", countdown: "", recheck: true },
+  paused: { tone: "warn", label: "外网已手动暂停", title: "外网已手动暂停", countdown: "", recheck: true },
+};
+
+export function countdownText(seconds) {
+  if (!Number.isFinite(seconds)) return "";
+  if (seconds <= 0) return "即将";
+  if (seconds < 60) return `约 ${seconds} 秒后`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest ? `约 ${minutes} 分 ${rest} 秒后` : `约 ${minutes} 分钟后`;
+}
+
+export function explanationView(explanation, now = Date.now()) {
+  if (!explanation) return null;
+  const kind = EXPLAINED[explanation.state] || EXPLAINED.check_required;
+  const at = kind.countdown === "lease" ? explanation.leaseUntil : kind.countdown === "recheck" ? explanation.recheckAt : null;
+  const seconds = at === null || at === undefined ? null : Math.max(0, Math.ceil((at - now) / 1000));
+  const when = countdownText(seconds);
+  const countdown = seconds === null ? null : {
+    at, seconds,
+    text: kind.countdown === "lease"
+      ? (seconds > 0 ? `联网许可${when}到期，监测确认后会自动延长。` : "联网许可即将到期，监测确认后会自动延长。")
+      : explanation.state === "waiting_memory"
+        ? (seconds > 0 ? `最迟${when}自动完整重检。` : "即将自动完整重检。")
+        : (seconds > 0 ? `${when}自动重检。` : "即将自动重检。"),
+  };
+  return {
+    state: EXPLAINED[explanation.state] ? explanation.state : "check_required",
+    tone: kind.tone,
+    label: kind.label,
+    title: kind.title,
+    reason: explanation.reason,
+    next: explanation.next,
+    advice: explanation.advice,
+    memoryShort: explanation.memoryShort,
+    countdown,
+    recheck: kind.recheck,
+  };
+}
+
 function gateState(status, now) {
   if (!status?.vm_running) return { mode: "stopped", label: "环境已停止" };
   const gate = status.safety?.gate;
