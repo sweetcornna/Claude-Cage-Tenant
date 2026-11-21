@@ -131,18 +131,25 @@ const browserWheel = new BrowserWheel({
   },
 });
 let browserVNCViewers = false;
+// Streams the host keeps open while their pane is hidden (POST /visibility
+// "held"). They are workbench viewers, not legacy ones.
+let heldBrowserStreams = 0;
 function canHideBrowser() {
   // Legacy viewers connect directly to the loopback VNC server. Keep their
   // window visible after the last managed workbench viewer disconnects.
+  let established = 0;
   for (const file of ["/proc/net/tcp", "/proc/net/tcp6"]) {
     const entries = readFileSync(file, "utf8").trim().split("\n").slice(1);
-    if (entries.some(line => {
+    established += entries.filter(line => {
       const fields = line.trim().split(/\s+/);
       return fields[3] === "01" && fields[1].endsWith(":3E1C");
-    })) { browserVNCViewers = true; return false; }
+    }).length;
   }
-  browserVNCViewers = false;
-  return true;
+  // The host's count shrinks with the streams it describes, so a legacy viewer
+  // that connects after they closed is not taken for one of them.
+  heldBrowserStreams = Math.min(heldBrowserStreams, established);
+  browserVNCViewers = established > heldBrowserStreams;
+  return !browserVNCViewers;
 }
 const visibility = new BrowserVisibility(cdp, () => [...targets.keys()], canHideBrowser);
 let checkingBrowserViewers = false;
@@ -700,7 +707,80 @@ function broadcastState(focus = false, desktopFocus = false) {
 setInterval(() => {
   for (const stream of events) stream.write(": heartbeat\n\n");
 }, 10000).unref();
+// RandR state of VNC-0, kept between requests. displayModes lists the cage-WxH
+// modes the output has, the most recently used last. The first resize reads
+// them from the server; after that they are tracked here, so a resize costs
+// the xrandr calls it needs and no query.
 let displaySize = "";
+let displayModes = null;
+let displaySweep;
+const keptDisplayModes = 4;
+let displayChain = Promise.resolve();
+const runXrandr = (...args) => runFile("/usr/bin/xrandr", args, { timeout: 15000 });
+// Resizes and the removal of old modes run one at a time.
+function displayStep(work) {
+  const result = displayChain.then(work);
+  displayChain = result.catch(() => {});
+  return result;
+}
+async function selectDisplayMode(name, width, height) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      if (!displayModes) {
+        const { stdout } = await runXrandr("--query");
+        displayModes = [...stdout.matchAll(/^\s+(cage-\d+x\d+)\s/gm)].map(match => match[1]);
+      }
+      if (!displayModes.includes(name)) {
+        const rate = (((width + 32) * (height + 8) * 60) / 1000000).toFixed(3);
+        // An earlier run may have created the mode without adding it.
+        await runXrandr(
+          "--newmode",
+          name,
+          rate,
+          String(width),
+          String(width + 8),
+          String(width + 16),
+          String(width + 32),
+          String(height),
+          String(height + 1),
+          String(height + 2),
+          String(height + 8),
+          "+HSync",
+          "-VSync",
+        ).catch(() => {});
+        await runXrandr("--addmode", "VNC-0", name);
+        displayModes.push(name);
+      }
+      await runXrandr("--output", "VNC-0", "--mode", name);
+      displayModes = displayModes.filter(mode => mode !== name).concat(name);
+      return;
+    } catch (error) {
+      // What this process remembers is not what the server has, for example
+      // after the display restarted: read it again, once.
+      displayModes = null;
+      if (attempt > 0) throw error;
+    }
+  }
+}
+// Older modes go once the size has settled, one per step, and only while no
+// resize is waiting: a resize is never queued behind more than one removal.
+let displayWaiting = 0;
+function removeOldDisplayMode() {
+  void displayStep(async () => {
+    const old = (displayModes ?? []).slice(0, -keptDisplayModes).find(mode => mode !== displaySize);
+    if (!old) return false;
+    await runXrandr("--delmode", "VNC-0", old).catch(() => {});
+    await runXrandr("--rmmode", old).catch(() => {});
+    displayModes = displayModes.filter(mode => mode !== old);
+    return true;
+  }).then(more => { if (more && !displayWaiting) removeOldDisplayMode(); }, () => {});
+}
+function sweepDisplayModes() {
+  clearTimeout(displaySweep);
+  if (!displayModes || displayModes.length <= keptDisplayModes) return;
+  displaySweep = setTimeout(removeOldDisplayMode, displayModes.length > 32 ? 0 : 2000);
+  displaySweep.unref?.();
+}
 async function resizeDisplay(width, height, density) {
   // A viewer that names no density sized its display for the configured one.
   const scale = density === undefined || !displaySettings.available ? displayScale : displayDensity(density);
@@ -716,40 +796,21 @@ async function resizeDisplay(width, height, density) {
     throw new Error("Invalid display size");
   const result = { ok: true, ...(displaySettings.available ? { scale: displaySettings.set(scale) } : {}) };
   const name = `cage-${width}x${height}`;
-  if (displaySize === name) {
-    // A viewer attaching at an unchanged size still restores the full rate.
-    await runFile("/usr/bin/xrandr", ["--output", "VNC-0", "--mode", name]).catch(() => {});
-    return result;
+  displayWaiting++;
+  try {
+    await displayStep(async () => {
+      if (displaySize === name) {
+        // A viewer attaching at an unchanged size still restores the full rate.
+        await runXrandr("--output", "VNC-0", "--mode", name).catch(() => {});
+        return;
+      }
+      await selectDisplayMode(name, width, height);
+      displaySize = name;
+    });
+  } finally {
+    displayWaiting--;
   }
-  const { stdout } = await runFile("/usr/bin/xrandr", ["--query"]);
-  if (!stdout.includes(name)) {
-    const rate = (((width + 32) * (height + 8) * 60) / 1000000).toFixed(3);
-    await runFile("/usr/bin/xrandr", [
-      "--newmode",
-      name,
-      rate,
-      String(width),
-      String(width + 8),
-      String(width + 16),
-      String(width + 32),
-      String(height),
-      String(height + 1),
-      String(height + 2),
-      String(height + 8),
-      "+HSync",
-      "-VSync",
-    ]);
-    await runFile("/usr/bin/xrandr", ["--addmode", "VNC-0", name]);
-  }
-  await runFile("/usr/bin/xrandr", ["--output", "VNC-0", "--mode", name]);
-  displaySize = name;
-  for (const old of stdout.matchAll(/^\s+(cage-\d+x\d+)/gm))
-    if (old[1] !== name) {
-      await runFile("/usr/bin/xrandr", ["--delmode", "VNC-0", old[1]]).catch(
-        () => {},
-      );
-      await runFile("/usr/bin/xrandr", ["--rmmode", old[1]]).catch(() => {});
-    }
+  sweepDisplayModes();
   return result;
 }
 let mutations = Promise.resolve();
@@ -950,6 +1011,7 @@ const server = http.createServer(async (req, res) => {
         return { ...await newTab(url), url, kind: "web", title: "浏览器设置" };
       }
       if (req.url === "/visibility") {
+        heldBrowserStreams = input.visible === false && Number.isInteger(input.held) && input.held > 0 && input.held <= 64 ? input.held : 0;
         await visibility.set(input.visible);
         return { ok: true };
       }
@@ -1050,6 +1112,11 @@ const server = http.createServer(async (req, res) => {
   }
 });
 server.listen(18500, "127.0.0.1");
+// The host keeps several connections open between bursts of requests, and each
+// is an SSH channel that costs a handshake to open again. Node's default closes
+// an idle one after 5 s. The host closes its idle connections after 90 s, first.
+server.keepAliveTimeout = 120000;
+server.headersTimeout = 125000;
 (async () => {
   // A cold guest can spend several seconds initializing the sandbox and fonts.
   // Keep ordinary commands bounded separately from this initial handshake.
