@@ -29,7 +29,7 @@ try {
     sockets.push(entry);
   });
   await page.reload();
-  await page.getByRole("button", { name: "启动 Cage 环境", exact: true }).click();
+  await page.getByRole("button", { name: "启动 Super Cage 环境", exact: true }).click();
   await page.getByRole("button", { name: "新建终端", exact: true }).first().click();
   await page.getByRole("menuitem", { name: "普通终端", exact: true }).click();
   await until(() => sockets.length === 1, "terminal stream did not connect");

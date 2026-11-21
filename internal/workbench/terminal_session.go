@@ -257,7 +257,7 @@ func (t *terminalSession) subscribeFrom(after *uint64) *terminalSubscription {
 	subscription := &terminalSubscription{CLIStartup: t.cliStartupDone, CLIStarting: t.cliStartupPendingLocked(), session: t, viewer: viewer}
 	switch {
 	case t.kind == "claude-login":
-		subscription.History, subscription.HistoryReset = []byte("请在 Cage 浏览器的临时登录页完成授权。若页面提供验证码，可返回此终端输入。\r\n"), true
+		subscription.History, subscription.HistoryReset = []byte("请在 Super Cage 浏览器的临时登录页完成授权。若页面提供验证码，可返回此终端输入。\r\n"), true
 	case after != nil:
 		out := t.outputAfterLocked(*after, len(t.history))
 		subscription.History, subscription.HistoryOffset, subscription.HistoryReset = out.Data, out.Next-uint64(len(out.Data)), out.Reset

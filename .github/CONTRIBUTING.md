@@ -1,6 +1,6 @@
 # 贡献指南
 
-Cage 采用“贡献 Issue 审核 → 邀请成为协作者 → 提交 PR → 审查合入”的流程。仓库仅允许协作者创建 PR；修复代码、改进功能和修改文档都从明确的贡献方案开始。
+Super Cage 采用“贡献 Issue 审核 → 邀请成为协作者 → 提交 PR → 审查合入”的流程。仓库仅允许协作者创建 PR；修复代码、改进功能和修改文档都从明确的贡献方案开始。
 
 ## 提交方案并等待审核
 
@@ -14,7 +14,7 @@ Cage 采用“贡献 Issue 审核 → 邀请成为协作者 → 提交 PR → �
 
 ## 系统标签
 
-Issue 按涉及的系统带有六个标签：`macOS 主机`、`Windows 主机`、`Linux 主机`、`macOS 客机`、`Windows 客机`、`Linux 客机`。主机是运行 Cage 的电脑，客机是 Cage 内运行的系统；一条 Issue 可以同时带多个标签。各平台的维护者按标签筛选并认领自己负责的 Issue。
+Issue 按涉及的系统带有六个标签：`macOS 主机`、`Windows 主机`、`Linux 主机`、`macOS 客机`、`Windows 客机`、`Linux 客机`。主机是运行 Super Cage 的电脑，客机是 Super Cage 内运行的系统；一条 Issue 可以同时带多个标签。各平台的维护者按标签筛选并认领自己负责的 Issue。
 
 新建 Issue 时，**Label issues by system** 工作流读取正文里标题含“主机”或“客机”的字段并添加对应标签。通过 GitHub CLI 或 API 创建时沿用表单的字段标题即可，例如 `### 主机系统` 下写 `macOS`，`### 客机系统` 下写 `Linux`。
 

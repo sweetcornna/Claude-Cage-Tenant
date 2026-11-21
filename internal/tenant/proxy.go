@@ -19,7 +19,7 @@ import (
 )
 
 const enterHTML = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Cage Workspace</title><script defer src="/_tenant/enter.js"></script></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Super Cage Workspace</title><script defer src="/_tenant/enter.js"></script></head>
 <body><p id="status" role="status">Opening workspace…</p></body></html>`
 
 const enterJS = `"use strict";

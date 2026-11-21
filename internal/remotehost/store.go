@@ -113,7 +113,7 @@ func normalizeProfile(p HostProfile) (HostProfile, error) {
 		}
 	}
 	if (p.Executable != "cage" && !absolute(p.Executable)) || hasControl(p.Executable) || len(p.Executable) > 4096 {
-		return p, failure("invalid_profile", "云端 Cage 程序需要使用绝对路径或 cage")
+		return p, failure("invalid_profile", "云端 Super Cage 程序需要使用绝对路径或 cage")
 	}
 	if (p.ConfigPath != "" && !absolute(p.ConfigPath)) || hasControl(p.ConfigPath) || len(p.ConfigPath) > 4096 {
 		return p, failure("invalid_profile", "云端配置文件需要使用绝对路径")

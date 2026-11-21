@@ -11,8 +11,8 @@ const version = (await readFile(new URL('../VERSION', import.meta.url), 'utf8'))
 const dependencies = JSON.parse(await readFile(new URL('../packaging/windows/dependencies.json', import.meta.url), 'utf8'));
 const macCore = (await readFile(new URL('./fetch-proxy-core.sh', import.meta.url), 'utf8')).match(/^version=(v[\d.]+)$/m)[1];
 const names = {
-  mac: `Cage-${version}-macos-arm64.dmg`,
-  windows: `Cage-${version}-windows-amd64-setup.exe`,
+  mac: `Super-Cage-${version}-macos-arm64.dmg`,
+  windows: `Super-Cage-${version}-windows-amd64-setup.exe`,
   macSource: `mihomo-${macCore}-source.tar.gz`,
   macGuestSource: `cage-macos-guest-${version}-source.tar.gz`,
   windowsSource: `mihomo-${dependencies.mihomo.version}-source.tar.gz`,
@@ -39,7 +39,7 @@ test('includes Linux deb only with its verified corresponding source and merges 
   const f = await fixture(t);
   const linux = join(f.root, 'linux');
   const dependencies = JSON.parse(await readFile(new URL('../packaging/linux/dependencies.json', import.meta.url), 'utf8'));
-  const deb = `Cage-${version}-linux-amd64.deb`;
+  const deb = `Super-Cage-${version}-linux-amd64.deb`;
   await platform(linux, { [deb]: 'Linux package fixture' });
   await assert.rejects(prepareReleaseAssets({ inputs: [linux], output: f.output }), /Missing Linux Mihomo source/);
   await platform(linux, { [deb]: 'Linux package fixture', [dependencies.mihomoSource.file]: 'Mihomo source fixture' });
@@ -137,7 +137,7 @@ test('requires the shipped macOS guest corresponding source in the verified mani
 
 test('rejects wrong versions and manifest paths outside the release directory', async t => {
   const f = await fixture(t);
-  await platform(f.mac, { ...macAssets(), 'Cage-99.0.0-macos-arm64.dmg': 'wrong version' });
+  await platform(f.mac, { ...macAssets(), 'Super-Cage-99.0.0-macos-arm64.dmg': 'wrong version' });
   await assert.rejects(prepareReleaseAssets({ inputs: [f.mac], output: f.output }), /Unsupported asset or version/);
   await writeFile(join(f.mac, 'SHA256SUMS'), `${digest('outside')}  ../escape.dmg\n`);
   await assert.rejects(prepareReleaseAssets({ inputs: [f.mac], output: f.output }), /Invalid or duplicate/);

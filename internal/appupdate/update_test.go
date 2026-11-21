@@ -18,7 +18,7 @@ import (
 )
 
 func fixtureRelease(v string, pre bool) release {
-	return release{Tag: "v" + v, Prerelease: pre, Assets: []asset{{Name: "Cage-" + v + "-macos-arm64.dmg", URL: "https://github.com/" + repository + "/releases/download/v" + v + "/Cage-" + v + "-macos-arm64.dmg", Size: 3, Digest: "sha256:" + strings.Repeat("a", 64), State: "uploaded"}}}
+	return release{Tag: "v" + v, Prerelease: pre, Assets: []asset{{Name: "Super-Cage-" + v + "-macos-arm64.dmg", URL: "https://github.com/" + repository + "/releases/download/v" + v + "/Super-Cage-" + v + "-macos-arm64.dmg", Size: 3, Digest: "sha256:" + strings.Repeat("a", 64), State: "uploaded"}}}
 }
 func TestReleaseSelectionPreservesChannelsAndNumericPrereleases(t *testing.T) {
 	rs := []release{fixtureRelease("0.2.0-alpha.9", true), fixtureRelease("0.2.0-alpha.10", true), fixtureRelease("0.1.0", false)}
@@ -36,18 +36,21 @@ func TestReleaseSelectionPreservesChannelsAndNumericPrereleases(t *testing.T) {
 	}
 }
 func TestTenantReleaseSource(t *testing.T) {
-	const wantAPI = "https://api.github.com/repos/sweetcornna/Claude-Cage-Tenant/releases?per_page=100"
+	const wantAPI = "https://api.github.com/repos/sweetcornna/Super-Cage/releases?per_page=100"
 	if releasesURL != wantAPI {
 		t.Fatalf("updater queries %s, want %s", releasesURL, wantAPI)
 	}
 
 	r := fixtureRelease("0.2.0", false)
-	const assetPath = "/releases/download/v0.2.0/Cage-0.2.0-macos-arm64.dmg"
+	const assetPath = "/releases/download/v0.2.0/Super-Cage-0.2.0-macos-arm64.dmg"
 	for _, tt := range []struct {
 		repo string
 		want bool
 	}{
-		{"sweetcornna/Claude-Cage-Tenant", true},
+		{"sweetcornna/Super-Cage", true},
+		// GitHub answers with the renamed repository's URLs. A repository
+		// created later under the old name is a different publisher.
+		{"sweetcornna/Claude-Cage-Tenant", false},
 		{"Lee-xeo/Claude-Cage", false},
 		{"sweetcornna/Claude-Cage", false},
 	} {
@@ -56,6 +59,28 @@ func TestTenantReleaseSource(t *testing.T) {
 		if err != nil || (candidate != nil) != tt.want {
 			t.Errorf("select from %s = %#v, %v; want candidate: %t", tt.repo, candidate, err, tt.want)
 		}
+	}
+}
+
+func TestReleaseAcceptsLegacyAssetNamesAndPrefersCurrent(t *testing.T) {
+	base := "https://github.com/" + repository + "/releases/download/v0.2.0/"
+	legacy := fixtureRelease("0.2.0", false)
+	legacy.Assets[0].Name = "Cage-0.2.0-macos-arm64.dmg"
+	legacy.Assets[0].URL = base + legacy.Assets[0].Name
+	c, err := catalog.Select([]release{legacy}, "0.1.0", "darwin", "arm64")
+	if err != nil || c == nil || c.Archive.Name != "Cage-0.2.0-macos-arm64.dmg" {
+		t.Fatalf("legacy package name: %#v %v", c, err)
+	}
+	both := fixtureRelease("0.2.0", false)
+	both.Assets = append([]asset{legacy.Assets[0]}, both.Assets...)
+	c, err = catalog.Select([]release{both}, "0.1.0", "darwin", "arm64")
+	if err != nil || c == nil || c.Archive.Name != "Super-Cage-0.2.0-macos-arm64.dmg" {
+		t.Fatalf("current package name must win: %#v %v", c, err)
+	}
+	// The download URL must still name the selected asset.
+	legacy.Assets[0].URL = base + "Super-Cage-0.2.0-macos-arm64.dmg"
+	if c, err = catalog.Select([]release{legacy}, "0.1.0", "darwin", "arm64"); err != nil || c != nil {
+		t.Fatalf("mismatched asset URL accepted: %#v %v", c, err)
 	}
 }
 

@@ -591,7 +591,7 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
         // Honor xterm's bracketed-paste mode without enqueuing behind this job.
         emittingPaste = true;
         try { terminal.paste(text); } finally { emittingPaste = false; }
-        onStatus(value.png || value.files || value.fileSelection ? "附件已保存到 Cage，路径已插入终端" : "已粘贴");
+        onStatus(value.png || value.files || value.fileSelection ? "附件已保存到 Super Cage，路径已插入终端" : "已粘贴");
       }).catch((error) => { if (!disposed) onStatus(error.message); });
     };
     const host = box.current;

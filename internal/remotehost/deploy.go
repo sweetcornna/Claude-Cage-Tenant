@@ -44,9 +44,9 @@ func deploymentError(err error) error {
 			62: "服务器缺少 rootless 容器所需的用户映射、工具、FUSE、TUN 或 cgroup v2",
 			63: "SSH 用户的 systemd 用户服务不可用",
 			64: "自动部署需要由字母、数字、点、短横线、下划线和斜杠组成的绝对配置路径",
-			65: "目标目录或服务已属于其他配置。请选择空的配置目录，或填写已安装的 Cage 程序路径",
-			66: "找不到指定的 Cage 程序。首次自动部署请将程序路径设为 cage",
-			67: "此服务器正在部署 Cage，请稍后重新连接",
+			65: "目标目录或服务已属于其他配置。请选择空的配置目录，或填写已安装的 Super Cage 程序路径",
+			66: "找不到指定的 Super Cage 程序。首次自动部署请将程序路径设为 cage",
+			67: "此服务器正在部署 Super Cage，请稍后重新连接",
 			68: "配置目录所在磁盘需要至少 7 GiB 可用空间",
 			69: "部署包传输校验失败，请重新部署",
 			70: "服务器的独立容器引擎启动失败，请检查用户服务日志和 cgroup 委派",
@@ -55,13 +55,13 @@ func deploymentError(err error) error {
 			74: "下载容器引擎失败，请检查服务器的网络后重试",
 			75: "服务器无法获取固定版本的 Debian 基础镜像，请检查云端网络后重试",
 			76: "服务器安装工具失败。详细日志位于配置目录的 cloud-host/build 下",
-			73: "云端 Cage 用户服务启动失败，请检查服务器用户服务日志",
+			73: "云端 Super Cage 用户服务启动失败，请检查服务器用户服务日志",
 		}
 		if message := messages[exit.ExitStatus()]; message != "" {
 			return failure("cloud_setup_failed", message)
 		}
 	}
-	return failure("server_entry_failed", "云端 Cage 未就绪，请检查服务器上的 Cage 程序、配置路径和用户服务")
+	return failure("server_entry_failed", "云端 Super Cage 未就绪，请检查服务器上的 Super Cage 程序、配置路径和用户服务")
 }
 
 // SSH reads the archive as a stream. Report whole percentages without loading it into memory.
@@ -96,7 +96,7 @@ func cloudEntry(ctx context.Context, client *ssh.Client, p HostProfile, deploy b
 	if p.Platform == "windows" {
 		// A Windows host must never fall through to the Linux/rootless-Docker
 		// installer. Provisioning the interactive user is a separate operation.
-		return nil, failure("windows_server_not_ready", "Windows Cage 服务尚未就绪，请检查已部署的服务和配置路径；不能在此主机运行 Linux 部署包")
+		return nil, failure("windows_server_not_ready", "Windows Super Cage 服务尚未就绪，请检查已部署的服务和配置路径；不能在此主机运行 Linux 部署包")
 	}
 	phase("cloud_detect")
 	out, err := runSSH(client, lifecycleCommand(p, "probe"), nil)
@@ -106,7 +106,7 @@ func cloudEntry(ctx context.Context, client *ssh.Client, p HostProfile, deploy b
 	switch string(out) {
 	case "missing":
 		if !deploy {
-			return nil, failure("deployment_required", "此主机尚未部署 Cage。部署将在 SSH 用户的目录中安装 Cage 和独立容器环境。")
+			return nil, failure("deployment_required", "此主机尚未部署 Super Cage。部署将在 SSH 用户的目录中安装 Super Cage 和独立容器环境。")
 		}
 		binary, err := os.Executable()
 		if err != nil {
@@ -116,16 +116,16 @@ func cloudEntry(ctx context.Context, client *ssh.Client, p HostProfile, deploy b
 		sum, err := os.ReadFile(payload + ".sha256")
 		digest := strings.TrimSpace(string(sum))
 		if err != nil || !regexp.MustCompile("^[a-f0-9]{64}$").MatchString(digest) {
-			return nil, failure("payload_missing", "此客户端缺少云端部署包，请安装包含部署包的 Cage")
+			return nil, failure("payload_missing", "此客户端缺少云端部署包，请安装包含部署包的 Super Cage")
 		}
 		file, err := os.Open(payload)
 		if err != nil {
-			return nil, failure("payload_missing", "无法读取云端部署包，请检查 Cage 安装")
+			return nil, failure("payload_missing", "无法读取云端部署包，请检查 Super Cage 安装")
 		}
 		defer file.Close()
 		info, err := file.Stat()
 		if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
-			return nil, failure("payload_missing", "云端部署包无效，请检查 Cage 安装")
+			return nil, failure("payload_missing", "云端部署包无效，请检查 Super Cage 安装")
 		}
 		input := io.TeeReader(file, &uploadProgress{size: info.Size(), phase: phase})
 		phase("cloud_upload_0")

@@ -378,7 +378,7 @@ func (s *Server) handler() http.Handler {
 			return
 		}
 		if !s.consumeTicket(v.Token) {
-			http.Error(w, "访问凭证无效，请从 Cage 应用重新打开。", http.StatusUnauthorized)
+			http.Error(w, "访问凭证无效，请从 Super Cage 应用重新打开。", http.StatusUnauthorized)
 			return
 		}
 		http.SetCookie(w, &http.Cookie{Name: s.cookieName(), Value: s.session, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 86400 * 30})
@@ -547,7 +547,7 @@ func (s *Server) handler() http.Handler {
 		if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/session" && r.URL.Path != "/api/launch" && r.URL.Path != "/api/handoff" {
 			c, e := r.Cookie(s.cookieName())
 			if e != nil || !equalSecret(c.Value, s.session) {
-				http.Error(w, "请从 Cage 应用重新打开工作台", 401)
+				http.Error(w, "请从 Super Cage 应用重新打开工作台", 401)
 				return
 			}
 		}
@@ -593,7 +593,7 @@ func (s *Server) handler() http.Handler {
 				}
 			}
 			if s.clientOnly || s.desktopEntry {
-				http.Error(w, "请连接运行 Cage 环境的主机", http.StatusConflict)
+				http.Error(w, "请连接运行 Super Cage 环境的主机", http.StatusConflict)
 				return
 			}
 		} else if s.macosGuest == nil && s.windowsGuest == nil && s.routeRemote(w, r) {
@@ -601,7 +601,7 @@ func (s *Server) handler() http.Handler {
 		}
 		ctx, finish, err := s.beginActivity(r.Context())
 		if err != nil {
-			http.Error(w, "后台正在更新，请重新打开 Cage。", http.StatusServiceUnavailable)
+			http.Error(w, "后台正在更新，请重新打开 Super Cage。", http.StatusServiceUnavailable)
 			return
 		}
 		defer finish()
@@ -611,13 +611,13 @@ func (s *Server) handler() http.Handler {
 		trustedDesktop := s.hasTrustedView(r)
 		phoneRoom := s.pairedPhoneRoom(r)
 		if (s.windowsGuest != nil || s.macosGuest != nil) && strings.HasPrefix(r.URL.Path, "/api/") && !bootstrapRoute && !trustedDesktop && phoneRoom == nil && !s.hasRemoteWindowsView(r) {
-			http.Error(w, "请通过本机 Cage 窗口或当前配对手机打开客机", http.StatusForbidden)
+			http.Error(w, "请通过本机 Super Cage 窗口或当前配对手机打开客机", http.StatusForbidden)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") && !accountRoute && !bootstrapRoute && !strings.HasPrefix(r.URL.Path, "/api/diagnostics") && !(r.Method == "GET" && r.URL.Path == "/api/appearance") {
 			epoch, unlocked := s.account.accessFor(trustedDesktop, phoneRoom != nil)
 			if !unlocked {
-				http.Error(w, "Cage 已锁定，请先登录", http.StatusLocked)
+				http.Error(w, "Super Cage 已锁定，请先登录", http.StatusLocked)
 				return
 			}
 			ctx, cancel := context.WithCancel(r.Context())

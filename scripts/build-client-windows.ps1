@@ -66,13 +66,13 @@ try {
     }
     Copy-Item -LiteralPath 'LICENSE' -Destination (Join-Path $app 'LICENSE.txt')
     [IO.File]::WriteAllText((Join-Path $app 'README.txt'), @'
-Cage 轻量远程客户端（未签名开发构建）
+Super Cage 轻量远程客户端（未签名开发构建）
 
 运行 Cage.exe。需要 Windows 10/11 x64 与 Microsoft Edge WebView2 Runtime。
 .NET 运行时已随应用提供。没有 WebView2 时，可使用 -IncludeWebViewRuntime 构建包含已校验安装程序的包；构建不会安装该程序。
-本机只提供窗口、SSH 连接、输入和文件传递；项目、浏览器、终端与网络在云端 Cage 运行。
+本机只提供窗口、SSH 连接、输入和文件传递；项目、浏览器、终端与网络在云端 Super Cage 运行。
 默认连接配置目录为用户目录下的 .claude-cage/client；显式 CLAUDE_CAGE_CONFIG 配置保持有效。
-此目录为独立构建产物，不会安装、替换完整 Cage 或自动下载完整 Cage 更新。
+此目录为独立构建产物，不会安装、替换完整 Super Cage 或自动下载完整 Super Cage 更新。
 本构建未签名或发布。Windows 原生运行验收范围以项目测试报告为准。
 '@)
     if ($IsWindows) {

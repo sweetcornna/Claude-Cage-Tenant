@@ -70,7 +70,7 @@ func windowsWorkbenchRoute(path string) bool {
 
 var (
 	errWindowsAgentPending  = errors.New("Windows 客机已启动，正在等待图形用户代理连接")
-	errWindowsLoginRequired = errors.New("请在虚拟 Windows 的登录界面解锁已绑定的客机账户，再返回 Cage")
+	errWindowsLoginRequired = errors.New("请在虚拟 Windows 的登录界面解锁已绑定的客机账户，再返回 Super Cage")
 )
 
 func (s *Server) windowsStatus(ctx context.Context) (windowsGuestState, error) {
@@ -243,7 +243,7 @@ func waitWindowsBoot(ctx context.Context, interval time.Duration, attach func(co
 		case <-ctx.Done():
 			timer.Stop()
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return errors.New("Windows 客机尚未连接。请确认已在虚拟 Windows 中登录绑定的账户，随后在 Cage 点击恢复连接")
+				return errors.New("Windows 客机尚未连接。请确认已在虚拟 Windows 中登录绑定的账户，随后在 Super Cage 点击恢复连接")
 			}
 			return ctx.Err()
 		case <-timer.C:

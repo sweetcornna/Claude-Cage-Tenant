@@ -10,7 +10,7 @@ const assertLoading = async () => {
   await loading.waitFor({ timeout: 500 });
   assert.equal(await loading.isDisabled(), true);
   assert.equal(await page.getByRole("dialog").count(), 0);
-  await page.getByRole("heading", { name: "正在准备 Cage 环境", exact: true }).waitFor({ timeout: 500 });
+  await page.getByRole("heading", { name: "正在准备 Super Cage 环境", exact: true }).waitFor({ timeout: 500 });
 };
 try {
   await page.route("**/api/start", async route => {
@@ -19,7 +19,7 @@ try {
     await route.fulfill({ json: { id: "delayed-start" } });
   });
   const startRequested = page.waitForRequest("**/api/start");
-  await page.getByRole("button", { name: "启动 Cage 环境", exact: true }).click();
+  await page.getByRole("button", { name: "启动 Super Cage 环境", exact: true }).click();
   await startRequested;
   await assertLoading();
   const startResponse = page.waitForResponse("**/api/start");
@@ -33,12 +33,12 @@ try {
   await page.locator(".welcome-subtitle").getByText("正在准备测试环境…", { exact: true }).waitFor();
   await assertLoading();
   state.status.job = { ...state.status.job, running: false, error: "测试启动失败" };
-  await page.getByRole("button", { name: "启动 Cage 环境", exact: true }).waitFor();
+  await page.getByRole("button", { name: "启动 Super Cage 环境", exact: true }).waitFor();
 
   await page.route("**/api/start", route => route.fulfill({ status: 503, contentType: "text/plain; charset=utf-8", body: "测试请求失败" }));
-  await page.getByRole("button", { name: "启动 Cage 环境", exact: true }).click();
+  await page.getByRole("button", { name: "启动 Super Cage 环境", exact: true }).click();
   await page.getByText("测试请求失败", { exact: true }).waitFor();
-  assert.equal(await page.getByRole("button", { name: "启动 Cage 环境", exact: true }).isEnabled(), true);
+  assert.equal(await page.getByRole("button", { name: "启动 Super Cage 环境", exact: true }).isEnabled(), true);
 
   assert.equal(state.requests.some(request => request.path === "/host/git"), false);
   assert.deepEqual(errors, []);

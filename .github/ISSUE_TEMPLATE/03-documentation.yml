@@ -29,7 +29,7 @@ body:
     id: version
     attributes:
       label: 相关版本或提交号
-      description: 如与某个 Cage 版本或文档提交有关，请填写版本号、提交号或固定到该提交的文档链接。
+      description: 如与某个 Super Cage 版本或文档提交有关，请填写版本号、提交号或固定到该提交的文档链接。
   - type: textarea
     id: environment
     attributes:

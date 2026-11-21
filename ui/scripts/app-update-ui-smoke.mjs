@@ -26,7 +26,7 @@ try {
   calls.length = 0;
   update = { phase: "idle", currentVersion: "0.1.3-alpha.1" };
   await page.reload();
-  await page.getByRole("heading", { name: "先启动 Cage 环境" }).waitFor();
+  await page.getByRole("heading", { name: "先启动 Super Cage 环境" }).waitFor();
   await page.exposeFunction("updateCheckCount", () => count("check"));
   await page.waitForFunction(async () => await window.updateCheckCount() === 1);
   await page.waitForFunction(() => !document.querySelector(".app-update-button"));
@@ -51,7 +51,7 @@ try {
   assert.equal(count("install"), 1);
   assert.equal(await page.getByRole("progressbar", { name: "更新下载进度" }).getAttribute("aria-valuenow"), "50");
   assert.equal(await page.locator(".app-update-percent").innerText(), "50%");
-  assert.equal(await page.getByRole("dialog", { name: "Cage 更新" }).count(), 0);
+  assert.equal(await page.getByRole("dialog", { name: "Super Cage 更新" }).count(), 0);
   assert.ok(await page.getByRole("button", { name: "正在下载更新 50%", exact: true }).isDisabled());
   await page.screenshot({ path: `${output}/downloading.png` });
   await publish({ ...update, receivedBytes: 110 });

@@ -29,6 +29,7 @@ try {
     await route.fulfill({status:200,contentType:"application/json",body:process.env.CAGE_TEST_MOBILE_LEGACY_SESSION});
   });
   await page.goto(entry);
+  await page.getByRole("button", {name:"展开侧栏", exact:true}).click();
   await page.getByRole("dialog", {name:"工作区侧栏"}).getByRole("button", {name:/ 新建会话$/}).first().click();
   await page.getByRole("dialog", {name:"工作区侧栏"}).waitFor({state:"hidden"});
   const message = page.getByRole("textbox", {name:"消息"});
@@ -56,7 +57,9 @@ try {
     else await route.continue();
   });
   await approve.click();
-  await page.getByRole("alert").getByRole("button", {name:"重新读取"}).waitFor();
+  // The decision and its status check were lost; the chat keeps the approval
+  // pending and reconnects by itself instead of showing a failure card.
+  await page.getByText("审批结果尚未确认，正在重新读取主机状态。", {exact:true}).waitFor();
   await page.unroute(sessionRequests);
   await page.getByText("主机仍在等待这次审批。请核对参数后再次选择。", {exact:true}).waitFor();
   await assert.rejects(readFile(process.env.CAGE_TEST_MOBILE_MARKER), {code:"ENOENT"});

@@ -1401,6 +1401,7 @@ svg {
   display: flex;
   align-items: center;
   gap: 9px;
+  white-space: nowrap;
   font-weight: 600;
   font-size: 1.1429rem;
   letter-spacing: -0.4px;

@@ -77,6 +77,16 @@ enum UpdatesTests {
         try FileManager.default.createSymbolicLink(at: escaped.appendingPathComponent("outside"), withDestinationURL: hashFile)
         try rejects("app symlink escape") { try CageUpdateFiles.validateTree(escaped) }
 
+        let image = root.appendingPathComponent("image")
+        try CageUpdateFiles.privateDirectory(image)
+        try rejects("image without an app refused") { _ = try CageUpdateFiles.imageApp(in: image) }
+        try CageUpdateFiles.privateDirectory(image.appendingPathComponent("Cage.app"))
+        let legacyApp = try CageUpdateFiles.imageApp(in: image)
+        try expect(legacyApp.lastPathComponent == "Cage.app", "image from before the rename")
+        try CageUpdateFiles.privateDirectory(image.appendingPathComponent("Super Cage.app"))
+        let renamedApp = try CageUpdateFiles.imageApp(in: image)
+        try expect(renamedApp.lastPathComponent == "Super Cage.app", "renamed app preferred")
+
         let old = root.appendingPathComponent("Cage.app"), next = root.appendingPathComponent("next.app"), backup = root.appendingPathComponent("backup.app")
         for location in [old, next, backup] { try CageUpdateFiles.privateDirectory(location) }
         try Data("old".utf8).write(to: old.appendingPathComponent("marker"))

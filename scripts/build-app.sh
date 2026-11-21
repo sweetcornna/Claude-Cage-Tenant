@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-if [[ "$(uname -s)" != Darwin ]]; then echo 'Cage.app must be built on macOS.' >&2; exit 1; fi
+if [[ "$(uname -s)" != Darwin ]]; then echo 'Super Cage.app must be built on macOS.' >&2; exit 1; fi
 case "${1:-}" in ''|--install|--macos-trial|--install-macos-trial|--intel-macos-test) ;; *) echo 'Usage: scripts/build-app.sh [--install|--macos-trial|--install-macos-trial|--intel-macos-test]' >&2; exit 2 ;; esac
 bundle_id=io.github.lee-xeo.claude-cage
-app_name=Cage
+app_name='Super Cage'
 if [[ "${1:-}" == *macos-trial ]]; then
   bundle_id+=.macos-trial
-  app_name='Cage macOS'
+  app_name='Super Cage macOS'
 fi
 if [[ "${1:-}" == --intel-macos-test ]]; then
   [[ $(uname -m) == x86_64 ]] || { echo 'Intel test packages require an Intel Mac.' >&2; exit 2; }
   bundle_id+=.intel-macos-test
-  app_name='Cage Intel'
+  app_name='Super Cage Intel'
 fi
 installed_app="$HOME/Applications/$app_name.app"
 app_destination="${CAGE_BUILD_OUTPUT:-$PWD/_output/$app_name.app}"
@@ -21,16 +21,16 @@ check_destination() {
   local target="$1"
   [[ ! -e "$target" ]] && return 0
   if [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$target/Contents/Info.plist" 2>/dev/null)" != "$bundle_id" ]]; then
-    echo 'Build destination is not a Cage application.' >&2; exit 1
+    echo 'Build destination is not a Super Cage application.' >&2; exit 1
   fi
   if ! codesign --verify --deep --strict "$target"; then
-    echo '现有 Cage 应用包含修改内容或无法验证完整性，已保留。请将个人文件移出应用包，或选择新的构建目录后重试。' >&2
+    echo '现有 Super Cage 应用包含修改内容或无法验证完整性，已保留。请将个人文件移出应用包，或选择新的构建目录后重试。' >&2
     exit 1
   fi
   local running_pids
   running_pids="$(/usr/sbin/lsof -t "$target/Contents/MacOS/Cage" "$target/Contents/Resources/cage" 2>/dev/null || true)"
   if [[ -n "$running_pids" ]]; then
-    echo 'Cage is running from this destination. Quit it before replacing the App.' >&2; exit 1
+    echo 'Super Cage is running from this destination. Quit it before replacing the App.' >&2; exit 1
   fi
 }
 check_destination "$app_destination"
@@ -152,7 +152,7 @@ if [[ "${1:-}" == --install* ]]; then
   # along with historical validation copies, after the installed App verifies.
   codesign --verify --deep --strict --verbose=2 "$installed_app"
   if [[ "${1:-}" == --install-macos-trial ]]; then
-    # Normal release cleanup scans other Cage installations. The trial has a separate identity.
+    # Normal release cleanup scans other Super Cage installations. The trial has a separate identity.
     if [[ ! "$bundle" -ef "$installed_app" ]]; then mv "$bundle" "$build_stage/installed-trial.app"; fi
     exit 0
   fi

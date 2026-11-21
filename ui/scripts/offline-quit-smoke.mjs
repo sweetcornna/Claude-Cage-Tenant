@@ -23,7 +23,7 @@ try {
   await page.route("**/api/**", refused);
   await page.locator(".connection-banner").waitFor();
   await quit();
-  const dialog = page.getByRole("dialog", { name: "退出 Cage" });
+  const dialog = page.getByRole("dialog", { name: "退出 Super Cage" });
   await dialog.getByRole("button", { name: "取消" }).click();
   assert.equal(exits(), 0);
   await quit();

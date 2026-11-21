@@ -43,7 +43,7 @@ func CheckExitCountry(ip string, location *Location) (State, string) {
 	}
 	for _, prefix := range mainlandPrefixes {
 		if prefix.Contains(address) {
-			return Failed, "检测出口命中中国大陆 IP 网段，Cage 禁止使用大陆出口，外网保持关闭"
+			return Failed, "检测出口命中中国大陆 IP 网段，Super Cage 禁止使用大陆出口，外网保持关闭"
 		}
 	}
 	if location == nil || location.IP != address.String() {
@@ -54,7 +54,7 @@ func CheckExitCountry(ip string, location *Location) (State, string) {
 		return Unknown, "无法确认出口国家或地区，外网保持关闭"
 	}
 	if country == "CN" {
-		return Failed, "检测出口位于中国大陆，Cage 禁止使用大陆出口，外网保持关闭"
+		return Failed, "检测出口位于中国大陆，Super Cage 禁止使用大陆出口，外网保持关闭"
 	}
 	return Passed, "检测出口未命中大陆网段，国家或地区信息符合非大陆出口要求"
 }

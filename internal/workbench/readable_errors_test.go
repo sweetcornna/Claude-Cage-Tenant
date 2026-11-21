@@ -17,8 +17,8 @@ func TestWindowsMaintenanceFailureRetainsStageForBothJobs(t *testing.T) {
 			phase, reason, next string
 		}{
 			{"AUTHORIZATION_CANCELED", "已取消 Windows 管理员授权", "系统授权窗口"},
-			{"AUTHORIZATION", "授权窗口未能打开", "本机 Cage"},
-			{"VALIDATION", "绑定或组件清单", "重新安装完整 Cage"},
+			{"AUTHORIZATION", "授权窗口未能打开", "本机 Super Cage"},
+			{"VALIDATION", "绑定或组件清单", "重新安装完整 Super Cage"},
 			{"HOST_MANAGER", "系统管理助手安装", "修复系统助手"},
 			{"GUEST_CONNECTION", "客机连接未完成", "管理员账户"},
 			{"GUEST_COMPONENTS", "客机组件安装", "同步环境组件"},

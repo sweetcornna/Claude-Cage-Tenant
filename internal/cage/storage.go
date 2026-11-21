@@ -54,7 +54,7 @@ func readStorageRecord(profile string) (storageRecord, error) {
 		return r, err
 	}
 	if err = json.Unmarshal(b, &r); err != nil || !filepath.IsAbs(r.Directory) || !validStorageID(r.ID) {
-		return storageRecord{}, errors.New("Cage 环境存储配置损坏，请先恢复配置")
+		return storageRecord{}, errors.New("Super Cage 环境存储配置损坏，请先恢复配置")
 	}
 	return r, nil
 }
@@ -320,7 +320,7 @@ func validateStorageTarget(profile, directory, app, platform string) error {
 			return err
 		}
 		if r.Directory == "" {
-			return errors.New("当前环境使用手动配置的目录链接。请先恢复原目录，再使用 Cage 迁移")
+			return errors.New("当前环境使用手动配置的目录链接。请先恢复原目录，再使用 Super Cage 迁移")
 		}
 	}
 	if !filepath.IsAbs(directory) || filepath.Clean(directory) == filepath.VolumeName(directory)+string(os.PathSeparator) {

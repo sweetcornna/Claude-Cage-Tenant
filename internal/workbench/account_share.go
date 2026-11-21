@@ -38,11 +38,11 @@ func createLocalVMAccount(defaultProfile, destination, owner string) error {
 		return errLocalAccountMissing
 	}
 	if err != nil {
-		return errors.New("无法读取本机 Cage 账户，请检查配置目录的访问权限")
+		return errors.New("无法读取本机 Super Cage 账户，请检查配置目录的访问权限")
 	}
 	var source accountRecord
 	if len(data) > 256<<10 || json.Unmarshal(data, &source) != nil || source.Version != 1 || validAccountName(source.Username) != nil {
-		return errors.New("本机 Cage 账户记录损坏，请从备份恢复")
+		return errors.New("本机 Super Cage 账户记录损坏，请从备份恢复")
 	}
 	if !filepath.IsAbs(destination) {
 		return errors.New("虚拟机目录无效")

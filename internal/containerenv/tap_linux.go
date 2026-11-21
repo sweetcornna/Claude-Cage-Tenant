@@ -158,7 +158,7 @@ func requirePrivateGuestNetwork() error {
 	}
 	if _, first := os.Stat("/run/.containerenv"); first != nil {
 		if _, second := os.Stat("/.dockerenv"); second != nil {
-			return errors.New("容器 TAP helper 只能在 Cage 容器内运行")
+			return errors.New("容器 TAP helper 只能在 Super Cage 容器内运行")
 		}
 	}
 	return nil

@@ -129,7 +129,7 @@ func (s *Server) macSetupPermissions(ctx context.Context, refreshSharing bool) (
 	s.mu.Unlock()
 	if status.ProjectInstallRequired {
 		status.Projects = false
-		status.ProjectsError = "请先在 Cage 客机画面中完成 macFUSE 官方安装器，再启用两个文件系统扩展开关。"
+		status.ProjectsError = "请先在 Super Cage 客机画面中完成 macFUSE 官方安装器，再启用两个文件系统扩展开关。"
 	}
 	if status.Screen && status.Input && !status.ProjectInstallRequired && !status.Projects && probeDue && s.op.TryLock() {
 		s.mu.Lock()

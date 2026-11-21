@@ -35,7 +35,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		fmt.Println("Cage remote client " + version.Version + "\nCommands: desktop --json, serve, prepare-update. Workloads run on the selected remote host.")
+		fmt.Println("Super Cage remote client " + version.Version + "\nCommands: desktop --json, serve, prepare-update. Workloads run on the selected remote host.")
 		return nil
 	}
 	if args[0] == "verify-web-assets" {

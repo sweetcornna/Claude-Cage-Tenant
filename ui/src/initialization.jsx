@@ -26,7 +26,7 @@ import "./initialization.css";
 const steps = [["system", "系统与存储"], ["proxy", "网络代理"], ["install", "安装与检查"]];
 
 function InitializationFrame({ children }) {
-  return <main className="initialization"><header className="initialization-brand"><img src={logo} alt="" /><strong>Cage</strong><span>首次设置</span></header>{children}</main>;
+  return <main className="initialization"><header className="initialization-brand"><img src={logo} alt="" /><strong>Super Cage</strong><span>首次设置</span></header>{children}</main>;
 }
 
 export function InitializationGate({ children }) {
@@ -48,7 +48,7 @@ export function InitializationGate({ children }) {
   }, [remote, attempt, account?.initial_mac_setup]);
   if (remote) return children;
   if (account?.initial_mac_setup) return <MacOSAccountGate><MacOSFirstSetup /></MacOSAccountGate>;
-  if (error) return <InitializationFrame><section className="initialization-content"><h1>继续准备 Cage</h1><p role="alert"><SafetyMessage message={error} /></p><button className="primary" onClick={() => retry(value => value + 1)}>重新连接</button><DiagnosticSettings /></section></InitializationFrame>;
+  if (error) return <InitializationFrame><section className="initialization-content"><h1>继续准备 Super Cage</h1><p role="alert"><SafetyMessage message={error} /></p><button className="primary" onClick={() => retry(value => value + 1)}>重新连接</button><DiagnosticSettings /></section></InitializationFrame>;
   if (!state) return <InitializationFrame><section className="initialization-content"><h1>正在读取环境状态</h1><p role="status"><LoaderCircle size={18} className="spin" />正在检查已有配置和安装进度…</p></section></InitializationFrame>;
   if (!state.required) return children;
   const setup = <Initialization initial={state} onComplete={() => setState({ required: false })} />;
@@ -257,7 +257,7 @@ function Initialization({ initial, onComplete }) {
   const failed = Boolean(job.error || error);
   const networkPending = Boolean(status?.ready && status.vm_running && network.mode !== "open");
   const progress = !status?.ready && job.setup_progress ? { ...job, setup_progress: job.setup_progress } : null;
-  const title = step === "system" ? "为 Cage 准备独立环境" : step === "proxy" ? "连接你的网络代理" : ready ? "Cage 已准备就绪" : !busy && networkPending ? "环境已启动，等待联网检查" : failed ? "继续完成环境安装" : busy ? "正在准备你的环境" : "安装并检查客机环境";
+  const title = step === "system" ? "为 Super Cage 准备独立环境" : step === "proxy" ? "连接你的网络代理" : ready ? "Super Cage 已准备就绪" : !busy && networkPending ? "环境已启动，等待联网检查" : failed ? "继续完成环境安装" : busy ? "正在准备你的环境" : "安装并检查客机环境";
   const index = steps.findIndex(([key]) => key === step);
   if (showMacCredentials && !account?.macos_credentials_ready) {
     return <MacOSAccountGate onBack={() => { setShowMacCredentials(false); setStep("system"); }} />;
@@ -275,7 +275,7 @@ function Initialization({ initial, onComplete }) {
             <GuestProfileOptions value={guestProfile} onChange={setGuestProfile} disabled={busy} system={choice?.guest_system} />
           </>}
           {step === "proxy" && <><ProxySettings initializing status={status} onConfirm={confirm} onDirty={setProxyDirty} onApplied={async () => { setProxy(await api("/proxy")); pollNow.current?.(); }} />{choice?.clone && !needsProxySetup(null, status, proxy) && <HostCloneSummary pending={choice.pending} onChange={setChoice} />}</>}
-          {step === "install" && (ready ? <div className="initialization-ready"><ShieldCheck size={36} /><h2>环境已就绪</h2><p>独立客机已安装，工具、文件和登录状态会持续保存。以后打开 Cage 可直接进入工作台。</p></div> : <>
+          {step === "install" && (ready ? <div className="initialization-ready"><ShieldCheck size={36} /><h2>环境已就绪</h2><p>独立客机已安装，工具、文件和登录状态会持续保存。以后打开 Super Cage 可直接进入工作台。</p></div> : <>
             {exitCandidate && <section className="initialization-notice" aria-label="确认固定出口"><p>客机终端、浏览器和代理已测得一致出口。请确认是否将它绑定为固定出口。</p><button disabled={busy || Boolean(connectionError)} onClick={bindExit}>绑定检测到的固定出口 {exitCandidate}</button></section>}
             {needsExitRestart && <section className="initialization-notice" aria-label="固定出口已保存"><p>固定出口已保存。重启客机并重新检测后才能进入工作台。</p><button className="primary" disabled={busy || Boolean(connectionError)} onClick={restart}>{status.vm_running ? "重启客机并重新检测" : "启动客机并重新检测"}</button></section>}
             {progress ? <SetupProgress job={progress} onDetails={() => setDetails(true)} onStop={stop} onRetry={needsExitRestart ? restart : install} disconnected={Boolean(connectionError) || submitting} /> : (busy || status.guest_system !== "macos" || !networkPending) && <div className="initialization-operation" role="status">{busy && <LoaderCircle size={22} className="spin" />}<p>{job.message || (status.vm_running ? "请完成客机连接和网络检查。" : "准备继续原安装，已有文件和磁盘会保留。")}</p>{!busy && !job.error && !needsExitRestart && <button className="primary" disabled={Boolean(connectionError)} onClick={install}>{status.ready ? "重新启动并检查" : "继续安装"}</button>}{busy && <button onClick={stop} disabled={submitting}>停止安装</button>}</div>}
@@ -286,12 +286,12 @@ function Initialization({ initial, onComplete }) {
                 <li>启动恢复客机。</li>
                 <li>打开恢复画面，先登录安装时创建的客机普通账户。</li>
                 <li>点击「打开 Apple Installer」继续安装。</li>
-                <li>安装器要求管理员认证时，用户名填 cagesetup，密码与你登录 Cage 的账户密码相同。</li>
+                <li>安装器要求管理员认证时，用户名填 cagesetup，密码与你登录 Super Cage 的账户密码相同。</li>
                 <li>系统弹出允许访问系统配置文件的提示时，选择允许。</li>
               </ol>
               <p>安装过程中关闭恢复画面会取消本次作业；取消不会丢失已有进度，重新启动客机后再试。反复失败时，可使用页面底部的「日志与诊断」查看记录。</p>
               {!macRecovery.running && <button disabled={busy} onClick={() => run(() => api("/macos/install-recovery", { action: "start" }))}>启动恢复客机</button>}
-              {macRecovery.running && <MacOSLogin initialSetup installRecovery label="打开恢复画面" setupHint="先登录安装时创建的客机普通账户，再点击「打开 Apple Installer」。管理员认证用户名填 cagesetup，密码与 Cage 账户相同；系统提示时选择允许。" setupStatus="安装完成后返回 Cage 继续置备。" setupActions={<button disabled={busy} onClick={() => run(() => api("/macos/install-recovery", { action: "resume" }))}>打开 Apple Installer</button>} onSettings={() => setHelp(true)} />}
+              {macRecovery.running && <MacOSLogin initialSetup installRecovery label="打开恢复画面" setupHint="先登录安装时创建的客机普通账户，再点击「打开 Apple Installer」。管理员认证用户名填 cagesetup，密码与 Super Cage 账户相同；系统提示时选择允许。" setupStatus="安装完成后返回 Super Cage 继续置备。" setupActions={<button disabled={busy} onClick={() => run(() => api("/macos/install-recovery", { action: "resume" }))}>打开 Apple Installer</button>} onSettings={() => setHelp(true)} />}
             </section>}
             {pending?.system === "macos" && macRecovery && !macRecovery.available && macRecovery.can_prepare && <section className="initialization-notice" aria-label="macOS 安装恢复">
               <p>检测到未完成的 macOS 安装；macOS 27 需要你在客机中完成一次管理员授权，这是正常流程。后续恢复将沿用原客机磁盘。准备完成后，这里会出现继续安装的指引。</p>
@@ -313,8 +313,8 @@ function Initialization({ initial, onComplete }) {
               {status.guest_system === "macos" && <InitializationChecks status={status} busy={Boolean(connectionError)} onWorkspace={setApprovalWorkspace} onCheck={checkNetwork} onStart={install} onRestart={restart} onUpdate={() => run(() => api("/environment/update", {}))} onDiagnostics={() => setHelp(true)} />}
               <div className="initialization-network"><p>{status.safety?.error || job.error || status.network_error || "客机已经连接，请完成网络和隔离检查后进入工作台。"}</p><button disabled={Boolean(connectionError)} onClick={checkNetwork}>运行网络与隔离检查</button></div>
             </>}
-            {(progress?.setup_progress.phase === "image" || (failed && !networkPending)) && <p>系统镜像和在主机上准备的 macOS 安装组件遵循主机代理设置。下载失败时，可在操作详情中查看当前文件和重试记录。客机内的联网请求使用 Cage 代理。</p>}
-            <div className="initialization-recovery"><button onClick={() => setStep("proxy")} disabled={busy}>检查 Cage 代理配置</button>{!progress && <button onClick={() => setDetails(true)}>查看操作详情</button>}</div>
+            {(progress?.setup_progress.phase === "image" || (failed && !networkPending)) && <p>系统镜像和在主机上准备的 macOS 安装组件遵循主机代理设置。下载失败时，可在操作详情中查看当前文件和重试记录。客机内的联网请求使用 Super Cage 代理。</p>}
+            <div className="initialization-recovery"><button onClick={() => setStep("proxy")} disabled={busy}>检查 Super Cage 代理配置</button>{!progress && <button onClick={() => setDetails(true)}>查看操作详情</button>}</div>
           </>)}
         </div>
         {error && <p className="initialization-notice" role="alert"><SafetyMessage message={error} /></p>}

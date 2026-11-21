@@ -34,7 +34,7 @@ func installMacWorkbench(ctx context.Context, profile, state string, l *vm.Lima)
 	defer clear(pw)
 	ordinaryUser := os.Getenv("CAGE_MACOS_ACCOUNT")
 	if !guestos.ValidMacOSAccountName(ordinaryUser) {
-		return errors.New("请从 Cage 注册共用账密后继续安装 macOS 客机")
+		return errors.New("请从 Super Cage 注册共用账密后继续安装 macOS 客机")
 	}
 	recovery, err := guestos.LoadMacOSInstallRecovery(profile)
 	if err != nil {
@@ -44,7 +44,7 @@ func installMacWorkbench(ctx context.Context, profile, state string, l *vm.Lima)
 		return errors.New("客机账户与原安装恢复记录不匹配")
 	}
 	if !macGuestLoginAvailable() {
-		return errors.New("此 Cage 构建缺少虚拟 Mac 登录组件")
+		return errors.New("此 Super Cage 构建缺少虚拟 Mac 登录组件")
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -233,6 +233,6 @@ func installMacWorkbench(ctx context.Context, profile, state string, l *vm.Lima)
 	if err := guestos.BindNewMacOSProfile(profile, ordinaryUser, key, i.ID); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stdout, "macOS 客机应用已安装，自动登录已准备。Cage 将继续完成首次授权。")
+	fmt.Fprintln(os.Stdout, "macOS 客机应用已安装，自动登录已准备。Super Cage 将继续完成首次授权。")
 	return nil
 }

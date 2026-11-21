@@ -142,7 +142,7 @@ try {
     };
     rfb.focus();
   });
-  await imageEvent("[aria-label='Cage 网页输入']", "paste");
+  await imageEvent("[aria-label='Super Cage 网页输入']", "paste");
   await poll(() => received.length === 1);
   await page.evaluate(() => probe.rfb.sendKey(0xff0d, "Enter", true));
   assert.deepEqual(await page.evaluate(() => probe.order), []);

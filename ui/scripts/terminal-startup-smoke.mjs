@@ -28,7 +28,7 @@ for (const platform of ["darwin", "windows", "linux"]) {
       socket.send(Buffer.from(warning.slice(22)));
     });
     await page.reload();
-    await page.getByRole("button", { name: "启动 Cage 环境", exact: true }).click();
+    await page.getByRole("button", { name: "启动 Super Cage 环境", exact: true }).click();
     await page.getByRole("button", { name: "新建终端", exact: true }).first().click();
     await page.getByRole("menuitem", { name: /Claude/ }).first().click();
     await page.getByText("正在准备 Claude 会话…", { exact: true }).waitFor();

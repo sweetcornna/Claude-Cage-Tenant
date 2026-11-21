@@ -103,7 +103,7 @@ jobs:
         run: |
           runuser -u cage -- bwrap --unshare-user --unshare-pid --ro-bind / / --proc /proc --dev /dev -- true
           version=$(cat VERSION)
-          bash scripts/test-linux-install.sh "_output/releases/$version/linux/Cage-$version-linux-amd64.deb"
+          bash scripts/test-linux-install.sh "_output/releases/$version/linux/Super-Cage-$version-linux-amd64.deb"
       - name: Record release candidate identity
         if: ${{ inputs.release }}
         run: |
@@ -114,7 +114,7 @@ jobs:
         with:
           name: ${{ inputs.artifact_name }}
           path: |
-            _output/releases/*/linux/Cage-*-linux-amd64.deb
+            _output/releases/*/linux/Super-Cage-*-linux-amd64.deb
             _output/releases/*/linux/SHA256SUMS
             _output/releases/*/linux/mihomo-*-source.tar.gz
             _output/releases/*/linux/build-metadata.json
@@ -183,6 +183,6 @@ jobs:
       - name: Test the Ubuntu 22.04-built package unchanged
         shell: bash
         run: |
-          package=$(find _output/compatibility -name 'Cage-*-linux-amd64.deb' -print -quit)
+          package=$(find _output/compatibility -name 'Super-Cage-*-linux-amd64.deb' -print -quit)
           test -n "$package"
           bash scripts/test-linux-install.sh "$package"

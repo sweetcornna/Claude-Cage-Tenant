@@ -322,7 +322,7 @@ export function parseThemeDocument(text) {
     throw new Error("无法读取主题，请选择有效的 JSON 文件");
   }
   if (!object(data) || data.format !== "cage-theme" || data.version !== 1)
-    throw new Error("不支持的主题格式或版本，请使用 Cage 导出的主题文件");
+    throw new Error("不支持的主题格式或版本，请使用 Super Cage 导出的主题文件");
   if (
     Object.keys(data).some(
       (key) =>

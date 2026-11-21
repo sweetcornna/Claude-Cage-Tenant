@@ -125,7 +125,7 @@ export async function createWorkbench({
     if (path === "/account") return route.fulfill({ json: accountView() });
     if (path.startsWith("/account/")) {
       const action = path.split("/").at(-1);
-      if (!["create", "unlock"].includes(action) && !state.account.unlocked) return route.fulfill({ status: 423, body: "请先解锁 Cage" });
+      if (!["create", "unlock"].includes(action) && !state.account.unlocked) return route.fulfill({ status: 423, body: "请先解锁 Super Cage" });
       if (action === "create") {
         if (state.account.exists || !body.username?.trim() || body.password?.length < 8 || body.password !== body.confirm_password) return route.fulfill({ status: 400, body: "账户信息无效" });
         Object.assign(state.account, { exists: true, unlocked: true, username: body.username.trim(), avatar: body.avatar || "" });
@@ -154,7 +154,7 @@ export async function createWorkbench({
       }
       return route.fulfill({ json: accountView() });
     }
-    if (!state.account.unlocked && !["/session", "/launch", "/appearance"].includes(path)) return route.fulfill({ status: 423, body: "Cage 已锁定，请先登录" });
+    if (!state.account.unlocked && !["/session", "/launch", "/appearance"].includes(path)) return route.fulfill({ status: 423, body: "Super Cage 已锁定，请先登录" });
     if (browserRequest && path.startsWith("/browser/") && path !== "/browser/events") return browserRequest(route, path, body);
     if (path.startsWith("/cli/")) {
       if (cliRequest) return cliRequest(route, path, body);
@@ -384,7 +384,7 @@ export async function createWorkbench({
   });
   if (beforeNavigate) await beforeNavigate(page, state);
   await page.goto(url || process.env.CAGE_UI_URL || "http://127.0.0.1:5198");
-  if (waitForReady && !startupFailure && !state.status.vm_running && clientContext.mode !== "none") await page.getByRole("heading", { name: state.initialization.required ? state.initialization.started ? "安装并检查客机环境" : "为 Cage 准备独立环境" : "先启动 Cage 环境" }).waitFor();
+  if (waitForReady && !startupFailure && !state.status.vm_running && clientContext.mode !== "none") await page.getByRole("heading", { name: state.initialization.required ? state.initialization.started ? "安装并检查客机环境" : "为 Super Cage 准备独立环境" : "先启动 Super Cage 环境" }).waitFor();
   return { browser, context, page, state, errors };
 }
 

@@ -34,7 +34,7 @@ func (s *Server) installTailnet() error {
 		return errTailnetNativeInstall
 	}
 	if !s.vmRunning() {
-		return errors.New("请先启动 Cage 环境")
+		return errors.New("请先启动 Super Cage 环境")
 	}
 	ctx, cancel := context.WithTimeout(s.operationContext(), 2*time.Minute)
 	defer cancel()
@@ -50,7 +50,7 @@ func (s *Server) installTailnet() error {
 	}
 	payload, err := tailnetassets.Linux(name)
 	if err != nil {
-		return errors.New("此构建缺少 Tailscale 客机组件，请安装完整的 Cage 构建")
+		return errors.New("此构建缺少 Tailscale 客机组件，请安装完整的 Super Cage 构建")
 	}
 	defer payload.Close()
 	reader, err := gzip.NewReader(payload)

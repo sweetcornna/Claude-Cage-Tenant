@@ -45,7 +45,7 @@ try {
   const surface = await page.locator(".remote-view").elementHandle();
   await openSettings();
   const picker = page.getByRole("combobox", { name: "标签栏布局", exact: true });
-  const help = settings.getByText("浏览器设置页跟随 Cage 当前的字体与配色。", { exact: true });
+  const help = settings.getByText("浏览器设置页跟随 Super Cage 当前的字体与配色。", { exact: true });
   await settings.locator('.browser-settings-section').evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
   const before = await help.boundingBox();
   await picker.click();

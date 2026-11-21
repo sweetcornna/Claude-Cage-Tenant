@@ -4,7 +4,7 @@
 
 ## 运行方式
 
-Intel 使用 QEMU 的 Hypervisor.framework 硬件虚拟化和 Apple Paravirtualized Graphics。Apple Silicon 继续使用 Virtualization.framework。两者共用 Cage 的账户、首次授权、工作台、项目共享和网络检查流程。
+Intel 使用 QEMU 的 Hypervisor.framework 硬件虚拟化和 Apple Paravirtualized Graphics。Apple Silicon 继续使用 Virtualization.framework。两者共用 Super Cage 的账户、首次授权、工作台、项目共享和网络检查流程。
 
 安装器从 Apple 下载完整 Intel InstallAssistant 和签名恢复环境，校验安装包签名及逐块摘要，在新的虚拟磁盘上安装。优先匹配主机版本；Apple 不再提供该补丁版本时，显示并选用同一主版本的兼容更新。不会复制主机账户、应用数据或登录状态。
 
@@ -16,9 +16,9 @@ Intel 使用 QEMU 的 Hypervisor.framework 硬件虚拟化和 Apple Paravirtuali
 
 整个安装和运行阶段沿用实例独立的受控网络，不添加临时 NAT、主机目录盘或其他网卡。首次主机公钥通过虚拟串口独立取得，再用于 SSH 校验。普通客机账户用于日常工作。
 
-项目共享使用 Cage 的受限 SFTP 服务与 macFUSE FSKit 后端。macOS 15.4 至 26.3 的 FSKit 不支持卷级只读挂载，首次检查改由只读 SFTP 服务拒绝写入。文件系统扩展、屏幕录制和辅助功能仍需在客机内按 Cage 引导确认。
+项目共享使用 Super Cage 的受限 SFTP 服务与 macFUSE FSKit 后端。macOS 15.4 至 26.3 的 FSKit 不支持卷级只读挂载，首次检查改由只读 SFTP 服务拒绝写入。文件系统扩展、屏幕录制和辅助功能仍需在客机内按 Super Cage 引导确认。
 
-Intel 首次设置的文件系统步骤会先打开已校验的官方 macFUSE 安装器。完成安装后，继续按 Cage 提示打开文件系统扩展并授权。macFUSE 不随系统附加产品在后台安装，以免 Apple 安装事务因文件系统权限检查失败。
+Intel 首次设置的文件系统步骤会先打开已校验的官方 macFUSE 安装器。完成安装后，继续按 Super Cage 提示打开文件系统扩展并授权。macFUSE 不随系统附加产品在后台安装，以免 Apple 安装事务因文件系统权限检查失败。
 
 ## 构建独立测试包
 
@@ -32,7 +32,7 @@ bash scripts/build-app.sh --intel-macos-test
 
 ## GitHub Actions 产物
 
-三平台检查在 `macos-15-intel` 上独立运行 Intel 构建，产物名为 `cage-macos-amd64-test`，与 `cage-macos-arm64-test` 并列。Intel 任务使用标准的 `scripts/build-app.sh` 构建完整 `Cage.app`，包含 QEMU/HVF、macOS 安装工具、Linux 启动固件和相应源代码材料；本地独立测试包只是额外的应用标识与配置隔离选项。
+三平台检查在 `macos-15-intel` 上独立运行 Intel 构建，产物名为 `cage-macos-amd64-test`，与 `cage-macos-arm64-test` 并列。Intel 任务使用标准的 `scripts/build-app.sh` 构建完整 `Super Cage.app`，包含 QEMU/HVF、macOS 安装工具、Linux 启动固件和相应源代码材料；本地独立测试包只是额外的应用标识与配置隔离选项。
 
 上传前执行 Go、工作台、原生维护、更新和账户检查，核对主程序与运行时的 x86_64 架构，并解压回验签名及可执行权限。GitHub 托管 runner 不启动嵌套客机；空盘系统安装和客机桌面验收仍需 Intel Mac 实机记录。
 

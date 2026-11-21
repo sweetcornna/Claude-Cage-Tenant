@@ -108,7 +108,7 @@ export function WorkspaceSidebar({
       <div className="sidebar-top">
         <span className="sidebar-brand">
           <img className="brand-logo" src={logo} alt="" />
-          Cage
+          Super Cage
                 <GuestSystemIcon system={guestSystem} />
         </span>
         <button

@@ -30,7 +30,7 @@ export const DEFAULT_SYSTEMS = Object.freeze([
 
 const ENTER_HTML = `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cage 工作台入口</title><script defer src="/_tenant/enter.js"></script></head>
+<title>Super Cage 工作台入口</title><script defer src="/_tenant/enter.js"></script></head>
 <body><p id="status">正在进入工作台…</p></body></html>`;
 
 const ENTER_JS = `(async () => {
@@ -511,7 +511,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     systems: args.includes("--no-systems") ? [] : DEFAULT_SYSTEMS,
     registrationOpen: !args.includes("--registration-closed"),
   });
-  console.log(`Cage 多租户门户 mock（仅测试用）：${mock.origin}/`);
+  console.log(`Super Cage 多租户门户 mock（仅测试用）：${mock.origin}/`);
   const stop = async () => {
     await mock.close();
     process.exit(0);

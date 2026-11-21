@@ -68,7 +68,7 @@ enum CageAccountKeychain {
         var item = query(binding: binding, kind: kind)
         item[kSecValueData as String] = try JSONSerialization.data(withJSONObject: credential)
         if let id = credential["id"] as? String { item[kSecAttrGeneric as String] = Data(id.utf8) }
-        item[kSecAttrLabel as String] = kind == "biometric" ? "Cage 指纹解锁" : "Cage 记住登录"
+        item[kSecAttrLabel as String] = kind == "biometric" ? "Super Cage 指纹解锁" : "Super Cage 记住登录"
         if kind == "biometric" {
             var error: Unmanaged<CFError>?
             guard let access = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, .biometryCurrentSet, &error) else { throw CageAccountError("这台 Mac 无法创建指纹保护的凭据") }
@@ -107,7 +107,7 @@ enum CageAccountKeychain {
         var item = query(binding: binding, kind: kind)
         item[kSecReturnData as String] = true; item[kSecMatchLimit as String] = kSecMatchLimitOne
         let context = LAContext()
-        context.localizedReason = "解锁你的 Cage 工作空间"
+        context.localizedReason = "解锁你的 Super Cage 工作空间"
         context.localizedFallbackTitle = ""
         if kind == "automatic" {
             // The login Keychain is local to this Mac and its ACL trusts the
@@ -168,7 +168,7 @@ extension CageAccountDevice {
             try CageAccountKeychain.remove(binding: binding, kind: kind)
         case "unlock":
             // Check persisted manual-lock state before touching the Keychain.
-            if kind == "automatic" && account["require_authentication"] as? Bool == true { throw CageAccountError("Cage 已手动锁定，请使用指纹或密码") }
+            if kind == "automatic" && account["require_authentication"] as? Bool == true { throw CageAccountError("Super Cage 已手动锁定，请使用指纹或密码") }
             guard let devices = account["devices"] as? [String: String], let expectedID = devices[kind] else { throw CageAccountError("请先使用密码登录，再开启快捷登录") }
             let credential = try CageAccountKeychain.read(binding: binding, kind: kind)
             guard credential["id"] as? String == expectedID else { throw CageAccountError("快捷登录授权已失效，请使用密码") }

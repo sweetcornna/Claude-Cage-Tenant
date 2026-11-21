@@ -155,7 +155,7 @@ func (p *approvalStream) control(kind string, line []byte) error {
 }
 
 func (p *approvalStream) answerLocked(id string, allowed bool, input json.RawMessage) error {
-	answer := map[string]any{"behavior": "deny", "message": "Cage did not approve this tool call."}
+	answer := map[string]any{"behavior": "deny", "message": "Super Cage did not approve this tool call."}
 	if allowed {
 		answer = map[string]any{"behavior": "allow", "updatedInput": input}
 	}

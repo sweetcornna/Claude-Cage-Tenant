@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.CAGE_PLAYWRIGHT_MODULE || "playwright");
 const run = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "../..");
-const appBundle = process.env.CAGE_QA_APP_BUNDLE || path.join(root, "_output/Cage.app");
+const appBundle = process.env.CAGE_QA_APP_BUNDLE || path.join(root, "_output/Super Cage.app");
 const executable = path.join(appBundle, "Contents/Resources/cage");
 const output = path.join(root, "docs/test-reports/2026-10-31-managed-proxy");
 await fs.mkdir(output, { recursive: true });
@@ -112,7 +112,7 @@ try {
   await page.getByRole("tab", { name: "诊断", exact: true }).click();
   await page.getByLabel("独立代理端口", { exact: true }).fill(String(a.port));
   await page.getByRole("button", { name: "应用端口并重启核心", exact: true }).click();
-  await page.getByRole("region", { name: "设置", exact: true }).getByRole("alert").filter({ hasText: "Cage 代理端口已被占用，请更换独立端口" }).waitFor();
+  await page.getByRole("region", { name: "设置", exact: true }).getByRole("alert").filter({ hasText: "Super Cage 代理端口已被占用，请更换独立端口" }).waitFor();
   assert.equal(a.proxy.listening, true);
   assert.equal((await state()).port, port, "port conflict replaced the saved profile");
   await page.getByRole("button", { name: "应用端口并重启核心", exact: true }).click();

@@ -30,7 +30,7 @@ func (s *Server) checkMacOSSetupProjects(parent context.Context) error {
 	}
 	s.mu.Unlock()
 	if err != nil {
-		return errors.New("文件共享权限尚未通过。请点击「文件系统扩展」，按引导完成 macFUSE 安装，并打开 macFUSE 和 macFUSE (local) 两个开关，Cage 会自动检查")
+		return errors.New("文件共享权限尚未通过。请点击「文件系统扩展」，按引导完成 macFUSE 安装，并打开 macFUSE 和 macFUSE (local) 两个开关，Super Cage 会自动检查")
 	}
 	return nil
 }

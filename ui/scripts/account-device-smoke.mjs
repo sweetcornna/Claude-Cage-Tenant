@@ -57,8 +57,8 @@ try {
  assert.equal(await automatic.isChecked(),false,'explicit opt-out was overridden');
  await automatic.click();await page.getByRole('status').filter({hasText:'已开启'}).waitFor();
  await page.getByRole('button',{name:'返回工作台',exact:true}).click();
- await menu().click();await page.getByRole('menuitem',{name:/锁定 Cage/}).click();
- await page.getByRole('region',{name:'解锁 Cage',exact:true}).waitFor();
+ await menu().click();await page.getByRole('menuitem',{name:/锁定 Super Cage/}).click();
+ await page.getByRole('region',{name:'解锁 Super Cage',exact:true}).waitFor();
  await page.reload();await page.getByRole('button',{name:'使用 Touch ID 解锁',exact:true}).waitFor();
  assert.equal(calls.filter(x=>x.operation==='unlock'&&x.kind==='automatic').length,1);
  cancelBiometric=true;await page.getByRole('button',{name:'使用 Touch ID 解锁',exact:true}).click();
@@ -81,7 +81,7 @@ try {
  await page.reload();await page.getByRole('status').filter({hasText:'当前目录的快捷登录凭据缺失'}).waitFor();
  assert.equal(calls.filter(x=>x.operation==='unlock').length,unlocksBeforeMigration,'reopen retried invalid enrollment');
  await page.getByLabel('账户密码',{exact:true}).fill('fixture-password');
- await page.getByRole('button',{name:'解锁 Cage',exact:true}).click();await menu().waitFor();
+ await page.getByRole('button',{name:'解锁 Super Cage',exact:true}).click();await menu().waitFor();
  await menu().click();await page.getByRole('menuitem',{name:'设置',exact:true}).click();
  await page.getByText('当前目录的凭据缺失或已失效，请重新开启。',{exact:true}).first().waitFor();
  assert.equal(await automatic.isChecked(),false);assert.equal(await biometric.isChecked(),false);
@@ -118,7 +118,7 @@ try {
  assert.equal(await page.getByRole('button',{name:'使用 Touch ID 解锁',exact:true}).count(),0);
  assert.equal(calls.filter(x=>x.operation==='unlock').length,unlocksBeforeMigration+1);
  await page.getByLabel('账户密码',{exact:true}).fill('fixture-password');
- await page.getByRole('button',{name:'解锁 Cage',exact:true}).click();await menu().waitFor();
+ await page.getByRole('button',{name:'解锁 Super Cage',exact:true}).click();await menu().waitFor();
  await menu().click();await page.getByRole('menuitem',{name:'设置',exact:true}).click();
  assert.equal(await automatic.count(),0);
  supported=true;await page.reload();await menu().waitFor();
@@ -130,10 +130,10 @@ try {
  await page.getByRole('status').filter({hasText:'当前目录的快捷登录凭据缺失'}).waitFor();
  assert.equal(calls.filter(x=>x.operation==='unlock').length,beforeRestart,'locked response reused old availability');
  await page.getByLabel('账户密码',{exact:true}).fill('fixture-password');
- await page.getByRole('button',{name:'解锁 Cage',exact:true}).click();await menu().waitFor();
+ await page.getByRole('button',{name:'解锁 Super Cage',exact:true}).click();await menu().waitFor();
  await menu().click();await page.getByRole('menuitem',{name:'退出账户',exact:true}).click();
  await page.getByRole('dialog').getByRole('button',{name:'停止环境并退出账户',exact:true}).click();
- await page.getByRole('region',{name:'解锁 Cage',exact:true}).waitFor();await page.reload();
+ await page.getByRole('region',{name:'解锁 Super Cage',exact:true}).waitFor();await page.reload();
  await page.getByLabel('账户密码',{exact:true}).waitFor();assert.deepEqual(state.account.devices,{});
  assert.equal(await page.getByRole('button',{name:'使用 Touch ID 解锁',exact:true}).count(),0);
  assert.deepEqual(errors,[]);

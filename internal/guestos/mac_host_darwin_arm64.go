@@ -36,7 +36,7 @@ static void cageFetchMacRestore(uintptr_t handle) {
 	@autoreleasepool {
 		if (@available(macOS 12.0, *)) {
 			if (!cageHasVirtualizationEntitlement()) {
-				cageCompleteMacRestore(handle, (cageMacRestore){.error = "Cage must be signed with the com.apple.security.virtualization entitlement"});
+				cageCompleteMacRestore(handle, (cageMacRestore){.error = "Super Cage must be signed with the com.apple.security.virtualization entitlement"});
 				return;
 			}
 			if (!VZVirtualMachine.supported) {

@@ -131,7 +131,7 @@ function App() {
   // Keep feedback continuous until polling observes the accepted start job.
   const clientStatus = serverStatus && { ...serverStatus, keyboard: clientKeyboard(serverStatus.keyboard) };
   const status = clientStatus && startRequest
-    ? { ...clientStatus, job: { running: true, kind: "start", message: "正在启动 Cage 环境…" } }
+    ? { ...clientStatus, job: { running: true, kind: "start", message: "正在启动 Super Cage 环境…" } }
     : clientStatus;
   const system = status?.guest_system || account?.guest_system;
   const macGuest = system === "macos";
@@ -975,7 +975,7 @@ function App() {
     document.title =
       (current?.title && current.title !== "新标签页"
         ? current.title + " · "
-        : "") + "Cage";
+        : "") + "Super Cage";
     if (active && !current?.incognito) localStorage.setItem(clientStorageKey("cage-active"), active);
   }, [current?.url, current?.title, current?.incognito, active]);
   useEffect(() => {
@@ -1205,7 +1205,7 @@ function App() {
         }
         if (connectionError || fatal) {
           setDialog({
-            title: "退出 Cage",
+            title: "退出 Super Cage",
             body: "工作台连接已中断，暂时无法确认环境状态。仍在运行的后台任务会继续。",
             confirm: "仅退出桌面应用",
             resolve: (confirmed) => confirmed && native("quitNow"),
@@ -1213,7 +1213,7 @@ function App() {
           return;
         }
         setDialog({
-          title: "退出 Cage",
+          title: "退出 Super Cage",
           body: "退出前请保存文件和设置。可以保留环境，让后台任务继续运行；下次打开会重新连接。",
           confirm: "停止环境并退出",
           secondary: "保留运行并退出",
@@ -1441,7 +1441,7 @@ function App() {
           footer={
             <>
               <button onClick={cancelAutomaticExit}>
-                {quitting.error ? "留在 Cage" : "取消自动退出"}
+                {quitting.error ? "留在 Super Cage" : "取消自动退出"}
               </button>
               {quitting.error && (
                 <button className="primary" onClick={stopAndQuit}>
@@ -1459,7 +1459,7 @@ function App() {
               {quitting.error ||
                 (connectionError
                   ? "正在恢复工作台连接，恢复后会继续确认停止结果。"
-                  : "停止完成后 Cage 会自动退出。取消自动退出只保留窗口，环境仍会停止。")}
+                  : "停止完成后 Super Cage 会自动退出。取消自动退出只保留窗口，环境仍会停止。")}
             </p>
             {!quitting.error && (
               <p>
@@ -1479,10 +1479,10 @@ function App() {
       <>
         <div className="boot-screen">
           <Shield size={36} />
-          <h1>连接 Cage 工作台</h1>
+          <h1>连接 Super Cage 工作台</h1>
           <p>{fatal}</p>
           <p className="muted">
-            请从 Cage 应用打开，或在终端运行 <code>cage desktop</code>。
+            请从 Super Cage 应用打开，或在终端运行 <code>cage desktop</code>。
           </p>
           <button
             className="primary"
@@ -1501,7 +1501,7 @@ function App() {
       <>
         <div className="boot-screen">
           <div className="brand-mark">C</div>
-          <h1>Cage</h1>
+          <h1>Super Cage</h1>
           <p>
             <LoaderCircle size={16} className="spin" />
             正在连接工作区…
@@ -1733,33 +1733,33 @@ function App() {
             {showHome && (
               <div className="welcome">
                 <div className="welcome-content">
-                  <img className="welcome-logo" src={logo} alt="Cage" />
+                  <img className="welcome-logo" src={logo} alt="Super Cage" />
                   {storageRecovery ? <>
                     <h1>环境存储需要恢复</h1>
                     <p className="welcome-subtitle"><SafetyMessage message={status.storage_recovery.error} /></p>
                     <p className="field-help">在设置中恢复环境存储后，再启动浏览器和终端。诊断包可以从同一页面导出。</p>
                     <button className="primary" onClick={() => openSettings("project")}>恢复环境存储</button>
                   </> : setupProgress ? <>
-                    <h1>{status.job.error ? "环境安装未完成" : "正在安装 Cage 环境"}</h1>
+                    <h1>{status.job.error ? "环境安装未完成" : "正在安装 Super Cage 环境"}</h1>
                     <SetupProgress job={status.job} onDetails={() => setDetails(true)}
                       onStop={stop} onRetry={() => startEnvironment(status.job.kind === "guest-install" ? { guest_system: status.job.setup_progress.system } : {})} disconnected={Boolean(connectionError)} />
                   </> : <>
                   <h1>
                     {busy
                       ? status.job.kind === "stop"
-                        ? "正在停止 Cage 环境"
+                        ? "正在停止 Super Cage 环境"
                         : status.job.kind === "storage"
                           ? "正在调整环境存储"
                         : status.job.kind === "project"
                           ? "正在打开项目"
-                          : "正在准备 Cage 环境"
+                          : "正在准备 Super Cage 环境"
                       : running
                         ? !status.ready
-                          ? "Cage 环境正在连接"
-                          : "Cage 环境已就绪"
+                          ? "Super Cage 环境正在连接"
+                          : "Super Cage 环境已就绪"
                         : setupProxy
                           ? "为 Claude 准备独立工作区"
-                          : "先启动 Cage 环境"}
+                          : "先启动 Super Cage 环境"}
                   </h1>
                   <p className="welcome-subtitle">
                     <SafetyMessage message={busy
@@ -1775,7 +1775,7 @@ function App() {
                           : "准备独立的浏览器和终端，完成网络检查后开始工作。"} />
                   </p>
                   {!running && !nativeGuestLabel && (
-                    <ol className="onboarding-steps" aria-label="开始使用 Cage">
+                    <ol className="onboarding-steps" aria-label="开始使用 Super Cage">
                       {["配置代理", "启动环境", "开始工作"].map(
                         (label, index) => (
                           <li
@@ -1800,7 +1800,7 @@ function App() {
                         size={24}
                       />
                       <span>
-                        <strong>Cage 隔离环境</strong>
+                        <strong>Super Cage 隔离环境</strong>
                         <small>
                           {running
                             ? runtimeLabel
@@ -1862,7 +1862,7 @@ function App() {
                             ? setupProxy
                               ? "配置网络与代理"
                               : guestSystem?.activate ? "打开工作台" : guestSystem?.pending ? "继续安装" :
-                                guestSystem && guestSystem.guest_system !== "debian-13" ? "安装客户机" : "启动 Cage 环境"
+                                guestSystem && guestSystem.guest_system !== "debian-13" ? "安装客户机" : "启动 Super Cage 环境"
                             : !status.ready
                               ? "恢复浏览器"
                               : !workspace && projectsAvailable
@@ -1893,7 +1893,7 @@ function App() {
                   {!running && !nativeGuestLabel && (
                     <p className="welcome-hint">
                       {setupProxy
-                        ? "Cage 不提供代理或 Claude 账户。连接后，在 Cage 内完成 Claude 登录。"
+                        ? "Super Cage 不提供代理或 Claude 账户。连接后，在 Super Cage 内完成 Claude 登录。"
                         : "首次安装时可在操作详情中查看下载和配置进度；中断后可以继续安装。"}
                     </p>
                   )}
@@ -2136,7 +2136,7 @@ function App() {
                   setTransfer(null);
                 }}
               >
-                粘贴到 Cage
+                粘贴到 Super Cage
               </button>
             </>
           }

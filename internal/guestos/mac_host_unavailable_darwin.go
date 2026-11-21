@@ -11,5 +11,5 @@ func probeMacHost(ctx context.Context) (MacRestore, error) {
 	if err := ctx.Err(); err != nil {
 		return MacRestore{}, err
 	}
-	return MacRestore{}, errors.New("macOS guests require Apple silicon and a Cage build with native Virtualization support")
+	return MacRestore{}, errors.New("macOS guests require Apple silicon and a Super Cage build with native Virtualization support")
 }

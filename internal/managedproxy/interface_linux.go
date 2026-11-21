@@ -62,7 +62,7 @@ func selectLinuxPhysicalInterface(routes string, usable map[string]bool) (string
 		}
 	}
 	if selected == "" {
-		return "", errors.New("未找到带 IPv4 默认路由的物理或云主机网卡；Cage 外网保持关闭，请连接网络后重试")
+		return "", errors.New("未找到带 IPv4 默认路由的物理或云主机网卡；Super Cage 外网保持关闭，请连接网络后重试")
 	}
 	return selected, nil
 }

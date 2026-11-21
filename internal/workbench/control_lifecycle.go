@@ -82,7 +82,7 @@ func (s *Server) handoffWithVMOwnerLocked(w http.ResponseWriter, permittedOwner 
 	if s.closing {
 		s.mu.Unlock()
 		s.op.Unlock()
-		http.Error(w, "后台正在更新，请重新打开 Cage。", http.StatusServiceUnavailable)
+		http.Error(w, "后台正在更新，请重新打开 Super Cage。", http.StatusServiceUnavailable)
 		return
 	}
 	busy := s.jobs.snapshot().Running || vmBusy

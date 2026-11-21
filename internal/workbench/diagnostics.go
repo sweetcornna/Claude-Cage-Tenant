@@ -163,7 +163,7 @@ func exportDiagnostics(configPath, connectionID, destination string, agentLocal 
 			ticket := parsed.Fragment
 			code, e := c.call("POST", "/api/session", map[string]string{"token": ticket}, nil)
 			if e != nil || code != 200 {
-				return errors.New("无法创建诊断导出会话，请重新打开 Cage")
+				return errors.New("无法创建诊断导出会话，请重新打开 Super Cage")
 			}
 			if _, err := c.bindConnection(connectionID); err != nil {
 				return err
@@ -180,7 +180,7 @@ func exportDiagnostics(configPath, connectionID, destination string, agentLocal 
 		}
 		defer response.Body.Close()
 		if response.StatusCode != 200 {
-			return errors.New("诊断包导出未完成，请重新打开 Cage 后重试")
+			return errors.New("诊断包导出未完成，请重新打开 Super Cage 后重试")
 		}
 		if response.Header.Get("Content-Type") != "application/zip" {
 			return errors.New("当前后台尚不支持诊断导出，请重启应用")

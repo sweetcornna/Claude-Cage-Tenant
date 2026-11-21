@@ -54,14 +54,14 @@ export function BrowserSettingsPage({ tab, tabs, currentHome, layout, onLayoutCh
             <div className="browser-setting-actions"><button className="primary" disabled={saving || loading || home === savedHome}>{saving ? '正在保存…' : '保存地址'}</button>{saved && <span role="status">已保存</span>}</div>
             {error && <p className="browser-settings-error" role="alert">{error}</p>}
           </form></>}
-          {item.id === 'appearance' && <><p>调整网页与文件编辑器的标签栏。</p><div className="browser-setting-row"><div><h3>标签栏布局</h3><p>立即生效，保存在本机。</p></div><InlineSelect aria-label="标签栏布局" value={layout} onValueChange={onLayoutChange}><option value="horizontal">横排（顶部）</option><option value="vertical">竖排（左侧）</option></InlineSelect></div><p>浏览器设置页跟随 Cage 当前的字体与配色。</p></>}
+          {item.id === 'appearance' && <><p>调整网页与文件编辑器的标签栏。</p><div className="browser-setting-row"><div><h3>标签栏布局</h3><p>立即生效，保存在本机。</p></div><InlineSelect aria-label="标签栏布局" value={layout} onValueChange={onLayoutChange}><option value="horizontal">横排（顶部）</option><option value="vertical">竖排（左侧）</option></InlineSelect></div><p>浏览器设置页跟随 Super Cage 当前的字体与配色。</p></>}
           {item.id === 'privacy' && <><p>管理网站保存在当前浏览会话中的数据和访问权限。</p>
             <div className="browser-setting-row"><div><h3>Cookie 与登录状态</h3><p>普通会话与无痕会话分别管理。</p></div><InlineSelect aria-label="Cookie 浏览会话" value={cookieSession} onValueChange={setCookieSession}><option value="normal">普通会话</option><option value="private" disabled={!privateTab}>无痕会话</option></InlineSelect></div>
             <BrowserCookies key={cookieTab.id} tab={cookieTab} onClose={() => changeSection('general')} />
             <div className="browser-settings-links"><button onClick={() => onInternal('permissions')}><ExternalLink size={15} />网站权限</button><button onClick={() => onInternal('clear')}><ExternalLink size={15} />清除普通会话浏览数据</button></div>
           </>}
-          {item.id === 'extensions' && <><p>添加与管理 Cage 浏览器使用的扩展。</p><BrowserExtensions onInternal={onInternal} onOpenPage={onOpenPage} onConfirm={onConfirm} /></>}
-          {item.id === 'about' && <><p>Cage 浏览器由环境内的 Chromium 承载。网页、扩展和网站数据随当前 Cage 环境保存。</p><div className="browser-setting-row"><div><h3>浏览器引擎</h3><p>{info?.product || (info?.error ? '版本信息暂时不可用' : '正在读取版本…')}</p></div></div><p>下载文件通过 Cage 保存到下载暂存目录，可从下载面板另存为。</p></>}
+          {item.id === 'extensions' && <><p>添加与管理 Super Cage 浏览器使用的扩展。</p><BrowserExtensions onInternal={onInternal} onOpenPage={onOpenPage} onConfirm={onConfirm} /></>}
+          {item.id === 'about' && <><p>Super Cage 浏览器由环境内的 Chromium 承载。网页、扩展和网站数据随当前 Super Cage 环境保存。</p><div className="browser-setting-row"><div><h3>浏览器引擎</h3><p>{info?.product || (info?.error ? '版本信息暂时不可用' : '正在读取版本…')}</p></div></div><p>下载文件通过 Super Cage 保存到下载暂存目录，可从下载面板另存为。</p></>}
 
         </section>)}
       </div>

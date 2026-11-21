@@ -29,7 +29,7 @@ func probeWindowsHost(ctx context.Context) (bool, string) {
 		return false, "无法读取 Windows 主机的原生处理器架构。"
 	}
 	if runtime.GOARCH != "amd64" || nativeMachine != pe.IMAGE_FILE_MACHINE_AMD64 {
-		return false, "Windows 原生客机需要 Intel 或 AMD x64 主机及 x64 版 Cage。"
+		return false, "Windows 原生客机需要 Intel 或 AMD x64 主机及 x64 版 Super Cage。"
 	}
 	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
@@ -56,7 +56,7 @@ func probeWindowsHost(ctx context.Context) (bool, string) {
 	if strings.TrimSpace(string(output)) != "ready" {
 		return false, "Hyper-V 预检返回了无法识别的结果。"
 	}
-	return true, "Hyper-V 平台已就绪；首次安装确认系统授权后，Cage 管理助手仅操作已绑定客机。"
+	return true, "Hyper-V 平台已就绪；首次安装确认系统授权后，Super Cage 管理助手仅操作已绑定客机。"
 }
 
 func systemPowerShellQuery(ctx context.Context, script string) (*exec.Cmd, error) {

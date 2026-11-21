@@ -138,7 +138,7 @@ try {
     };
     rfb.focus();
   });
-  const target = page.getByLabel("Cage 网页输入");
+  const target = page.getByLabel("Super Cage 网页输入");
   const keys = () =>
     page.evaluate(() =>
       probe.packets.filter(p => p[0] !== 248).map((p) => {

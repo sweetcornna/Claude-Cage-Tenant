@@ -340,7 +340,7 @@ export function BrowserFavorites({ current, ready, onOpen, shortcuts = true, men
               </div>
               {data && (
                 <footer>
-                  {visible.length} 个收藏<span>保存在此 Cage 环境</span>
+                  {visible.length} 个收藏<span>保存在此 Super Cage 环境</span>
                 </footer>
               )}
             </section>

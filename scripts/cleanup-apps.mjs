@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// Remove Cage bundles only after the caller has verified the replacement.
+// Remove Super Cage bundles, including copies named Cage.app from before the
+// rename, only after the caller has verified the replacement. Bundles are
+// matched by identifier, never by file name.
 import { execFileSync } from "node:child_process";
 import { lstat, readdir, realpath, rm } from "node:fs/promises";
 import path from "node:path";
@@ -42,7 +44,7 @@ function intact(bundle) {
 
 export async function cleanupApps({ keep, roots, onInUse = () => {}, onModified = () => {} }) {
   if (!keep.length)
-    throw new Error("At least one verified Cage.app must be kept.");
+    throw new Error("At least one verified Super Cage.app must be kept.");
   const retained = new Set();
   for (const bundle of keep) {
     if (!isCage(bundle) || !intact(bundle)) throw new Error(`Invalid replacement App: ${bundle}`);
@@ -100,7 +102,7 @@ if (
   if (!roots.length) throw new Error("At least one cleanup root is required.");
   for (const bundle of await cleanupApps({
     keep, roots,
-    onInUse: (bundle) => console.error(`Old Cage App is still running; quit it and rerun cleanup: ${bundle}`),
+    onInUse: (bundle) => console.error(`Old App copy is still running; quit it and rerun cleanup: ${bundle}`),
     onModified: (bundle) => console.error(`旧应用包含修改内容或无法验证完整性，文件已保留：${bundle}`),
   }))
     console.log(`Removed old App: ${bundle}`);

@@ -49,7 +49,8 @@ try {
     });
   }
   await page.goto(entry);
-  await page.getByRole("dialog",{name:"工作区侧栏"}).getByRole("button",{name:/ 新建会话$/}).first().click();
+  await page.getByRole("button", {name:"展开侧栏", exact:true}).click();
+  await page.getByRole("dialog", {name:"工作区侧栏"}).getByRole("button",{name:/ 新建会话$/}).first().click();
   await page.getByRole("dialog",{name:"工作区侧栏"}).waitFor({state:"hidden"});
   const message = page.getByRole("textbox",{name:"消息"});
   await message.fill("initial mobile prompt");
@@ -82,7 +83,7 @@ try {
   await page.getByText("isolated continuation",{exact:true}).waitFor();
   assert.equal(await page.getByLabel("会话消息").getByText("initial mobile prompt",{exact:true}).count(),1);
   if (capture) await page.screenshot({path:path.join(capture,engine+"-shared-history.png")});
-  const title = await page.locator(".chat-header h1").innerText();
+  const title = await page.locator(".chat-title-name").innerText();
   // Prepare an ended history through the real archive/restore API. The user
   // then opens it from the actual phone list, with no desktop helper.
   await page.evaluate(async () => {
@@ -109,7 +110,7 @@ try {
   await page.getByRole("dialog",{name:"工作区侧栏"}).getByRole("button",{name:/ 新建会话$/}).first().click();
   await page.getByRole("dialog",{name:"工作区侧栏"}).waitFor({state:"hidden"});
   await message.fill("draft for second");
-  const secondTitle = await page.locator(".chat-header h1").innerText();
+  const secondTitle = await page.locator(".chat-title-name").innerText();
   const select = async name => {
     await page.getByRole("button",{name:"展开侧栏",exact:true}).click();
     await page.getByRole("dialog",{name:"工作区侧栏"}).getByRole("button",{name,exact:true}).click();
