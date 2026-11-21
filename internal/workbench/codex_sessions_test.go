@@ -903,6 +903,172 @@ func TestCodexArchiveClosesTheTerminalAndStopsThePhoneTurn(t *testing.T) {
 	}
 }
 
+// A Codex session through the shipped helper on both devices: the phone's
+// turn, the desktop terminal's Codex under its lease, refusals on both lines,
+// and release when the TUI quits. A stand-in CLI writes the rollout records.
+func TestCodexDesktopTerminalThroughShippedHelper(t *testing.T) {
+	if _, err := os.Stat("/usr/bin/python3"); err != nil {
+		t.Skip("python3 unavailable")
+	}
+	s := testServer(t)
+	t.Cleanup(s.terminals.close)
+	project, _ := filepath.EvalSymlinks(t.TempDir())
+	s.preferences.Workspace = project
+	s.projectShares = map[string]*projectShare{project: {done: make(chan struct{})}}
+	home, _ := filepath.EvalSymlinks(t.TempDir())
+	bin := filepath.Join(home, "bin")
+	if err := os.Mkdir(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	codex := `#!/usr/bin/python3
+import json, os, pathlib, sys, time, uuid
+args, home = sys.argv[1:], pathlib.Path(os.environ.get("CODEX_HOME") or pathlib.Path.home() / ".codex")
+if args == ["--version"]:
+    print("codex-cli 0.171.0")
+    sys.exit(0)
+if args[-1:] == ["--help"]:
+    print("Commands:\n  exec    Run Codex non-interactively\n  resume  Resume a previous session\n\nOptions:\n      --no-daemon\n")
+    sys.exit(0)
+def rollout(thread):
+    return next(home.glob("sessions/*/*/*/rollout-*-" + thread + ".jsonl"))
+if args[:1] != ["exec"]:
+    # The interactive TUI keeps its thread's rollout open until it quits.
+    held = rollout(args[-1]).open("a") if "resume" in args else None
+    with (pathlib.Path.home() / "tui.jsonl").open("a") as log:
+        log.write(json.dumps({"argv": args, "pid": os.getpid()}) + "\n")
+    print("codex tui ready", flush=True)
+    for line in sys.stdin:
+        if line.strip() == "q":
+            break
+    sys.exit(0)
+text = sys.stdin.read()
+if "resume" in args:
+    thread = args[args.index("resume") + 1]
+    path = rollout(thread)
+else:
+    thread = str(uuid.uuid4())
+    path = home / "sessions/2026/11/20" / ("rollout-2026-11-20T10-00-00-" + thread + ".jsonl")
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"type": "session_meta", "payload": {"id": thread, "cwd": os.getcwd(), "source": "exec"}}) + "\n")
+print(json.dumps({"type": "thread.started", "thread_id": thread}), flush=True)
+def row(kind, payload):
+    with path.open("a") as stream:
+        stream.write(json.dumps({"type": kind, "payload": payload}) + "\n")
+row("event_msg", {"type": "task_started"})
+row("response_item", {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]})
+row("response_item", {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "reply: " + text}]})
+row("event_msg", {"type": "task_complete"})
+`
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(codex), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".bash_profile"), []byte("export PATH="+shellescape.Quote(bin)+":/usr/bin:/bin\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	mobileTestSSH(t, s, home, []string{"HOME=" + home, "PATH=" + bin + ":/usr/bin:/bin"})
+	s.ready = true
+	id := uuid.NewString()
+	if w := request(s, "POST", "/api/mobile/cli/sessions", s.origin, `{"id":"`+id+`","workspace":"`+project+`","provider":"codex"}`, true); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	path := "/api/mobile/cli/sessions/" + id
+	send := func(text string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]string{"request_id": uuid.NewString(), "text": text})
+		return request(s, "POST", path+"/messages", s.origin, string(body), true)
+	}
+	read := func() mobileSession {
+		w := request(s, "GET", path, "", "", true)
+		var view mobileSession
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &view) != nil {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		return view
+	}
+	wait := func(what string, done func(mobileSession) bool) mobileSession {
+		deadline := time.Now().Add(25 * time.Second)
+		for {
+			if view := read(); done(view) {
+				return view
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: %+v", what, read())
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	idle := func(view mobileSession) bool {
+		return len(view.Turns) > 0 && view.Turns[len(view.Turns)-1].Status == "completed" && view.Owner == "" && view.CanSend != nil && *view.CanSend
+	}
+	if w := send("hello"); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	wait("first phone turn", idle)
+	record, _ := s.mobileCLI.record(s.profile, id)
+	thread := record.CLIID
+
+	// The desktop opens it as a Codex terminal resumed on the thread.
+	w := request(s, "POST", "/api/cli/sessions/"+id+"/open", s.origin, "{}", true)
+	var opened mobileSession
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &opened) != nil {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	terminal := s.terminals.get(opened.DesktopTerminalID)
+	screen := terminal.subscribe()
+	readTerminalUntil(t, screen, "codex tui ready")
+	screen.Close()
+	var tui struct {
+		Argv []string
+		PID  int
+	}
+	data, _ := os.ReadFile(filepath.Join(home, "tui.jsonl"))
+	if json.Unmarshal(data, &tui) != nil || strings.Join(tui.Argv, " ") != "resume -C "+guestPath(project)+" --no-daemon "+thread {
+		t.Fatalf("TUI started with %s", data)
+	}
+	view := read()
+	if view.Owner != "desktop" || view.CanSend == nil || *view.CanSend || view.TerminalAvailable {
+		t.Fatalf("desktop-owned view %+v", view)
+	}
+	if w := send("from the phone"); w.Code != 409 {
+		t.Fatal("phone message while the desktop's Codex runs", w.Code, w.Body.String())
+	}
+	// The guest's lease refuses too, for a writer this server does not know.
+	record, _ = s.mobileCLI.record(s.profile, id)
+	var guestState struct {
+		Lease struct {
+			ID  string `json:"id"`
+			PID int    `json:"pid"`
+		} `json:"lease"`
+	}
+	stateData, _ := os.ReadFile(filepath.Join(home, ".local/share/cage/codex-sessions", record.Connection, "state.json"))
+	if json.Unmarshal(stateData, &guestState) != nil || guestState.Lease.ID != record.CodexLease || guestState.Lease.PID != tui.PID {
+		t.Fatalf("guest lease %s, TUI pid %d", stateData, tui.PID)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	var refused struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	direct := map[string]any{"connection": record.Connection, "request_id": uuid.NewString(), "text": "bypass", "thread": thread, "account": "default",
+		"subject": "", "cwd": record.GuestWorkspace, "additional_directories": []string{}}
+	if err := s.runCodexSessions(ctx, "send", direct, &refused); err != nil || refused.OK || !strings.Contains(refused.Error, "电脑的 Codex 终端") {
+		t.Fatal("guest send under a lease", refused, err)
+	}
+	// Quitting Codex ends the terminal and releases the thread.
+	if err := terminal.enqueueInput(context.Background(), "q\r"); err != nil {
+		t.Fatal(err)
+	}
+	awaitTerminalSignal(t, terminal.done)
+	wait("release", func(view mobileSession) bool { return view.Owner == "" && view.CanSend != nil && *view.CanSend })
+	if w := send("after the desktop"); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	view = wait("phone turn after the desktop", func(view mobileSession) bool { return len(view.Turns) == 2 && idle(view) })
+	if view.Turns[1].Text != "reply: after the desktop" {
+		t.Fatalf("turn %+v", view.Turns[1])
+	}
+}
+
 type httpResponse struct {
 	code int
 	body string
