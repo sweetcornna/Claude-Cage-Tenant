@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 // Mocked Codex sessions for UI fixtures, one per owner state. Replies follow the
 // workbench contract (internal/workbench/codex_sessions.go, mobile_cli_http.go):
 // the desktop list carries Codex rows and "capabilities" only when asked with
@@ -39,19 +41,50 @@ function view(session) {
     desktop_terminal_id: session.terminal_id || undefined };
 }
 
+function boundTerminal(state, session) {
+  const terminal = { id: "term-" + ++state.sequence, title: session.title, workspace: session.workspace, kind: "codex", closed: false,
+    cli_session_id: session.id, cli_session_provider: "codex", codex_account_id: session.codex_account_id, cli_starting: false };
+  state.terminals.push(terminal);
+  session.terminal_id = terminal.id;
+  return terminal;
+}
+
+// Sets up the sessions once, with the desktop-owned one's terminal open as it
+// is on a real server. Call it when the fixture state is made so that the
+// terminal list has the tab from the start.
+export function seedCodexSessions(state) {
+  if (state.codexSessions) return state.codexSessions;
+  state.codexSessions = codexSessionFixtures(state.status?.projects?.[0]);
+  for (const session of state.codexSessions) if (session.owner === "desktop") boundTerminal(state, session);
+  return state.codexSessions;
+}
+
+// The list's revision changes with what it shows, as the server's does.
+const revisionOf = (answer) => createHash("sha256").update(JSON.stringify(answer)).digest("hex").slice(0, 32);
+
 // Serves /api/cli/sessions* for a workbench fixture. state.codexSessions holds
 // the sessions; tests change an owner there to move a session between states.
-export function codexSessionsRoute(route, request, url, body, state) {
+// A held list (after + wait) answers 204 after state.codexHoldMs (500 ms by
+// default) when nothing changed, so a long-poll loop does not spin.
+export async function codexSessionsRoute(route, request, url, body, state) {
   const path = url.pathname.replace(/^\/api/, "");
-  const sessions = state.codexSessions || (state.codexSessions = codexSessionFixtures(state.status?.projects?.[0]));
+  const sessions = seedCodexSessions(state);
   if (path === "/cli/sessions" && request.method() === "GET") {
     const providers = url.searchParams.getAll("providers");
     if (providers.length > 1 || providers.length === 1 && providers[0].split(",").some((name) => !["claude", "codex"].includes(name)))
       return text(route, 400, "会话类型无效");
     const archived = url.searchParams.get("archived") === "true";
     const codex = providers.length === 1 && providers[0].split(",").includes("codex");
-    const answer = { sessions: codex ? sessions.filter((item) => Boolean(item.archived) === archived).map(summary) : [], notice: "", revision: "0".repeat(32) };
-    if (codex) answer.capabilities = { codex_sessions: true, codex_cli: { installed: true, complete: true, version: "0.171.0", resume: true, no_daemon: true, resume_no_daemon: true, delete: true } };
+    const answer = { sessions: codex ? sessions.filter((item) => Boolean(item.archived) === archived).map(summary) : [], notice: "" };
+    if (codex) answer.capabilities = { codex_sessions: true, codex_cli: { installed: true, complete: true, version: "0.171.0", resume: true, no_daemon: true, resume_no_daemon: true, delete: true, writer_locks: true } };
+    answer.revision = revisionOf(answer);
+    const after = url.searchParams.get("after") || "";
+    const wait = Number(url.searchParams.get("wait") || 0);
+    if (after && !/^[0-9a-f]{32}$/.test(after) || wait > 0 && !after) return text(route, 400, "会话列表版本无效");
+    if (after && after === answer.revision) {
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(wait * 1000, state.codexHoldMs ?? 500)));
+      return route.fulfill({ status: 204 });
+    }
     return route.fulfill({ json: answer });
   }
   const match = path.match(/^\/cli\/sessions\/([^/]+)(?:\/([a-z]+))?$/);
@@ -64,12 +97,7 @@ export function codexSessionsRoute(route, request, url, body, state) {
   if (action === "open") {
     if (session.archived) return text(route, 410, "此会话已归档，请先在设置中的已归档会话撤销归档");
     if (refusals[session.owner]) return text(route, 409, refusals[session.owner]);
-    let terminal = state.terminals.find((item) => item.cli_session_id === session.id && !item.closed);
-    if (!terminal) {
-      terminal = { id: "term-" + ++state.sequence, title: session.title, workspace: session.workspace, kind: "codex", closed: false,
-        cli_session_id: session.id, cli_session_provider: "codex", codex_account_id: session.codex_account_id, cli_starting: false };
-      state.terminals.push(terminal);
-    }
+    const terminal = state.terminals.find((item) => item.cli_session_id === session.id && !item.closed) || boundTerminal(state, session);
     Object.assign(session, { owner: "desktop", running: true, terminal_id: terminal.id });
     return route.fulfill({ json: view(session) });
   }

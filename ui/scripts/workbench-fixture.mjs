@@ -2,7 +2,7 @@
 import { createRequire } from "node:module";
 import { defaultAppearance, presets } from "../src/appearance-state.mjs";
 import { claudeScienceRoute } from "./claude-science-fixture.mjs";
-import { codexSessionsRoute } from "./codex-session-fixture.mjs";
+import { codexSessionsRoute, seedCodexSessions } from "./codex-session-fixture.mjs";
 const require = createRequire(import.meta.url);
 export async function createWorkbench({
   viewport = { width: 1280, height: 850 },
@@ -90,6 +90,7 @@ export async function createWorkbench({
     active: "",
     sequence: 0,
   };
+  if (codexSessions) seedCodexSessions(state);
   await page.exposeFunction("chooseTestFolder", () => state.chosenFolder);
   await page.exposeFunction("requestNativeForTest", async (body) => nativeRequest ? nativeRequest(body) : null);
   await page.addInitScript(() => {
