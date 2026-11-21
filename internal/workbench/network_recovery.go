@@ -30,6 +30,10 @@ type networkRecovery struct {
 // before pressure can postpone the next one again.
 var recoveryPressureWait = 60 * time.Second
 
+// networkRecoveryCheck is the full check an automatic recovery runs; tests
+// replace it so no guest is needed.
+var networkRecoveryCheck = func(s *Server) error { return s.runSafetyCheck() }
+
 // pendingRecoveryLocked reports whether s.recovery still describes the next
 // transition of the current gate. Called with s.mu held.
 func (s *Server) pendingRecoveryLocked() (networkRecovery, bool) {
@@ -161,7 +165,7 @@ func (s *Server) recoverNetwork() {
 		timing.stages = append(timing.stages, "pressure_wait_elapsed=true")
 		diagnostics.Log("warn", "network", fmt.Sprintf("memory pressure persisted for %s; running the automatic recheck anyway (guest=%t, host=%t, attempt=%d)", recoveryPressureWait, guestPressure, resources.HostPressure, r.Attempts+1))
 	}
-	_, _ = s.submitJob("network-recovery", func() error { return s.runNetworkRecovery(r, s.runSafetyCheck) })
+	_, _ = s.submitJob("network-recovery", func() error { return s.runNetworkRecovery(r, func() error { return networkRecoveryCheck(s) }) })
 }
 
 func (s *Server) runNetworkRecovery(expected networkRecovery, recheck func() error) error {
