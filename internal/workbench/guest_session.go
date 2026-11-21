@@ -246,13 +246,17 @@ func (g *guestSession) openLocked(lifetime context.Context, command func(context
 		defer close(opening)
 		g.opening = nil
 		switch {
+		case g.epoch != epoch:
+			// Closed while opening, for example for a guest restart. Its
+			// failure belongs to the guest that went away, not to the session
+			// close() just reset.
+			if conn != nil {
+				conn.close()
+			}
 		case err != nil:
 			g.failures++
 			g.openErr = err
 			g.retryAt = time.Now().Add(guestSessionBackoff(g.failures))
-		case g.epoch != epoch:
-			// Closed while opening, for example for a guest restart.
-			conn.close()
 		default:
 			g.failures, g.openErr = 0, nil
 			g.conn = conn
