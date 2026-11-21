@@ -18,5 +18,5 @@ fs.writeFileSync(out + "mark-mono.svg", svg(mark({ ink: "#1F1E1D", clay: "#1F1E1
 fs.writeFileSync(out + "mark-small.svg", svg(small("#1F1E1D", "#D97757")));
 fs.writeFileSync(out + "mark-small-on-dark.svg", svg(small("#F3EFE5", "#D97757")));
 fs.writeFileSync(out + "mark-small-themed.svg", svg(small("currentColor", "var(--clay, #D97757)")));
-fs.writeFileSync(out + "tile-ink.svg", tile(mark({ ink: "#F3EFE5", glow: "#4A3329", v }), .76, 3));
-fs.writeFileSync(out + "tile-ink-small.svg", tile(small("#F3EFE5", "#D97757"), .7, 4));
+fs.writeFileSync(out + "tile-ink.svg", tile(mark({ ink: "#F3EFE5", glow: "#4A3329", v }), .74, -4));
+fs.writeFileSync(out + "tile-ink-small.svg", tile(small("#F3EFE5", "#D97757"), .72, 0));
