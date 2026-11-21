@@ -30,7 +30,7 @@ for (const platform of ["darwin", "windows", "linux"]) {
   try {
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await page.getByRole("navigation", { name: "设置分组" }).getByRole("button", { name: "关于", exact: true }).click();
-    const about = page.getByRole("region", { name: "关于 Cage", exact: true });
+    const about = page.getByRole("region", { name: "关于 Super Cage", exact: true });
     await about.getByText("0.1.7", { exact: true }).waitFor();
     await about.getByText("aaaaaaaaaaaa", { exact: true }).waitFor();
     await about.getByText(/优先通过主机网络与系统代理/).waitFor();

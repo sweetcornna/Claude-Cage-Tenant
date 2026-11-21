@@ -207,7 +207,7 @@ export function CodexAccountsPanel({ store, running, environmentBusy, tabs, logi
     {loginPending && <p className="claude-profile-note" role="status">登录终端仍在等待授权。</p>}
     {detectionError && <p className="account-error" role="alert">{detectionError}</p>}
     {usageUnavailable && !environment && <p className="claude-profile-note" role="status">{usageUnavailable}</p>}
-    {guestSupported && (!running ? <p className="claude-profile-note">启动 Cage 环境后可检测 Codex 登录，也可登录新账号。</p> :
+    {guestSupported && (!running ? <p className="claude-profile-note">启动 Super Cage 环境后可检测 Codex 登录，也可登录新账号。</p> :
       detectionStatus === "offline" ? <p className="claude-profile-note">工作环境就绪后可检测和登录账号。</p> :
       detectionStatus === "signed_out" && <p className="claude-profile-note">环境的 ~/.codex 尚未登录 ChatGPT。账号列表为空时，Codex 终端会提示登录。</p>)}
     <div className="claude-list-heading">

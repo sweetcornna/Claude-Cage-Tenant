@@ -45,7 +45,7 @@ func (a *localAccount) generateRecovery(password string) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.record == nil || len(a.key) != 32 {
-		return "", errors.New("请先解锁 Cage")
+		return "", errors.New("请先解锁 Super Cage")
 	}
 	if time.Now().Before(a.nextAttempt) {
 		return "", errors.New("请稍后再试")

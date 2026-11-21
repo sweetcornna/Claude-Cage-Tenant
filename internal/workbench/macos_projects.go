@@ -28,7 +28,7 @@ func macOSProjectPath(user, hostDirectory string) string {
 // A mount which is ready in FSKit can still be unreadable by the guest app.
 // Keep the live restricted connection while macOS waits for the user's folder
 // approval; do not accept an APFS directory or a stale mount as this project.
-var errMacOSProjectApproval = &projectShareError{Recovery: "project-approval", Message: "请在 Cage 显示的客机授权窗口中允许此项目，然后验证授权。"}
+var errMacOSProjectApproval = &projectShareError{Recovery: "project-approval", Message: "请在 Super Cage 显示的客机授权窗口中允许此项目，然后验证授权。"}
 
 const macProjectAgent = "/Applications/CageProjectAccess.app/Contents/MacOS/CageProjectAccess"
 const macProjectLoginCheck = `test "$(/usr/bin/stat -f %u /dev/console)" = "$(/usr/bin/id -u)" && /bin/launchctl print "gui/$(/usr/bin/id -u)" >/dev/null 2>&1`
@@ -38,7 +38,7 @@ func macOSProjectPrepareError(err error) error {
 	if errors.As(err, &exit) {
 		switch exit.ExitCode() {
 		case 73:
-			return &projectShareError{Recovery: "guest-login", Message: "请先登录虚拟 Mac 的客机账户。登录完成后，Cage 会自动连接项目。"}
+			return &projectShareError{Recovery: "guest-login", Message: "请先登录虚拟 Mac 的客机账户。登录完成后，Super Cage 会自动连接项目。"}
 		case 74, 79:
 			return &projectShareError{Recovery: "environment-update", Message: "客机项目共享组件尚未就绪。请同步环境组件，完成后重新连接项目。"}
 		case 76:
@@ -220,10 +220,10 @@ func (s *Server) probeMacOSProject(ctx context.Context, hostDir, guestDir string
 				message := string(share.stderr.data)
 				_ = diagnostics.New(s.profile).Record("warn", "macos-project-mount", message)
 				if strings.Contains(strings.ToLower(message), "not enabled") {
-					return &projectShareError{Recovery: "filesystem-permission", Message: "虚拟 Mac 的文件系统扩展尚未启用。请打开客机授权设置，按提示打开 macFUSE 和 macFUSE (local) 两个开关，Cage 会自动检查并重新连接项目。"}
+					return &projectShareError{Recovery: "filesystem-permission", Message: "虚拟 Mac 的文件系统扩展尚未启用。请打开客机授权设置，按提示打开 macFUSE 和 macFUSE (local) 两个开关，Super Cage 会自动检查并重新连接项目。"}
 				}
 			}
-			return &projectShareError{Recovery: "project-retry", Message: "客机文件共享连接已中断。Cage 会自动重试，持续失败时可查看诊断记录。"}
+			return &projectShareError{Recovery: "project-retry", Message: "客机文件共享连接已中断。Super Cage 会自动重试，持续失败时可查看诊断记录。"}
 		case <-time.After(200 * time.Millisecond):
 		}
 	}

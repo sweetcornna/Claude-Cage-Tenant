@@ -7,6 +7,7 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
@@ -17,11 +18,17 @@ import android.view.Gravity;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Build;
+import android.provider.MediaStore;
 import android.text.InputType;
+import android.text.TextUtils;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.webkit.CookieManager;
+import android.webkit.MimeTypeMap;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -42,6 +49,7 @@ import java.util.Map;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
 import androidx.webkit.ScriptHandler;
+import androidx.core.content.FileProvider;
 
 public final class MainActivity extends Activity {
     private static final int PICK_INVITATION = 41;
@@ -94,6 +102,12 @@ public final class MainActivity extends Activity {
     private MobileTheme palette;
     private SharedPreferences appearance;
     private static final int SCAN = 42;
+    private static final int PICK_FILES = 45, CAMERA_FOR_FILES = 46;
+    // A pending <input type="file"> request from the workbench, and its camera photo.
+    private ValueCallback<Uri[]> pendingFiles;
+    private Intent pendingPicker;
+    private File pendingPhoto;
+    private boolean sharing;
 
     private void rememberRelay(String relay) {
         trust.edit().putString("preferred-relay", relay).apply();
@@ -222,6 +236,68 @@ public final class MainActivity extends Activity {
         form.addView(view);
         return view;
     }
+    private TextView title(String value, int size) {
+        TextView view = text(value, size, palette.ink);
+        view.setTypeface(MobileTheme.SERIF);
+        if (Build.VERSION.SDK_INT >= 28) view.setAccessibilityHeading(true);
+        return view;
+    }
+    private static void buttonRole(View view) {
+        view.setFocusable(true);
+        view.setAccessibilityDelegate(new View.AccessibilityDelegate() {
+            @Override public void onInitializeAccessibilityNodeInfo(View host, android.view.accessibility.AccessibilityNodeInfo info) {
+                super.onInitializeAccessibilityNodeInfo(host, info);
+                info.setClassName(Button.class.getName());
+            }
+        });
+    }
+    // A hand-drawn doodle above a short line, for empty lists and onboarding.
+    private void emptyState(LinearLayout parent, String doodle, String message) {
+        LinearLayout box = column();
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        box.setPadding(0, dp(12), 0, dp(8));
+        box.addView(image("cage_doodle_" + doodle), dp(136), dp(102));
+        TextView line = text(message, 15, palette.muted);
+        line.setGravity(Gravity.CENTER);
+        line.setPadding(dp(12), dp(10), dp(12), 0);
+        box.addView(line, -1, -2);
+        parent.addView(box, -1, -2);
+    }
+    private TextView chip(String value, int color) {
+        TextView view = text(value, 12, color);
+        view.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        view.setPadding(dp(10), dp(4), dp(10), dp(4));
+        view.setBackground(surface((color & 0x00ffffff) | 0x24000000, 999, false));
+        return view;
+    }
+    // A card row with a title, a quieter detail line and an optional state chip.
+    private LinearLayout listRow(LinearLayout parent, String name, String detail, String state, int tone, View.OnClickListener action) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(16), dp(10), dp(14), dp(10));
+        row.setMinimumHeight(dp(60));
+        row.setBackground(pressable(palette.panel, 12, true));
+        row.setOnClickListener(action);
+        buttonRole(row);
+        LinearLayout texts = column();
+        TextView title = text(name, 16, palette.ink);
+        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        title.setSingleLine(); title.setEllipsize(TextUtils.TruncateAt.END);
+        texts.addView(title);
+        if (!detail.isEmpty()) {
+            TextView more = text(detail, 13, palette.muted);
+            more.setSingleLine(); more.setEllipsize(TextUtils.TruncateAt.END);
+            texts.addView(more);
+        }
+        row.addView(texts, new LinearLayout.LayoutParams(0, -2, 1));
+        if (state != null) row.addView(chip(state, tone));
+        row.setContentDescription(name + (detail.isEmpty() ? "" : "，" + detail) + (state == null ? "" : "，" + state));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = dp(8);
+        parent.addView(row, lp);
+        return row;
+    }
     private Button button(LinearLayout parent, String name, boolean primary, View.OnClickListener action) {
         Button view = new Button(this);
         view.setText(name);
@@ -253,15 +329,9 @@ public final class MainActivity extends Activity {
         view.setGravity(Gravity.CENTER);
         view.setPadding(dp(16), 0, dp(16), 0);
         view.setBackground(pressable(palette.action, 14, false));
-        view.setFocusable(true);
         view.setContentDescription("连接电脑");
         view.setOnClickListener(action);
-        view.setAccessibilityDelegate(new View.AccessibilityDelegate() {
-            @Override public void onInitializeAccessibilityNodeInfo(View host, android.view.accessibility.AccessibilityNodeInfo info) {
-                super.onInitializeAccessibilityNodeInfo(host, info);
-                info.setClassName(Button.class.getName());
-            }
-        });
+        buttonRole(view);
         ImageView computer = image("cage_computer");
         computer.setColorFilter(palette.onAction);
         view.addView(computer, dp(22), dp(22));
@@ -277,10 +347,16 @@ public final class MainActivity extends Activity {
         EditText input = new EditText(this);
         input.setSingleLine();
         input.setTextSize(16);
+        input.setTextColor(palette.ink);
+        input.setHintTextColor(palette.muted);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         input.setHint(hint);
         input.setText(value);
-        form.addView(input);
+        input.setBackground(surface(palette.soft, 12, false));
+        input.setPadding(dp(14), 0, dp(14), 0);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(52));
+        lp.topMargin = dp(8);
+        form.addView(input, lp);
         return input;
     }
     private void statusView() {
@@ -320,37 +396,38 @@ public final class MainActivity extends Activity {
         body.addView(icon("gear", "设置", v -> showSettings(false)), gear);
 
         form = column();
-        form.setGravity(Gravity.CENTER);
+        form.setGravity(Gravity.CENTER_HORIZONTAL);
         LinearLayout homeForm = form;
         // Balance the larger brand/action gap so the logo stays in place (§3.6).
-        form.setPadding(0, dp(32), 0, 0);
-        FrameLayout.LayoutParams hero = new FrameLayout.LayoutParams(dp(276), -2, Gravity.CENTER);
+        form.setPadding(0, dp(24), 0, 0);
+        FrameLayout.LayoutParams hero = new FrameLayout.LayoutParams(dp(300), -2, Gravity.CENTER);
         hero.leftMargin = dp(24);
         hero.rightMargin = dp(24);
         body.addView(form, hero);
-        ImageView mark = image("cage_icon");
-        mark.setBackground(surface(palette.panel, 18, false));
-        mark.setClipToOutline(true);
-        form.addView(mark, dp(120), dp(120));
-        TextView title = text("Cage", 38, palette.ink);
-        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        form.addView(image("cage_logo"), dp(96), dp(96));
+        TextView title = title("Super Cage", 34);
         title.setGravity(Gravity.CENTER);
-        title.setPadding(0, dp(8), 0, dp(52));
-        form.addView(title);
-        LinearLayout.LayoutParams action = new LinearLayout.LayoutParams(-1, dp(60));
-        action.topMargin = dp(8);
-        form.addView(connectComputerButton(v -> showPair(false)), action);
+        title.setPadding(0, dp(10), 0, 0);
+        form.addView(title, -2, -2);
+        ImageView squiggle = image("cage_doodle_squiggle");
+        squiggle.setScaleType(ImageView.ScaleType.FIT_XY);
+        form.addView(squiggle, dp(150), dp(12));
+        TextView subtitle = text("在手机上接着写代码", 16, palette.muted);
+        subtitle.setGravity(Gravity.CENTER);
+        subtitle.setPadding(0, dp(12), 0, dp(52));
+        form.addView(subtitle, -1, -2);
+        form.addView(connectComputerButton(v -> showPair(false)), new LinearLayout.LayoutParams(-1, dp(52)));
         Button server = button(form, "连接服务器", false, v -> showServers());
-        LinearLayout.LayoutParams serverSize = (LinearLayout.LayoutParams) server.getLayoutParams();
-        serverSize.height = dp(60); serverSize.topMargin = dp(12);
+        server.setBackground(pressable(palette.panel, 14, true));
+        ((LinearLayout.LayoutParams) server.getLayoutParams()).topMargin = dp(12);
         statusView();
         body.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
             int height = bottom - top;
             if (height == oldBottom - oldTop && right - left == oldRight - oldLeft) return;
-            hero.width = Math.min(dp(276), Math.max(0, right - left - dp(48)));
+            hero.width = Math.min(dp(300), Math.max(0, right - left - dp(48)));
             homeForm.setLayoutParams(hero);
-            int spacing = Math.min(dp(60), Math.max(dp(28), Math.round(height * 0.075f))) + dp(32);
-            title.setPadding(0, dp(8), 0, spacing - dp(8));
+            int spacing = Math.min(dp(56), Math.max(dp(28), Math.round(height * 0.07f))) + dp(16);
+            subtitle.setPadding(0, dp(12), 0, spacing);
         });
     }
     private void closeSheet() {
@@ -374,7 +451,7 @@ public final class MainActivity extends Activity {
         layer.addView(shade, -1, -1);
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
-        scroll.setBackground(surface(palette.panel, 26, false));
+        scroll.setBackground(surface(palette.panel, 20, false));
         scroll.setClickable(true);
         FrameLayout.LayoutParams sheet = new FrameLayout.LayoutParams(Math.min(getResources().getDisplayMetrics().widthPixels, dp(500)), -2,
             Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
@@ -386,12 +463,11 @@ public final class MainActivity extends Activity {
         scroll.addView(form);
         FrameLayout heading = new FrameLayout(this);
         form.addView(heading, -1, dp(48));
-        TextView title = text(code ? "配对码" : "连接电脑", 24, palette.ink);
-        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        TextView title = title(code ? "配对码" : "连接电脑", 26);
         heading.addView(title, new FrameLayout.LayoutParams(-2, -2, Gravity.LEFT | Gravity.CENTER_VERTICAL));
         if (!code) {
-            form.addView(image("pair_devices"), -1, dp(112));
-            label("在电脑的「设置 → 远程连接」中生成配对二维码或配对码。", 14);
+            form.addView(image("cage_doodle_laptop"), -1, dp(108));
+            label("在电脑的 Super Cage「设置 → 远程连接」中生成配对二维码或配对码。", 14);
             button(form, "扫码连接", true, v -> startActivityForResult(new Intent(this, ScanActivity.class), SCAN));
             button(form, "使用配对码", false, v -> showPair(true));
         } else {
@@ -411,11 +487,16 @@ public final class MainActivity extends Activity {
             label("已连接的设备", 15);
             label("长按设备可取消连接", 14);
             for (ConnectedDevice connected : connections.values()) {
-                Button entry = button(form, connected.name + "  ·  进入", false, v -> enterDevice(connected));
+                LinearLayout entry = listRow(form, connected.name, connected.account == null ? "电脑" : "服务器虚拟机", "进入", palette.clayInk, v -> enterDevice(connected));
+                entry.setBackground(pressable(palette.soft, 12, false));
                 entry.setOnLongClickListener(v -> {confirmDisconnect(connected); return true;});
             }
         }
-        if (credentials.saved() && !code) button(form, "重新连接已配对电脑", false, v -> connect());
+        if (credentials.saved() && !code) {
+            Button again = button(form, "重新连接已配对电脑", false, v -> connect());
+            again.setTextColor(palette.clayInk);
+            again.setBackground(pressable(palette.panel, 14, true));
+        }
         statusView();
         form.setFocusableInTouchMode(true);
         form.requestFocus();
@@ -445,16 +526,15 @@ public final class MainActivity extends Activity {
         form.setFocusableInTouchMode(true);
         scroll.addView(form);
         form.addView(icon("back", "返回", v -> back.run()), dp(48), dp(48));
-        TextView title = text(name, 32, palette.ink);
-        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        title.setPadding(0, dp(26), 0, dp(18));
+        TextView title = title(name, 32);
+        title.setPadding(0, dp(22), 0, dp(14));
         form.addView(title);
     }
     private Button row(String title, View.OnClickListener listener) {
         Button b = button(form, title, false, listener);
         b.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
         b.setPadding(dp(20), 0, dp(16), 0);
-        b.setBackground(pressable(palette.panel, 14, true));
+        b.setBackground(pressable(palette.panel, 12, true));
         return b;
     }
     private static final String[] THEMES = {"system", "light", "dark"};
@@ -462,24 +542,43 @@ public final class MainActivity extends Activity {
     private void showSettings(boolean focusTheme) {
         settingsPage(Page.SETTINGS, "设置", this::showSetup);
         label("外观", 14);
-        int index = java.util.Arrays.asList(THEMES).indexOf(themeMode());
-        LinearLayout options = column();
-        String current = "主题   ·   " + THEME_NAMES[Math.max(0, index)];
-        Button chooser = row(current + "   ▾", v -> {
-            boolean opening = options.getVisibility() != View.VISIBLE;
-            options.setVisibility(opening ? View.VISIBLE : View.GONE);
-            ((Button)v).setText(current + (opening ? "   ▴" : "   ▾"));
-        });
-        form.addView(options);
-        options.setVisibility(View.GONE);
+        int index = Math.max(0, java.util.Arrays.asList(THEMES).indexOf(themeMode()));
+        LinearLayout cards = new LinearLayout(this);
+        LinearLayout.LayoutParams cardsSize = new LinearLayout.LayoutParams(-1, dp(100));
+        cardsSize.topMargin = dp(6);
+        form.addView(cards, cardsSize);
+        View chooser = null;
         for (int i = 0; i < THEMES.length; i++) {
             String value = THEMES[i];
-            Button choice = button(options, (i == index ? "✓   " : "") + THEME_NAMES[i], false, v -> {
+            boolean chosen = i == index;
+            LinearLayout card = column();
+            card.setGravity(Gravity.CENTER);
+            GradientDrawable shape = surface(chosen ? palette.soft : palette.panel, 12, false);
+            shape.setStroke(dp(chosen ? 2 : 1), chosen ? palette.clay : palette.line);
+            card.setBackground(new RippleDrawable(ColorStateList.valueOf(palette.dark ? 0x14ffffff : 0x0d000000), shape, null));
+            card.setContentDescription("主题：" + THEME_NAMES[i]);
+            card.setSelected(chosen);
+            buttonRole(card);
+            card.setOnClickListener(v -> {
                 appearance.edit().putString("theme", value).apply();
                 palette = MobileTheme.apply(this, value);
                 showSettings(!v.isInTouchMode());
             });
-            choice.setSelected(i == index);
+            LinearLayout art = new LinearLayout(this);
+            art.setGravity(Gravity.CENTER);
+            for (String doodle : "system".equals(value) ? new String[]{"sun", "moon"} : new String[]{"light".equals(value) ? "sun" : "moon"}) {
+                LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(dp(56), dp(42));
+                if (art.getChildCount() > 0) size.setMarginStart(-dp(22));
+                art.addView(image("cage_doodle_" + doodle), size);
+            }
+            card.addView(art);
+            TextView name = text(THEME_NAMES[i], 14, palette.ink);
+            name.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            card.addView(name);
+            LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, -1, 1);
+            if (i > 0) size.setMarginStart(dp(10));
+            cards.addView(card, size);
+            if (chosen) chooser = card;
         }
         label("远程连接", 14);
         row("已归档会话", v -> openArchivedSessions());
@@ -488,7 +587,7 @@ public final class MainActivity extends Activity {
         label("应用更新", 14);
         row("检查更新   ·   " + updates.currentVersion(), v -> updates.check(true));
         statusView();
-        if (focusTheme) chooser.requestFocus();
+        if (focusTheme && chooser != null) chooser.requestFocus();
     }
 
     private void showAdvanced(Page next) {
@@ -497,6 +596,8 @@ public final class MainActivity extends Activity {
         verified = new CheckBox(this);
         customRelay = new Switch(this);
         customRelay.setText("使用自建中继");
+        customRelay.setTextColor(palette.ink);
+        customRelay.setTextSize(16);
         form.addView(customRelay, -1, dp(48));
         relayField = field("自建 VPS 的 HTTPS 地址", "");
         customRelay.setOnCheckedChangeListener((view, enabled) -> {
@@ -505,7 +606,7 @@ public final class MainActivity extends Activity {
         });
         displayRelay(imported != null && host ? imported.relay : preferredRelay());
         if (!host) {
-            label("关闭自建中继后，使用 Cage 官方中继。", 14);
+            label("关闭自建中继后，使用 Super Cage 官方中继。", 14);
             button(form, "保存中继设置", true, v -> {
                 try { rememberRelay(selectedRelay()); status.setText("中继设置已保存。"); }
                 catch (Exception e) { status.setText("请填写有效的 HTTPS 地址。"); }
@@ -520,12 +621,13 @@ public final class MainActivity extends Activity {
         button(form, "复制手机指纹", false, v -> {
             if (fingerprint.isEmpty()) return;
             ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-            clipboard.setPrimaryClip(ClipData.newPlainText("Cage 手机指纹", fingerprint));
+            clipboard.setPrimaryClip(ClipData.newPlainText("Super Cage 手机指纹", fingerprint));
             status.setText("手机指纹已复制，请在电脑上核对并信任。");
         });
         label("电脑指纹", 15);
         pinField = field("sha256:…", imported != null ? imported.pin : trust.getString("pin", ""));
         verified.setText("我已与电脑上独立显示的指纹核对");
+        verified.setTextColor(palette.ink);
         form.addView(verified);
         TextWatcher changed = new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
@@ -538,6 +640,7 @@ public final class MainActivity extends Activity {
         forgetHost = button(form, "忘记主机", false, v -> new AlertDialog.Builder(this)
             .setMessage("移除这台电脑的地址、指纹和重连凭据？")
             .setNegativeButton("取消", null).setPositiveButton("忘记主机", (dialog, which) -> forget()).show());
+        forgetHost.setTextColor(palette.danger);
         forgetHost.setVisibility(trust.contains("pin") ? View.VISIBLE : View.GONE);
         inviteStatus = label(imported != null ? "请与电脑独立显示的指纹核对，再保存主机。" :
             invitation != null ? "已导入本次临时邀请。" :
@@ -584,6 +687,7 @@ public final class MainActivity extends Activity {
     @Override protected void onActivityResult(int code, int result, Intent data) {
         super.onActivityResult(code, result, data);
         if (updates.onResult(code, result)) return;
+        if (code == PICK_FILES) { deliverFiles(result, data); return; }
         if (code == SCAN) {
             if(result==RESULT_OK && data!=null) pairScan(data.getStringExtra("code"));
             else if(data!=null && data.hasExtra("error"))status.setText(data.getStringExtra("error"));
@@ -680,6 +784,11 @@ public final class MainActivity extends Activity {
         if (view instanceof android.view.ViewGroup) {
             android.view.ViewGroup group = (android.view.ViewGroup)view;
             for (int i = 0; i < group.getChildCount(); i++) enableActions(group.getChildAt(i), enabled);
+            // Card rows and the connect button are clickable layouts.
+            if (view instanceof LinearLayout && view.isClickable()) {
+                view.setEnabled(enabled);
+                view.setAlpha(enabled ? 1f : 0.5f);
+            }
         } else if (view.isClickable() || view instanceof EditText) view.setEnabled(enabled);
     }
     private synchronized String extractUI() throws IOException {
@@ -731,7 +840,8 @@ public final class MainActivity extends Activity {
         }
     }
     private void deviceCommand(ConnectedDevice source, String json) {
-        if (!connections.containsValue(source) || isDestroyed()) return;
+        // The largest command is share-file: 8 MiB of file data as base64 plus its name and type.
+        if (!connections.containsValue(source) || isDestroyed() || json.length() > (12 << 20)) return;
         try {
             JSONObject command = new JSONObject(json);
             String action = command.optString("action");
@@ -746,11 +856,152 @@ public final class MainActivity extends Activity {
             if (!viewingWorkspace || source != activeDevice) return;
             if ("home".equals(action)) showSetup();
             if ("open-url".equals(action)) openExternal(command.optString("url"));
+            if ("haptic".equals(action)) haptic(source.view, command.optString("style"));
+            if ("share-file".equals(action)) shareFile(command.optString("name"), command.optString("mime"), command.optString("data"));
         } catch (org.json.JSONException ignored) {}
+    }
+    private static void haptic(View view, String style) {
+        int effect;
+        switch (style) {
+            case "light": effect = HapticFeedbackConstants.CLOCK_TICK; break;
+            case "medium": effect = HapticFeedbackConstants.VIRTUAL_KEY; break;
+            case "success": effect = Build.VERSION.SDK_INT >= 30 ? HapticFeedbackConstants.CONFIRM : HapticFeedbackConstants.VIRTUAL_KEY; break;
+            case "warning": effect = Build.VERSION.SDK_INT >= 30 ? HapticFeedbackConstants.REJECT : HapticFeedbackConstants.LONG_PRESS; break;
+            default: return;
+        }
+        view.performHapticFeedback(effect);
+    }
+    private static void prune(File directory, long age) {
+        File[] old = directory.listFiles();
+        if (old == null) return;
+        for (File item : old) {
+            if (System.currentTimeMillis() - item.lastModified() < age) continue;
+            if (item.isDirectory()) prune(item, 0);
+            item.delete();
+        }
+    }
+    // Writes a validated workbench export to the app cache and opens the system share sheet.
+    private void shareFile(String name, String mime, String data) {
+        if (sharing) return;
+        sharing = true;
+        serverWorker.execute(() -> {
+            try {
+                cagemobile.SharedFile file = Cagemobile.decodeSharedFile(name, mime, data);
+                File shared = new File(getCacheDir(), "shared");
+                prune(shared, 60 * 60 * 1000);
+                File directory = new File(shared, java.util.UUID.randomUUID().toString());
+                String fileName = file.getName();
+                String extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(file.getMime());
+                if (fileName.lastIndexOf('.') <= 0 && extension != null) fileName += "." + extension;
+                File output = new File(directory, fileName);
+                if (!directory.mkdirs()) throw new IOException();
+                try (OutputStream stream = new FileOutputStream(output)) {
+                    byte[] bytes = file.getData();
+                    if (bytes != null) stream.write(bytes);
+                }
+                Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".updates", output);
+                Intent send = new Intent(Intent.ACTION_SEND).setType(file.getMime()).putExtra(Intent.EXTRA_STREAM, uri)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                send.setClipData(ClipData.newRawUri(output.getName(), uri));
+                runOnUiThread(() -> {
+                    sharing = false;
+                    if (isDestroyed()) return;
+                    try { startActivity(Intent.createChooser(send, null)); }
+                    catch (android.content.ActivityNotFoundException e) { Toast.makeText(this, "没有可以接收这个文件的应用。", Toast.LENGTH_LONG).show(); }
+                });
+            } catch (Exception e) {
+                String message = e.getMessage();
+                runOnUiThread(() -> {
+                    sharing = false;
+                    if (!isDestroyed()) Toast.makeText(this, message == null || message.isEmpty() || message.length() > 200 ||
+                        !message.matches("[\\p{IsHan}].*") ? "无法分享这个文件。" : message, Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+    }
+    // <input type="file">: the system picker with the page's accept types, plus the camera for images.
+    private void chooseFiles(ValueCallback<Uri[]> callback, WebChromeClient.FileChooserParams params) {
+        if (pendingFiles != null) pendingFiles.onReceiveValue(null);
+        pendingFiles = callback;
+        java.util.List<String> types = new java.util.ArrayList<>();
+        for (String accept : params.getAcceptTypes()) {
+            for (String part : accept.split(",")) {
+                String type = part.trim().toLowerCase(java.util.Locale.ROOT);
+                if (type.startsWith(".")) type = MimeTypeMap.getSingleton().getMimeTypeFromExtension(type.substring(1));
+                if (type != null && type.matches("[a-z0-9.+-]+/[a-z0-9.+*-]+") && !types.contains(type)) types.add(type);
+            }
+        }
+        Intent pick = new Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE)
+            .setType(types.size() == 1 ? types.get(0) : "*/*");
+        if (types.size() > 1) pick.putExtra(Intent.EXTRA_MIME_TYPES, types.toArray(new String[0]));
+        if (params.getMode() == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE) pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        boolean images = types.isEmpty();
+        for (String type : types) images |= type.startsWith("image/") || type.equals("*/*");
+        pendingPicker = pick;
+        boolean camera = images && getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY);
+        boolean granted = checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+        // Only the capture attribute asks for the camera; otherwise it is offered once already allowed.
+        if (camera && params.isCaptureEnabled() && !granted) {
+            requestPermissions(new String[]{android.Manifest.permission.CAMERA}, CAMERA_FOR_FILES);
+            return;
+        }
+        launchPicker(camera && granted, params.isCaptureEnabled());
+    }
+    private void launchPicker(boolean camera, boolean captureOnly) {
+        Intent pick = pendingPicker;
+        pendingPicker = null;
+        if (pick == null || pendingFiles == null) return;
+        pendingPhoto = null;
+        Intent photo = null;
+        if (camera) {
+            try {
+                File captures = new File(getCacheDir(), "captures");
+                prune(captures, 24 * 60 * 60 * 1000);
+                if (captures.isDirectory() || captures.mkdirs()) {
+                    File output = new File(captures, "photo-" + System.currentTimeMillis() + ".jpg");
+                    Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".updates", output);
+                    photo = new Intent(MediaStore.ACTION_IMAGE_CAPTURE).putExtra(MediaStore.EXTRA_OUTPUT, uri)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                    photo.setClipData(ClipData.newRawUri(output.getName(), uri));
+                    pendingPhoto = output;
+                }
+            } catch (RuntimeException e) { photo = null; pendingPhoto = null; }
+        }
+        Intent launch = Intent.createChooser(pick, null);
+        if (photo != null && captureOnly) launch = photo;
+        else if (photo != null) launch.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{photo});
+        try { startActivityForResult(launch, PICK_FILES); }
+        catch (android.content.ActivityNotFoundException e) {
+            if (launch == photo) { pendingPicker = pick; launchPicker(false, false); return; }
+            deliverFiles(RESULT_CANCELED, null);
+        }
+    }
+    private void deliverFiles(int result, Intent data) {
+        ValueCallback<Uri[]> callback = pendingFiles;
+        File photo = pendingPhoto;
+        pendingFiles = null; pendingPhoto = null;
+        if (callback == null) return;
+        Uri[] files = null;
+        if (result == RESULT_OK) {
+            if (photo != null && photo.length() > 0) files = new Uri[]{FileProvider.getUriForFile(this, getPackageName() + ".updates", photo)};
+            else if (data != null && data.getClipData() != null) {
+                files = new Uri[data.getClipData().getItemCount()];
+                for (int i = 0; i < files.length; i++) files[i] = data.getClipData().getItemAt(i).getUri();
+            } else if (data != null && data.getData() != null) files = new Uri[]{data.getData()};
+        }
+        callback.onReceiveValue(files);
+    }
+    @Override public void onRequestPermissionsResult(int code, String[] names, int[] results) {
+        super.onRequestPermissionsResult(code, names, results);
+        if (code != CAMERA_FOR_FILES) return;
+        boolean granted = results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED;
+        launchPicker(granted, granted);
     }
     private void createBrowser(ConnectedDevice connected) {
         WebView view = new WebView(this);
         connected.view = view;
+        // Same as the page background, so loading never flashes white.
+        view.setBackgroundColor(palette.bg);
         WebView.setWebContentsDebuggingEnabled(false);
         WebSettings settings = view.getSettings(); settings.setJavaScriptEnabled(true); settings.setAllowFileAccess(false); settings.setAllowContentAccess(false);
         settings.setUserAgentString(settings.getUserAgentString() + " CageMobile/1");
@@ -783,6 +1034,13 @@ public final class MainActivity extends Activity {
                 return new WebResourceResponse("text/plain","UTF-8",403,"Forbidden",java.util.Collections.emptyMap(),new ByteArrayInputStream(new byte[0]));
             }
         });
+        view.setWebChromeClient(new WebChromeClient() {
+            @Override public boolean onShowFileChooser(WebView w, ValueCallback<Uri[]> callback, FileChooserParams params) {
+                if (w != browser || !viewingWorkspace || w.getUrl() == null || !allowed(Uri.parse(w.getUrl()), port)) return false;
+                chooseFiles(callback, params);
+                return true;
+            }
+        });
         Uri launch = connected.launch;
         if (openArchivedAfterConnect) {
             launch = launch.buildUpon().appendQueryParameter("page", "archived").build();
@@ -803,6 +1061,8 @@ public final class MainActivity extends Activity {
         if (browser != null && browser != selected.view) browser.onPause();
         activeDevice = selected; browser = selected.view; viewingWorkspace = true;
         LinearLayout pane = column();
+        pane.setBackgroundColor(palette.bg);
+        browser.setBackgroundColor(palette.bg);
         if (browser.getParent() instanceof android.view.ViewGroup)
             ((android.view.ViewGroup)browser.getParent()).removeView(browser);
         pane.addView(browser, new LinearLayout.LayoutParams(-1,0,1));
@@ -811,12 +1071,11 @@ public final class MainActivity extends Activity {
     private void confirmDisconnect(ConnectedDevice selected) {
         Dialog dialog = new Dialog(this);
         LinearLayout panel = column(); panel.setPadding(dp(22),dp(18),dp(22),dp(22));
-        panel.setBackground(surface(palette.panel,26,false));
-        TextView title = text("取消与“" + selected.name + "”的连接？",20,palette.ink);
-        title.setTypeface(Typeface.DEFAULT,Typeface.BOLD); panel.addView(title);
+        panel.setBackground(surface(palette.panel,20,false));
+        TextView title = title("取消与“" + selected.name + "”的连接？",22); panel.addView(title);
         TextView explanation = text("设备将从当前连接列表移除，已保存的配对信息仍然保留。",14,palette.muted);
         explanation.setPadding(0,dp(12),0,dp(12)); panel.addView(explanation);
-        button(panel,"取消连接",true,v -> {dialog.dismiss(); disconnectDevice(selected);});
+        button(panel,"取消连接",false,v -> {dialog.dismiss(); disconnectDevice(selected);}).setTextColor(palette.danger);
         button(panel,"继续连接",false,v -> dialog.dismiss());
         dialog.setContentView(panel);
         android.view.Window window = dialog.getWindow();
@@ -881,15 +1140,16 @@ public final class MainActivity extends Activity {
         super.onDestroy();
     }
 
-    // Cage servers: sign in to a multi-tenant portal account and open its VMs in the phone workbench.
+    // Super Cage servers: sign in to a multi-tenant portal account and open its VMs in the phone workbench.
     private void showServers() {
         settingsPage(Page.SERVERS, "连接服务器", this::showSetup);
-        label("登录多租户 Cage 服务器的门户账户，打开你的虚拟机。", 14);
         java.util.List<ServerAccounts.Account> saved = servers.list();
-        if (!saved.isEmpty()) {
+        if (saved.isEmpty()) emptyState(form, "server", "还没有服务器。添加一个，随时回到你的工作区。");
+        else {
+            label("登录 Super Cage 服务器的门户账户，打开你的虚拟机。", 14);
             label("已保存的服务器（长按可忘记）", 14);
             for (ServerAccounts.Account account : saved) {
-                Button entry = row(account.user + "   ·   " + account.host(), v -> signInSaved(account));
+                LinearLayout entry = listRow(form, account.user, account.host(), null, 0, v -> signInSaved(account));
                 entry.setOnLongClickListener(v -> { confirmForgetServer(account); return true; });
             }
         }
@@ -901,6 +1161,7 @@ public final class MainActivity extends Activity {
         serverPasswordField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         CheckBox remember = new CheckBox(this);
         remember.setText("在这台手机上记住密码");
+        remember.setTextColor(palette.ink);
         remember.setChecked(true);
         form.addView(remember);
         button(form, "登录", true, v -> {
@@ -962,16 +1223,25 @@ public final class MainActivity extends Activity {
             default: return "已停止";
         }
     }
+    private int stateTone(String state) {
+        switch (state) {
+            case "ready": return palette.ok;
+            case "starting": return palette.clayInk;
+            case "error": return palette.danger;
+            default: return palette.muted;
+        }
+    }
     private void showMachines(ServerAccounts.Account account) {
         settingsPage(Page.MACHINES, "虚拟机", this::showServers);
         label(account.user + " @ " + account.host(), 14);
         machineList = column();
         form.addView(machineList);
-        button(form, "新建虚拟机", false, v -> askMachineName(account));
+        button(form, "新建虚拟机", true, v -> askMachineName(account));
         button(form, "刷新", false, v -> refreshMachines(account));
         button(form, "退出登录", false, v -> new AlertDialog.Builder(this).setTitle("退出登录？")
             .setMessage("将关闭这个账户已打开的虚拟机工作台。虚拟机会继续在服务器上运行。")
-            .setNegativeButton("取消", null).setPositiveButton("退出登录", (dialog, which) -> { signOutServer(account); showServers(); }).show());
+            .setNegativeButton("取消", null).setPositiveButton("退出登录", (dialog, which) -> { signOutServer(account); showServers(); }).show())
+            .setTextColor(palette.danger);
         label("打开的虚拟机显示 Claude Code 项目、会话和工具审批。远程浏览器与 Claude Desktop 需要扫码连接电脑。", 13);
         statusView();
         refreshMachines(account);
@@ -987,24 +1257,21 @@ public final class MainActivity extends Activity {
                     if (attempt != generation || page != Page.MACHINES || isDestroyed()) return;
                     setConnecting(false);
                     renderMachines(account, vms);
-                    status.setText(vms.length() == 0 ? "这个账户还没有虚拟机。" : "");
+                    status.setText("");
                 });
             } catch (Exception e) { failServer(attempt, e, "无法读取虚拟机列表。"); }
         });
     }
     private void renderMachines(ServerAccounts.Account account, JSONArray vms) {
         machineList.removeAllViews();
+        if (vms.length() == 0) emptyState(machineList, "terminal", "还没有虚拟机。新建一台，开始你的工作区。");
         for (int i = 0; i < vms.length(); i++) {
             JSONObject vm = vms.optJSONObject(i);
             if (vm == null) continue;
             String id = vm.optString("id"), name = vm.optString("name"), state = vm.optString("state");
-            String system = vm.optString("system_label");
-            String detail = (system.isEmpty() ? "" : system + " · ") + (connections.containsKey(serverKey(account, id)) ? "已打开" : stateLabel(state));
-            Button entry = button(machineList, name + "\n" + detail, false, v -> openMachine(account, id, name, state));
-            entry.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
-            entry.setPadding(dp(20), 0, dp(16), 0);
-            entry.setBackground(pressable(palette.panel, 14, true));
-            entry.getLayoutParams().height = dp(68);
+            boolean open = connections.containsKey(serverKey(account, id));
+            listRow(machineList, name, vm.optString("system_label"), open ? "已打开" : stateLabel(state),
+                open ? palette.clayInk : stateTone(state), v -> openMachine(account, id, name, state));
         }
     }
     private void askMachineName(ServerAccounts.Account account) {

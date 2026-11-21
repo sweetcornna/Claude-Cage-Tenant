@@ -1,8 +1,8 @@
 # 通过中继连接移动 CLI 会话
 
-`cage-mobile-link` 把一个已信任设备连接到一台正在运行的 Cage 主机。客户端可以浏览主机授权的项目、创建 Claude Code 会话、发送消息、查看进度、回答工具审批和停止本轮执行。主机账户锁定时，这些操作返回 HTTP 423，需要在电脑上解锁。服务端继续负责项目授权、消息去重和执行结果。
+`cage-mobile-link` 把一个已信任设备连接到一台正在运行的 Super Cage 主机。客户端可以浏览主机授权的项目、创建 Claude Code 会话、发送消息、查看进度、回答工具审批和停止本轮执行。主机账户锁定时，这些操作返回 HTTP 423，需要在电脑上解锁。服务端继续负责项目授权、消息去重和执行结果。
 
-使用官方中继时，按[手机使用说明](../../mobile/README.md)直接创建配对；主机助手默认读取桌面的中继设置。以下示例演示使用管理令牌的[自建中继](../../deploy/relay/README.md)。在电脑上启动包含移动 CLI 接口的 Cage，并构建主机连接助手。Android 和 iPhone 通过 [Cage 手机客户端](../../mobile/README.md)连接。若用另一台电脑的浏览器代替手机进行调试，该电脑也需构建本工具，并准备包含 `mobile.html` 和 `assets/` 的移动页面目录。
+使用官方中继时，按[手机使用说明](../../mobile/README.md)直接创建配对；主机助手默认读取桌面的中继设置。以下示例演示使用管理令牌的[自建中继](../../deploy/relay/README.md)。在电脑上启动包含移动 CLI 接口的 Super Cage，并构建主机连接助手。Android 和 iPhone 通过 [Super Cage 手机客户端](../../mobile/README.md)连接。若用另一台电脑的浏览器代替手机进行调试，该电脑也需构建本工具，并准备包含 `mobile.html` 和 `assets/` 的移动页面目录。
 
 ```sh
 go build -o /tmp/cage-mobile-link ./cmd/cage-mobile-link
@@ -29,7 +29,7 @@ go build -o /tmp/cage-mobile-link ./cmd/cage-mobile-link
 
 ## 在手机上保存主机
 
-主机已登记手机指纹后，在电脑运行以下命令。管理令牌、Cage 程序与目标主机配置都使用绝对路径，方便以后从不同工作目录启动。
+主机已登记手机指纹后，在电脑运行以下命令。管理令牌、Super Cage 程序与目标主机配置都使用绝对路径，方便以后从不同工作目录启动。
 
 ```sh
 /tmp/cage-mobile-link host \
@@ -59,7 +59,7 @@ go build -o /tmp/cage-mobile-link ./cmd/cage-mobile-link
 
 ## 单次连接邀请
 
-主机需要中继的管理令牌文件、可信 Cage 程序的绝对路径，以及目标主机配置的绝对路径。在主机执行以下命令，并保持进程运行。
+主机需要中继的管理令牌文件、可信 Super Cage 程序的绝对路径，以及目标主机配置的绝对路径。在主机执行以下命令，并保持进程运行。
 
 ```sh
 /tmp/cage-mobile-link host \
@@ -100,7 +100,7 @@ go build -o /tmp/cage-mobile-link ./cmd/cage-mobile-link
 
 ## 验证真实工作台连接
 
-下面的测试会新建临时 Cage 配置、本机账户和双方设备身份。它通过真实中继、端到端 TLS、主机票据交换与移动 API 验证项目读取、会话创建、按版本恢复、锁定和越权拒绝，还会验证保存主机后的房间重建、中继重启、主机桥重启以及撤销设备。测试不启动虚拟机或调用模型。
+下面的测试会新建临时 Super Cage 配置、本机账户和双方设备身份。它通过真实中继、端到端 TLS、主机票据交换与移动 API 验证项目读取、会话创建、按版本恢复、锁定和越权拒绝，还会验证保存主机后的房间重建、中继重启、主机桥重启以及撤销设备。测试不启动虚拟机或调用模型。
 
 ```sh
 go build -o /tmp/cage-mobile-e2e-backend ./cmd/cage

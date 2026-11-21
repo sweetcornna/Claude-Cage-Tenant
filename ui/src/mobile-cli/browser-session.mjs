@@ -60,7 +60,7 @@ export function connectDisplay(stage, update, id, start, tool, initialURL) {
     paused = true;
     if (!desktop && operation === "frame" && error.status === 503) opened = mayExist = false;
     const reopen = !opened || [401, 404, 410, 423].includes(error.status) || (error.status === 403 && operation !== "action");
-    const message = error.status === 404 && !opened ? "这台电脑尚不支持" + toolName + "，请更新电脑端 Cage。" :
+    const message = error.status === 404 && !opened ? "这台电脑尚不支持" + toolName + "，请更新电脑端 Super Cage。" :
       error.message;
     publish({error: message, uncertain: operation === "action" && !error.status, reopen});
   }

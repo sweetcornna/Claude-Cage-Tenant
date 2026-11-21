@@ -31,7 +31,7 @@ type coreError struct {
 }
 
 func (e *coreError) Error() string {
-	message := "Cage 代理核心操作失败（" + e.stage + "）"
+	message := "Super Cage 代理核心操作失败（" + e.stage + "）"
 	var nested *coreError
 	var errno syscall.Errno
 	var network net.Error
@@ -70,7 +70,7 @@ func CorePath() (string, error) {
 			return filepath.Clean(p), nil
 		}
 	}
-	return "", errors.New("Cage 随附代理核心缺失，请重新安装完整应用；开发构建请运行 scripts/fetch-proxy-core.sh")
+	return "", errors.New("Super Cage 随附代理核心缺失，请重新安装完整应用；开发构建请运行 scripts/fetch-proxy-core.sh")
 }
 func Validate(ctx context.Context, profile string, s Store) error {
 	core, err := CorePath()
@@ -205,7 +205,7 @@ func Stop(profile string) error {
 		return nil
 	}
 	if exec.Command("launchctl", "bootout", domain, servicePath(profile)).Run() != nil {
-		return errors.New("未能停止 Cage 专属代理进程")
+		return errors.New("未能停止 Super Cage 专属代理进程")
 	}
 	return nil
 }
@@ -237,7 +237,7 @@ func Start(ctx context.Context, profile string, s Store) error {
 	// Never attach to or kill an unknown listener, even if it uses our port.
 	l, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", s.Port))
 	if err != nil {
-		return errors.New("Cage 代理端口已被占用，请更换独立端口")
+		return errors.New("Super Cage 代理端口已被占用，请更换独立端口")
 	}
 	l.Close()
 	_, err = CorePath()
@@ -277,7 +277,7 @@ func Start(ctx context.Context, profile string, s Store) error {
 		return err
 	}
 	if exec.CommandContext(ctx, "launchctl", "bootstrap", "gui/"+strconv.Itoa(os.Getuid()), servicePath(profile)).Run() != nil {
-		return errors.New("无法启动 Cage 自带代理核心")
+		return errors.New("无法启动 Super Cage 自带代理核心")
 	}
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()

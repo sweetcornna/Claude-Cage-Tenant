@@ -164,7 +164,7 @@ func (s *Server) coolOnce() {
 // is still due, reserves it. Caller holds s.mu.
 func (s *Server) claimCoolingLocked(candidate coolingCandidate, now time.Time) (coolingMove, bool) {
 	record, exists := s.store.VMs[candidate.id]
-	if !exists || s.starting[candidate.id] || s.cooling.changes[candidate.id] != nil || s.cooling.frozen[candidate.id] != candidate.stop {
+	if !exists || s.starting[candidate.id] || s.cooling.changes[candidate.id] != nil || s.memory.changes[candidate.id] || s.cooling.frozen[candidate.id] != candidate.stop {
 		return coolingMove{}, false
 	}
 	idle, limit := now.Sub(s.lastActiveLocked(candidate.id, now)), s.cfg.FreezeAfter

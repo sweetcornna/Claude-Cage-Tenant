@@ -31,7 +31,7 @@ body:
     id: host-systems
     attributes:
       label: 涉及的主机系统
-      description: 主机是运行 Cage 的电脑，可多选；适用于所有平台时全部选中。Issue 会按所选系统添加标签，交给对应平台的维护者。
+      description: 主机是运行 Super Cage 的电脑，可多选；适用于所有平台时全部选中。Issue 会按所选系统添加标签，交给对应平台的维护者。
       multiple: true
       options:
         - macOS
@@ -44,7 +44,7 @@ body:
     id: guest-systems
     attributes:
       label: 涉及的客机系统
-      description: 客机是 Cage 内运行的系统，可多选；适用于所有客机时全部选中。
+      description: 客机是 Super Cage 内运行的系统，可多选；适用于所有客机时全部选中。
       multiple: true
       options:
         - macOS
@@ -56,7 +56,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: 当前 Cage 版本
+      label: 当前 Super Cage 版本
       description: 如建议与现有功能有关，请填写版本号；源码构建可同时填写提交号。
   - type: textarea
     id: context

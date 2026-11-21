@@ -37,7 +37,7 @@ func OpenWorkbench(ctx context.Context, origin, ticket string) (*Workbench, erro
 	u, err := url.Parse(origin)
 	if err != nil || u.Scheme != "http" || !loopback(u.Hostname()) || !explicitPort(u) ||
 		u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || len(ticket) < 32 || len(ticket) > 512 {
-		return nil, errors.New("invalid local Cage entry")
+		return nil, errors.New("invalid local Super Cage entry")
 	}
 	hostname := u.Hostname()
 	if hostname == "localhost" {
@@ -64,7 +64,7 @@ func OpenWorkbench(ctx context.Context, origin, ticket string) (*Workbench, erro
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, origin+"/api/session", bytes.NewReader(payload))
 	if err != nil {
-		return nil, errors.New("invalid local Cage origin")
+		return nil, errors.New("invalid local Super Cage origin")
 	}
 	req.GetBody = nil
 	req.Header.Set("Content-Type", "application/json")
@@ -72,7 +72,7 @@ func OpenWorkbench(ctx context.Context, origin, ticket string) (*Workbench, erro
 	response, err := transport.RoundTrip(req)
 	if err != nil {
 		b.Close()
-		return nil, errors.New("Cage entry ticket exchange failed")
+		return nil, errors.New("Super Cage entry ticket exchange failed")
 	}
 	response.Body.Close()
 	if response.StatusCode == http.StatusOK {
@@ -84,7 +84,7 @@ func OpenWorkbench(ctx context.Context, origin, ticket string) (*Workbench, erro
 	}
 	if len(jar.Cookies(u)) != 1 {
 		b.Close()
-		return nil, errors.New("Cage did not issue a valid local session cookie")
+		return nil, errors.New("Super Cage did not issue a valid local session cookie")
 	}
 	return b, nil
 }

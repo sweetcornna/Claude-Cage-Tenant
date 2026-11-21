@@ -83,7 +83,7 @@ func Load(profile string) (Store, error) {
 		return s, err
 	}
 	if len(b) > maxStoreSize || json.Unmarshal(b, &s) != nil || s.Version != 1 || s.Port < 1024 || s.Port > 65535 || len(s.Auth) != 48 {
-		return s, errors.New("Cage 代理配置无效，请恢复私有配置备份")
+		return s, errors.New("Super Cage 代理配置无效，请恢复私有配置备份")
 	}
 	return s, nil
 }

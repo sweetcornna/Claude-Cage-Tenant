@@ -30,7 +30,7 @@ export function PhoneFavorites({frame, navigate, onClose}) {
     try {
       const next = await browserRequest("/favorites", {body,signal:controller.signal});
       if (controller.signal.aborted) return;
-      if (!Array.isArray(next?.items) || !Array.isArray(next?.folders)) throw new Error("电脑返回的收藏夹格式无效，请更新电脑端 Cage。");
+      if (!Array.isArray(next?.items) || !Array.isArray(next?.folders)) throw new Error("电脑返回的收藏夹格式无效，请更新电脑端 Super Cage。");
       setData(next);
       setFolderID(previous => next.folders.some(folder => folder.id === previous) ? previous : "");
       if (body) {
@@ -41,7 +41,7 @@ export function PhoneFavorites({frame, navigate, onClose}) {
       if (controller.signal.aborted) return;
       setData(null); setEditor(null);
       const unsupported = e.status === 404 || e.status === 405 || e instanceof SyntaxError;
-      setError(unsupported ? "这台电脑尚不支持共享收藏夹，请更新电脑端 Cage。" :
+      setError(unsupported ? "这台电脑尚不支持共享收藏夹，请更新电脑端 Super Cage。" :
         body && !e.status ? "保存结果待确认，请刷新收藏夹。" : e.message);
     } finally {
       if (request.current === controller) {

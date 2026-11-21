@@ -26,6 +26,10 @@ var sessionPath = regexp.MustCompile(`^/api/mobile/cli/sessions/[A-Fa-f0-9]{8}-[
 
 var surfacePath = regexp.MustCompile(`^/api/mobile/(?:browser|desktop)/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/(frame|action|close)$`)
 
+var terminalPath = regexp.MustCompile(`^/api/mobile/terminals/[0-9a-f]{16}/(output|input|resize|close)$`)
+
+var terminalAfter = regexp.MustCompile(`^after=(0|[1-9][0-9]{0,19})$`)
+
 var epochID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 var frameQuery = regexp.MustCompile(`^after=([0-9a-f]{32})$`)
@@ -48,13 +52,28 @@ func allowed(method string, u *url.URL) bool {
 	}
 	if u.RawQuery == "" {
 		switch u.Path {
-		case "/api/mobile/browser/open", "/api/mobile/desktop/open", "/api/mobile/device":
+		case "/api/mobile/browser/open", "/api/mobile/desktop/open", "/api/mobile/device",
+			"/api/mobile/environment/start", "/api/mobile/environment/stop", "/api/mobile/environment/restart",
+			"/api/mobile/environment/proxy/select", "/api/mobile/environment/proxy/delay",
+			"/api/mobile/files/list", "/api/mobile/files/read", "/api/mobile/files/mkdir",
+			"/api/mobile/files/upload/start", "/api/mobile/files/upload/chunk", "/api/mobile/files/upload/finish", "/api/mobile/files/upload/abort":
 			return method == http.MethodPost
-		case "/api/mobile/cli/projects":
+		case "/api/mobile/cli/projects", "/api/mobile/environment", "/api/mobile/environment/proxy":
 			return method == http.MethodGet
-		case "/api/mobile/cli/sessions", "/api/mobile/browser/favorites":
+		case "/api/mobile/cli/sessions", "/api/mobile/browser/favorites", "/api/mobile/terminals":
 			return method == http.MethodGet || method == http.MethodPost
 		}
+	}
+	if match := terminalPath.FindStringSubmatch(u.Path); match != nil {
+		if match[1] == "output" {
+			after := terminalAfter.FindStringSubmatch(u.RawQuery)
+			if after == nil || method != http.MethodGet {
+				return false
+			}
+			_, err := strconv.ParseUint(after[1], 10, 64)
+			return err == nil
+		}
+		return method == http.MethodPost && u.RawQuery == ""
 	}
 	if match := surfacePath.FindStringSubmatch(u.Path); match != nil {
 		if u.RawQuery == "" {
@@ -172,7 +191,7 @@ func operations(do performFunc) http.Handler {
 		}
 		reply, err := do(r.Context(), r.Method, r.URL.RequestURI(), body)
 		if err != nil {
-			http.Error(w, "与电脑的连接已中断。请检查手机网络和电脑上的 Cage，再重新读取会话。", http.StatusBadGateway)
+			http.Error(w, "与电脑的连接已中断。请检查手机网络和电脑上的 Super Cage，再重新读取会话。", http.StatusBadGateway)
 			return
 		}
 		w.Header().Set("Content-Type", reply.ContentType)

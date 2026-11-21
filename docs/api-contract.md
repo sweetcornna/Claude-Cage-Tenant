@@ -1,10 +1,10 @@
-# Cage 多租户接口契约
+# Super Cage 多租户接口契约
 
 ## 目标与部署边界
 
-一个 Web 门户支持多人注册和登录。一个账户可以创建多台具备独立虚拟磁盘、Cage 控制器和工作区的 Linux 虚拟机。用户从门户打开第一台虚拟机，随后通过工作台左栏的「虚拟机」查看、创建和切换自己的环境。切换、刷新和退出连接不会停止虚拟机。现有 SSH 连接方式和单实例 CLI 不变。
+一个 Web 门户支持多人注册和登录。一个账户可以创建多台具备独立虚拟磁盘、Super Cage 控制器和工作区的 Linux 虚拟机。用户从门户打开第一台虚拟机，随后通过工作台左栏的「虚拟机」查看、创建和切换自己的环境。切换、刷新和退出连接不会停止虚拟机。现有 SSH 连接方式和单实例 CLI 不变。
 
-新增 `cage-tenant` 服务以 Linux Incus 虚拟机为运行时，使用管理员配置的可信、预制 VM 镜像。镜像包含现有 Cage 后端、已启用的开机 Cage 控制器和 `socat`，并有能运行 `incus exec` 的 Incus guest agent。镜像中已有 Cage 工作环境所需的依赖和空白模板，不包含任何账号、历史、令牌或用户数据。若使用 Cage 的云工作环境，则在**每台 VM 内部**分别运行 rootless 引擎。部署文档提供构建及预检步骤，允许配置来宾 `control.json` 绝对路径。门户只提供自有实例，既不接受浏览器提交的镜像、Incus 参数、地址或路径，也不把宿主目录、宿主凭据或 Incus 管理 socket 共享给 VM。宿主使用专用 Incus 项目和限制配额，来宾网络和控制器隔离由部署验证。单机试运行默认每账户最多 5 VM、全局 20 VM，管理员可调。VM 隐式创建并首次启动。空闲时网关按冷却策略先冻结、再停机（磁盘保留），下一个请求恢复冻结的实例，门户打开时冷启动已停机的实例；Cage 工作台仍管理 VM 内部环境。没有 KVM 的宿主可改用 Incus 无特权系统容器，接口和状态语义不变。运维在 `deploy/tenant/README.md` 说明重启、磁盘保留、容量限制和托管工作台账户。
+新增 `cage-tenant` 服务以 Linux Incus 虚拟机为运行时，使用管理员配置的可信、预制 VM 镜像。镜像包含现有 Super Cage 后端、已启用的开机 Super Cage 控制器和 `socat`，并有能运行 `incus exec` 的 Incus guest agent。镜像中已有 Super Cage 工作环境所需的依赖和空白模板，不包含任何账号、历史、令牌或用户数据。若使用 Super Cage 的云工作环境，则在**每台 VM 内部**分别运行 rootless 引擎。部署文档提供构建及预检步骤，允许配置来宾 `control.json` 绝对路径。门户只提供自有实例，既不接受浏览器提交的镜像、Incus 参数、地址或路径，也不把宿主目录、宿主凭据或 Incus 管理 socket 共享给 VM。宿主使用专用 Incus 项目和限制配额，来宾网络和控制器隔离由部署验证。单机试运行默认每账户最多 5 VM、全局 20 VM，管理员可调。VM 隐式创建并首次启动。空闲时网关按冷却策略先冻结、再停机（磁盘保留），下一个请求恢复冻结的实例，门户打开时冷启动已停机的实例；Super Cage 工作台仍管理 VM 内部环境。没有 KVM 的宿主可改用 Incus 无特权系统容器，接口和状态语义不变。运维在 `deploy/tenant/README.md` 说明重启、磁盘保留、容量限制和托管工作台账户。
 
 ## Web 来源
 
@@ -35,13 +35,13 @@
 
 ## Workbench 连接
 
-`/_tenant/enter` 在 VM 源只提供本地固定 HTML 与外部同源 JS。JS 读取 URL fragment，立即移除 fragment，然后同源 JSON `POST /_tenant/enter` 提交 `{ "ticket": "…" }`，成功 `204` 和 VM 专用 host-only HttpOnly Cookie，随后 `location.replace("/")`。票据 60 秒有效、单次消费、绑定发票会话以及精确 VM ID。浏览器看不到内部 Cage launcher token 或内部 Cookie。票据不得出现在普通请求路径、日志或 Referer。门户 iframe 仅允许对应 VM 源，通过 `frame-ancestors` 精确允许门户，前端使用 `sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"`，拒绝顶层导航，`referrerpolicy="no-referrer"`。
+`/_tenant/enter` 在 VM 源只提供本地固定 HTML 与外部同源 JS。JS 读取 URL fragment，立即移除 fragment，然后同源 JSON `POST /_tenant/enter` 提交 `{ "ticket": "…" }`，成功 `204` 和 VM 专用 host-only HttpOnly Cookie，随后 `location.replace("/")`。票据 60 秒有效、单次消费、绑定发票会话以及精确 VM ID。浏览器看不到内部 Super Cage launcher token 或内部 Cookie。票据不得出现在普通请求路径、日志或 Referer。门户 iframe 仅允许对应 VM 源，通过 `frame-ancestors` 精确允许门户，前端使用 `sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"`，拒绝顶层导航，`referrerpolicy="no-referrer"`。
 
-所有其他 VM 请求，包括 HTML、静态资源、API、WebSocket 和流，先校验 VM Cookie、VM 归属和登录撤销/过期状态。工作台 API 的修改请求和 WebSocket 要求浏览器 `Origin` 精确匹配其 VM 源。网关保留方法和原生路径，重写 Host/Origin 至 Cage 回环源。通过 `incus exec` 专用 guest-agent 通道访问该 VM 内的回环 HTTP，例如受控端口 `control.json` 中的端口和逐连接 `socat STDIO TCP4:127.0.0.1:<port>`。VM 只可从该机器的就绪文件取自身 controller 端口及 launcher token，并通过现有 `/api/launch` 后 `/api/session` 换取服务器侧会话；不把浏览器 Cookie、网关认证、转发或内部控制头传给来宾，不转发来宾的 `Set-Cookie` 或 CORS 头，不能依赖来宾响应的 Host。屏蔽来宾 `/api/launch`、`/api/session`、`/api/handoff`、`/api/desktop-local/*` 等内部入口和来宾跨源重定向。网关默认使用托管工作台账户进入空白 VM：首次连接时创建，之后自动解锁，已存在的其它工作台账户和密码保险箱保持不变并继续使用原有界面。托管密钥保存在网关状态目录的私有 `guest-account.json`（也可用 `-guest-account-file` 显式指定），每台 VM 的密码由该密钥派生，不进入门户、浏览器或 `state.json`；密钥不匹配或账户已变更时回退到工作台自己的账户界面。门户负责外层认证，工作台密码不会提交给门户。退出门户后已授权 HTTP 流和 WebSocket 也必须断开。工作台 CSP 同源资源可用，`connect-src` 兼容对应 VM `wss:`（本地开发 `ws:`）。
+所有其他 VM 请求，包括 HTML、静态资源、API、WebSocket 和流，先校验 VM Cookie、VM 归属和登录撤销/过期状态。工作台 API 的修改请求和 WebSocket 要求浏览器 `Origin` 精确匹配其 VM 源。网关保留方法和原生路径，重写 Host/Origin 至 Super Cage 回环源。通过 `incus exec` 专用 guest-agent 通道访问该 VM 内的回环 HTTP，例如受控端口 `control.json` 中的端口和逐连接 `socat STDIO TCP4:127.0.0.1:<port>`。VM 只可从该机器的就绪文件取自身 controller 端口及 launcher token，并通过现有 `/api/launch` 后 `/api/session` 换取服务器侧会话；不把浏览器 Cookie、网关认证、转发或内部控制头传给来宾，不转发来宾的 `Set-Cookie` 或 CORS 头，不能依赖来宾响应的 Host。屏蔽来宾 `/api/launch`、`/api/session`、`/api/handoff`、`/api/desktop-local/*` 等内部入口和来宾跨源重定向。网关默认使用托管工作台账户进入空白 VM：首次连接时创建，之后自动解锁，已存在的其它工作台账户和密码保险箱保持不变并继续使用原有界面。托管密钥保存在网关状态目录的私有 `guest-account.json`（也可用 `-guest-account-file` 显式指定），每台 VM 的密码由该密钥派生，不进入门户、浏览器或 `state.json`；密钥不匹配或账户已变更时回退到工作台自己的账户界面。门户负责外层认证，工作台密码不会提交给门户。退出门户后已授权 HTTP 流和 WebSocket 也必须断开。工作台 CSP 同源资源可用，`connect-src` 兼容对应 VM `wss:`（本地开发 `ws:`）。
 
 ## 门户内工作台 VM 控制
 
-VM 源为工作台侧栏提供以下接口，均要求该 VM 的 host-only VM Cookie、有效门户登录会话和 VM 归属校验；修改请求要求 `Origin` 精确等于当前 VM 源，并接受可选的 `X-Cage-Expected-User` 校验（不一致 `409 session_changed`）。这些路径由网关直接应答，不转发给 VM 内的 Cage，也不暴露 `/api/launch`、`/api/session`、`/api/handoff` 等内部入口。
+VM 源为工作台侧栏提供以下接口，均要求该 VM 的 host-only VM Cookie、有效门户登录会话和 VM 归属校验；修改请求要求 `Origin` 精确等于当前 VM 源，并接受可选的 `X-Cage-Expected-User` 校验（不一致 `409 session_changed`）。这些路径由网关直接应答，不转发给 VM 内的 Super Cage，也不暴露 `/api/launch`、`/api/session`、`/api/handoff` 等内部入口。
 
 | 方法和路径 | 请求 | 成功响应 |
 | --- | --- | --- |
@@ -53,7 +53,7 @@ VM 源为工作台侧栏提供以下接口，均要求该 VM 的 host-only VM Co
 
 ## 每台虚拟机的独立设置
 
-每台虚拟机运行自己的 Cage 工作台，使用自己的配置目录。单实例 Cage 里的环境设置在多虚拟机中全部按虚拟机保存：网络与代理（订阅来源、节点、代理链路、出口 IP 变化规则、代理核心凭据和代理端口）、加密 DNS、时区与语言、客机身份、外观、工作台账户与密码保险箱、共享项目、环境存储位置和诊断记录。切换虚拟机后，工作台显示目标虚拟机自己的设置，修改不影响其他虚拟机。新建虚拟机从空白配置开始，不复制默认环境或其他虚拟机的代理、凭据和路径。设置页标出当前虚拟机名称。
+每台虚拟机运行自己的 Super Cage 工作台，使用自己的配置目录。单实例 Super Cage 里的环境设置在多虚拟机中全部按虚拟机保存：网络与代理（订阅来源、节点、代理链路、出口 IP 变化规则、代理核心凭据和代理端口）、加密 DNS、时区与语言、客机身份、外观、工作台账户与密码保险箱、共享项目、环境存储位置和诊断记录。切换虚拟机后，工作台显示目标虚拟机自己的设置，修改不影响其他虚拟机。新建虚拟机从空白配置开始，不复制默认环境或其他虚拟机的代理、凭据和路径。设置页标出当前虚拟机名称。
 
 - **桌面本机**：各虚拟机的代理核心共用宿主回环地址，所以一个代理端口只属于一台虚拟机，已停止的也算。新建时自动分配未占用端口。应用节点或修改端口时，如果端口已分配给同一桌面的另一台虚拟机，返回错误并保留原配置。未配置代理的默认环境保留默认端口 17896。一台虚拟机共享的项目不能包含其他虚拟机或默认环境的配置、环境存储和迁移备份。各虚拟机共用桌面网关的网页源，所以工作台把标签、侧栏等浏览器端布局按 `virtual_machine_id` 分开保存；默认环境沿用原有的键。桌面网关的 `/api/client/context` 返回 `virtual_machine_id` 和虚拟机名称 `name`。
 - **服务器（Incus）**：每台 VM 的代理核心运行在该 VM 内，出口走该 VM 自己的网卡，端口和凭据不与其他 VM 共享。租户 VM 需要管理员按部署指南配置受管 NIC 后才能联网；示例配置没有网卡，此时任何代理都无法连通。VM 之间以及 VM 与宿主网段的隔离仍由宿主侧规则负责。门户内工作台的 `/api/client/context` 返回 VM 名称 `name`。
@@ -68,9 +68,9 @@ VM 源为工作台侧栏提供以下接口，均要求该 VM 的 host-only VM Co
 
 ## 客户端与部署
 
-- `cage-tenant` 在 Linux Incus 宿主上运行，并直接提供 `ui/tenant` Web 门户资源。部署者在可信 TLS 反代上配置门户域名及 VM 子域。用户用普通浏览器即可使用，无需安装桌面软件。门户只负责登录和 VM 入口，通过 iframe 嵌入所选 VM 的原版 Cage 工作台，不另做一套工作台。
+- `cage-tenant` 在 Linux Incus 宿主上运行，并直接提供 `ui/tenant` Web 门户资源。部署者在可信 TLS 反代上配置门户域名及 VM 子域。用户用普通浏览器即可使用，无需安装桌面软件。门户只负责登录和 VM 入口，通过 iframe 嵌入所选 VM 的原版 Super Cage 工作台，不另做一套工作台。
 - 原生桌面版在工作台左栏使用同一个 **虚拟机** 组件。桌面网关的同路径接口要求已解锁的本机账户和当前 `X-Cage-Connection`。清单标记 `current_id`，创建接收 `{ "name": "…" }`，打开返回 `{ "current_id": "…" }` 并更新连接代际，工作台随后重新加载。桌面本机与网页服务器各自维护账户与 VM 清单。
-- 集成桌面安装包尚未发布，服务端归档不包含桌面应用。Preview 2（`v0.1.8-preview.2`）的独立桌面包已退役，仅作历史留档。集成版应用更新源使用 `sweetcornna/Claude-Cage-Tenant`，原生更新器的签名信任规则不变。
+- 集成桌面安装包尚未发布，服务端归档不包含桌面应用。Preview 2（`v0.1.8-preview.2`）的独立桌面包已退役，仅作历史留档。集成版应用更新源使用 `sweetcornna/Super-Cage`，原生更新器的签名信任规则不变。
 
 ## 交付与验收
 

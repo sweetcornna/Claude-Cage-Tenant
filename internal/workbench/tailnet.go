@@ -54,7 +54,7 @@ func (s *Server) tailnet(w http.ResponseWriter, r *http.Request) {
 	busy := s.jobs.snapshot().Running
 	s.mu.Unlock()
 	if !ready || busy {
-		http.Error(w, "请先启动 Cage 环境，并等待当前操作完成", 409)
+		http.Error(w, "请先启动 Super Cage 环境，并等待当前操作完成", 409)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)

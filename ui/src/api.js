@@ -78,7 +78,7 @@ export async function uploadFile(path, file, { signal, onProgress } = {}) {
     request.setRequestHeader("Content-Type", "application/octet-stream");
     for (const [name, value] of Object.entries(headers)) request.setRequestHeader(name, value);
     request.upload.onprogress = event => onProgress?.(event.loaded, event.total || file.size);
-    request.onerror = () => { cleanup(); reject(new Error("上传文件失败：与 Cage 后台的连接中断。请恢复连接后核对目标是否已收到文件，再重新选择文件。")); };
+    request.onerror = () => { cleanup(); reject(new Error("上传文件失败：与 Super Cage 后台的连接中断。请恢复连接后核对目标是否已收到文件，再重新选择文件。")); };
     request.onabort = () => { cleanup(); reject(new DOMException("上传已取消", "AbortError")); };
     request.onload = () => {
       cleanup();

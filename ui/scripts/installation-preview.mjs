@@ -78,6 +78,6 @@ http.createServer(async (req, res) => {
       res.writeHead(response.statusCode, headers); res.end(body);
     });
   });
-  request.on("error", () => { res.writeHead(502); res.end("Start the Cage frontend preview server first."); });
+  request.on("error", () => { res.writeHead(502); res.end("Start the Super Cage frontend preview server first."); });
   req.pipe(request);
 }).listen(port, "127.0.0.1", () => console.log(`Installation copy preview: http://127.0.0.1:${port}/?host=macos`));

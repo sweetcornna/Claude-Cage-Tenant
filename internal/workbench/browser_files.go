@@ -248,7 +248,7 @@ func (s *Server) startNativeDownload(item browserDownloadInfo) (*nativeDownload,
 	}
 	epoch, unlocked := s.account.access()
 	if !unlocked {
-		return nil, errors.New("Cage 已锁定，请先解锁再保存下载")
+		return nil, errors.New("Super Cage 已锁定，请先解锁再保存下载")
 	}
 	ctx, finish, err := s.beginActivity(epoch)
 	if err != nil {

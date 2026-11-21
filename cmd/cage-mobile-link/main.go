@@ -65,7 +65,7 @@ func profileRelay(config string) (string, error) {
 		return mobilelink.OfficialRelay, nil
 	}
 	if !strings.HasPrefix(prefs.MobileRelay, "https://") || !mobilelink.ValidRelayOrigin(prefs.MobileRelay) {
-		return "", errors.New("invalid mobile relay in Cage settings")
+		return "", errors.New("invalid mobile relay in Super Cage settings")
 	}
 	return prefs.MobileRelay, nil
 }
@@ -98,7 +98,7 @@ func run(ctx context.Context, args []string, out, errs io.Writer) error {
 		f.StringVar(&connectionFile, "connection-out", "", "new private file for the paired phone to save")
 		f.BoolVar(&serveSaved, "serve-saved", false, "keep serving the existing saved device pairing")
 		f.StringVar(&cageBinary, "cage-bin", "", "absolute path to trusted cage binary")
-		f.StringVar(&config, "config", "", "absolute path to the running Cage profile configuration")
+		f.StringVar(&config, "config", "", "absolute path to the running Super Cage profile configuration")
 	case "client":
 		f.StringVar(&base, "relay", mobilelink.OfficialRelay, "trusted relay HTTPS origin")
 		f.StringVar(&invitation, "invitation-file", "", "private invitation supplied by the host")
@@ -249,7 +249,7 @@ func run(ctx context.Context, args []string, out, errs io.Writer) error {
 		return err
 	}
 	defer browser.Close()
-	page := []byte(`<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta http-equiv="refresh" content="0;url=` + html.EscapeString(entry) + `"><title>Cage</title>`)
+	page := []byte(`<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta http-equiv="refresh" content="0;url=` + html.EscapeString(entry) + `"><title>Super Cage</title>`)
 	err = writeNewPrivate(launchFile, page)
 	clear(page)
 	if err != nil {
@@ -270,7 +270,7 @@ type entryBuffer struct{ buf bytes.Buffer }
 
 func (b *entryBuffer) Write(p []byte) (int, error) {
 	if len(p) > (16<<10)-b.buf.Len() {
-		return 0, errors.New("Cage entry too large")
+		return 0, errors.New("Super Cage entry too large")
 	}
 	return b.buf.Write(p)
 }
@@ -283,12 +283,12 @@ func localWorkbench(ctx context.Context, cageBinary, config string) (*mobilelink
 	buf := &entryBuffer{}
 	cmd.Stdout, cmd.Stderr = buf, io.Discard
 	if err := cmd.Run(); err != nil {
-		return nil, errors.New("Cage could not issue a local entry; start the selected profile first")
+		return nil, errors.New("Super Cage could not issue a local entry; start the selected profile first")
 	}
 	defer clear(buf.buf.Bytes())
 	var entry struct{ Origin, Ticket string }
 	if json.Unmarshal(buf.buf.Bytes(), &entry) != nil {
-		return nil, errors.New("Cage returned an invalid local entry")
+		return nil, errors.New("Super Cage returned an invalid local entry")
 	}
 	return mobilelink.OpenWorkbench(ctx, entry.Origin, entry.Ticket)
 }

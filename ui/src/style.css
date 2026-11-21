@@ -638,6 +638,10 @@ button.large {
   border: 1px solid var(--line);
   border-radius: 6px;
 }
+.terminal-note-quiet {
+  color: var(--muted);
+  border-color: transparent;
+}
 .terminal-note button {
   background: transparent;
   border: 0;
@@ -1397,6 +1401,7 @@ svg {
   display: flex;
   align-items: center;
   gap: 9px;
+  white-space: nowrap;
   font-weight: 600;
   font-size: 1.1429rem;
   letter-spacing: -0.4px;

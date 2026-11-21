@@ -31,7 +31,7 @@ for (const [platform, id] of [["darwin","macos"], ["windows","windows-11"], ["li
         }
       } else await region.waitFor({state:"hidden"});
       const submitted = page.waitForRequest(req => req.url().endsWith("/api/start") && req.method()==="POST");
-      await page.getByRole("button",{name:"启动 Cage 环境",exact:true}).click();
+      await page.getByRole("button",{name:"启动 Super Cage 环境",exact:true}).click();
       assert.deepEqual((await submitted).postDataJSON(), fresh ? {guest_system:"debian-13"} : {});
       assert.deepEqual(errors,[]);
     } finally { await browser.close(); }

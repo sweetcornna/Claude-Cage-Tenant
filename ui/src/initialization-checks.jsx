@@ -20,7 +20,7 @@ export function InitializationChecks({ status, busy, onWorkspace, onCheck, onSta
     <h2>{code === "project-approval" ? "允许虚拟 Mac 访问工作区" : code === "guest-login" ? "先登录虚拟 Mac" : code === "filesystem-permission" ? "先启用文件共享权限" : "完成联网与隔离检查"}</h2>
     <p>{recovery?.message || status.job?.error || status.safety?.error || (recovery?.workspace ? "系统已经安装。接下来确认共享工作区可访问，再检查代理出口和环境隔离。" : "系统已经安装。接下来检查代理出口和环境隔离，项目文件夹可以稍后添加。")}</p>
     {recovery?.workspace && <p className="macos-approval-path">{recovery.workspace}</p>}
-    {code === "project-approval" && <p>点击下方按钮即可在 Cage 中打开授权窗口。在窗口中点击 Use Project（使用项目），验证通过后会继续联网检查。</p>}
+    {code === "project-approval" && <p>点击下方按钮即可在 Super Cage 中打开授权窗口。在窗口中点击 Use Project（使用项目），验证通过后会继续联网检查。</p>}
     {code === "filesystem-permission" && <p>在虚拟 Mac 中打开 macFUSE 和 macFUSE (local) 两个开关，完成后返回这里继续。</p>}
     {code === "guest-login" && <MacOSLogin disabled={busy} onSessionClosed={onCheck} />}
     {code === "filesystem-permission" && <MacOSLogin maintenance="projects" disabled={busy} onSessionClosed={onCheck} />}

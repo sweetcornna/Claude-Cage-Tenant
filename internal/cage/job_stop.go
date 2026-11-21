@@ -19,7 +19,7 @@ var jobIDPattern = regexp.MustCompile(`^[a-f0-9]{12,64}$`)
 // it cannot cancel a subsequent start with a fresh ID.
 func RequestJobStop(profile, id string) error {
 	if !jobIDPattern.MatchString(id) {
-		return errors.New("invalid Cage job identifier")
+		return errors.New("invalid Super Cage job identifier")
 	}
 	dir := filepath.Join(profile, "stopped-jobs")
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -57,12 +57,12 @@ func WatchJobStop(profile, id string, onStop func()) (func(), error) {
 		return func() {}, nil
 	}
 	if !jobIDPattern.MatchString(id) {
-		return nil, errors.New("invalid Cage job identifier")
+		return nil, errors.New("invalid Super Cage job identifier")
 	}
 	path := filepath.Join(profile, "stopped-jobs", id)
 	stopped := func() bool { _, err := os.Lstat(path); return err == nil || !os.IsNotExist(err) }
 	if stopped() {
-		return nil, errors.New("Cage startup was cancelled")
+		return nil, errors.New("Super Cage startup was cancelled")
 	}
 	done := make(chan struct{})
 	var once sync.Once

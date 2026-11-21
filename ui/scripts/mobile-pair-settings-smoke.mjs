@@ -44,7 +44,7 @@ try {
   await page.getByRole("alert").filter({hasText:"主机防休眠未生效：测试：系统未允许防休眠"}).waitFor();
   power = {active:true};
   await page.getByRole("alert").filter({hasText:"主机防休眠未生效"}).waitFor({state:"hidden"});
-  await page.getByText("型号待获取，请更新手机端 Cage 后重新连接。", { exact: true }).waitFor();
+  await page.getByText("型号待获取，请更新手机端 Super Cage 后重新连接。", { exact: true }).waitFor();
   device = { platform: "android", model: "Google Pixel 9 Pro" };
   await page.getByLabel("已配对手机", { exact: true }).getByText(device.model, { exact: true }).waitFor();
   assert.equal(await page.getByLabel("已配对手机", { exact: true }).innerText(), "Google Pixel 9 Pro\nAndroid");
@@ -70,10 +70,10 @@ try {
   await statusHeld;
   await confirmRemoval();
   await page.getByRole("button", { name: "移除手机", exact: true }).click();
-  await page.getByRole("heading", { name: "用手机连接 Cage", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "用手机连接 Super Cage", exact: true }).waitFor();
   releaseStatus();
   await statusDelivered;
-  await page.getByRole("heading", { name: "用手机连接 Cage", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "用手机连接 Super Cage", exact: true }).waitFor();
   assert.equal(await page.getByLabel("已配对手机", { exact: true }).count(), 0);
   assert.equal(removals, 1);
   assert.deepEqual(errors, []);

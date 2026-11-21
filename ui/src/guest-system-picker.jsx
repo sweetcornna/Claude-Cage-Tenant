@@ -100,11 +100,11 @@ export function GuestSystemPicker({ system, onChange, preserveOnUnmount = false,
         {!view.host_match_only && <option value="macos" disabled={view.system !== "macos" || !view.available}>macOS{view.system === "macos" ? view.available ? "" : "（暂不可用）" : "（需要兼容的 Mac）"}</option>}
         <option value="windows-11" disabled={view.system !== "windows-11" || !view.available}>Windows 11{view.system === "windows-11" ? view.available ? "" : "（暂不可用）" : "（需要 Windows 11 与 Hyper-V）"}</option>
       </InlineSelect>
-      {system.clone && !system.activate && (deferMatch ? <small className="guest-install-fields">Cage 会检测本机系统版本，在下一步显示匹配的官方镜像、下载量与空间要求。</small> : <HostCloneSummary pending={system.pending} onChange={onChange} />)}
-      {!system.activate && <small className="guest-install-fields">系统镜像通过主机网络下载，遵循主机系统代理或 TUN 设置，不使用 Cage 的客机代理。使用 Clash 等软件时，请先开启系统代理或 TUN；代理规则决定镜像网站的实际出口。</small>}
+      {system.clone && !system.activate && (deferMatch ? <small className="guest-install-fields">Super Cage 会检测本机系统版本，在下一步显示匹配的官方镜像、下载量与空间要求。</small> : <HostCloneSummary pending={system.pending} onChange={onChange} />)}
+      {!system.activate && <small className="guest-install-fields">系统镜像通过主机网络下载，遵循主机系统代理或 TUN 设置，不使用 Super Cage 的客机代理。使用 Clash 等软件时，请先开启系统代理或 TUN；代理规则决定镜像网站的实际出口。</small>}
       {!system.clone && os !== "debian-13" && !system.activate && <div className="guest-install-fields">
         {os === "ubuntu-22.04" ? <>
-          <small>从 Ubuntu 官方源下载 Ubuntu 22.04 LTS 镜像，并校验 SHA-256。Cage 按主机架构选择 ARM64 或 x86_64。</small>
+          <small>从 Ubuntu 官方源下载 Ubuntu 22.04 LTS 镜像，并校验 SHA-256。Super Cage 按主机架构选择 ARM64 或 x86_64。</small>
           <small>自动安装开发工具、浏览器和编辑器。客机账户、文件和登录状态保存在独立的持久虚拟磁盘中。</small>
           <small>至少需要 17 GiB 可用空间。失败后可继续原安装，不会改用其他系统或覆盖已有环境。</small>
         </> : os === "macos" ? <>
@@ -113,9 +113,9 @@ export function GuestSystemPicker({ system, onChange, preserveOnUnmount = false,
             <button type="button" onClick={choose}>选择本机 IPSW</button>
             {system.media && <button type="button" onClick={() => change({ media: "" })}>改为下载</button>}
           </div>}
-          <small>客机账户和独立密码由 Cage 自动准备并加密保管，启动时自动登录。</small>
+          <small>客机账户和独立密码由 Super Cage 自动准备并加密保管，启动时自动登录。</small>
         </> : <>
-          <small>Windows 11 x64 需要 Hyper-V 和至少 64 GiB 可用磁盘空间。安装前在授权窗口设置客机本地管理员，Cage 会生成离线账户应答。进入客机桌面后回 Cage 继续，使用该账户确认组件安装。Cage 随后创建专用普通账户并重启客机。</small>
+          <small>Windows 11 x64 需要 Hyper-V 和至少 64 GiB 可用磁盘空间。安装前在授权窗口设置客机本地管理员，Super Cage 会生成离线账户应答。进入客机桌面后回 Super Cage 继续，使用该账户确认组件安装。Super Cage 随后创建专用普通账户并重启客机。</small>
           {!system.pending && <div>
             <button type="button" onClick={() => reference("windows-media")}>从微软下载 ISO</button>
             <button type="button" onClick={choose}>选择本机 ISO</button>
@@ -129,7 +129,7 @@ export function GuestSystemPicker({ system, onChange, preserveOnUnmount = false,
         </>}
       </div>}
       {system.clone && os === "windows-11" && <div className="guest-install-fields">
-        <small>安装时需要你确认 Windows 管理员授权，Cage 随后自动安装系统并创建独立客机账户。</small>
+        <small>安装时需要你确认 Windows 管理员授权，Super Cage 随后自动安装系统并创建独立客机账户。</small>
         <button type="button" onClick={() => reference("editor-license")}>阅读 Microsoft VS Code Server 许可条款</button>
         <label><input type="checkbox" checked={system.editor_terms} disabled={system.pending}
           onChange={(e) => change({ editor_terms: e.target.checked })} />我接受上述编辑器许可条款</label>

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -48,6 +49,10 @@ func (s *Server) mobileOpenTerminal(w http.ResponseWriter, r *http.Request) {
 	defer s.mobileConnectMu.Unlock()
 	view, ok := s.authorizedMobileSession(w, r)
 	if !ok {
+		return
+	}
+	if view.Provider == codexProvider {
+		http.Error(w, "Codex 会话请在手机上继续，暂不支持从手机打开电脑终端", 409)
 		return
 	}
 	if !s.isTerminalConversation(view.ID) {
@@ -176,7 +181,7 @@ func (s *Server) mobileApprovalResponse(w http.ResponseWriter, r *http.Request) 
 	s.account.mu.Lock()
 	if !s.mobileAuthorized(r.Context()) {
 		s.account.mu.Unlock()
-		http.Error(w, "请先解锁 Cage", 423)
+		http.Error(w, "请先解锁 Super Cage", 423)
 		return
 	}
 	m := &s.mobileCLI
@@ -222,7 +227,7 @@ func (s *Server) mobileProjects(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 	name, _ := os.Hostname()
-	jsonReply(w, map[string]any{"projects": projects, "ready": ready, "host": name, "shared_sessions": shared})
+	jsonReply(w, map[string]any{"projects": projects, "ready": ready, "host": name, "shared_sessions": shared, "codex": s.codexGuestSupported()})
 }
 func (s *Server) mobileSessions(w http.ResponseWriter, r *http.Request) {
 	paths, err := s.projectPaths()
@@ -240,10 +245,15 @@ func (s *Server) mobileSessions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "无法读取主机上的 CLI 会话记录", 500)
 		return
 	}
-	var notice string
-	if err := s.discoverTerminalConversations(r.Context(), paths); err != nil {
-		notice = err.Error()
-	} else {
+	var notices []string
+	claudeErr := s.discoverTerminalConversations(r.Context(), paths)
+	codexErr := s.discoverCodexConversations(r.Context(), paths)
+	for _, err := range []error{claudeErr, codexErr} {
+		if err != nil && !slices.Contains(notices, err.Error()) {
+			notices = append(notices, err.Error())
+		}
+	}
+	if claudeErr == nil || codexErr == nil {
 		sessions, err = s.mobileCLI.summaries(s.profile, granted, archived)
 		if err != nil {
 			http.Error(w, "无法读取主机上的 CLI 会话记录", 500)
@@ -253,18 +263,23 @@ func (s *Server) mobileSessions(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	ready := s.ready && !s.closing
 	s.mu.Unlock()
-	if !ready || notice != "" {
-		for i := range sessions {
+	for i := range sessions {
+		failed := claudeErr
+		if sessions[i].Provider == codexProvider {
+			failed = codexErr
+		}
+		if !ready || failed != nil {
 			sessions[i].Active = false
 		}
 	}
-	jsonReply(w, map[string]any{"sessions": sessions, "notice": notice})
+	jsonReply(w, map[string]any{"sessions": sessions, "notice": strings.Join(notices, "\n")})
 }
 func (s *Server) mobileNewSession(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		ID        string `json:"id"`
 		Workspace string `json:"workspace"`
 		Shared    bool   `json:"shared"` // Accepted for old clients; the host always creates a common session.
+		Provider  string `json:"provider"`
 	}
 	if !readJSON(w, r, &input) {
 		return
@@ -273,9 +288,26 @@ func (s *Server) mobileNewSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "需要项目和有效的创建编号", 400)
 		return
 	}
+	if input.Provider != "" && input.Provider != "claude" && input.Provider != codexProvider {
+		http.Error(w, "不支持的会话类型", 400)
+		return
+	}
 	workspace, err := s.projectWorkspace(input.Workspace)
 	if err != nil {
 		http.Error(w, "项目未授权或已不可用", 403)
+		return
+	}
+	if input.Provider == codexProvider {
+		view, err := s.createCodexConversation(r.Context(), input.ID, workspace)
+		if errors.Is(err, errMobileLocked) {
+			http.Error(w, err.Error(), http.StatusLocked)
+			return
+		}
+		if err != nil {
+			http.Error(w, err.Error(), 409)
+			return
+		}
+		jsonReply(w, view)
 		return
 	}
 	s.mu.Lock()

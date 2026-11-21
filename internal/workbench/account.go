@@ -52,7 +52,7 @@ func (s *Server) accountAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if action != "create" && action != "unlock" && action != "device-unlock" && action != "recovery-reset" {
 		if _, ok := s.account.accessFor(s.hasTrustedView(r), false); !ok {
-			http.Error(w, "请先解锁 Cage", http.StatusLocked)
+			http.Error(w, "请先解锁 Super Cage", http.StatusLocked)
 			return
 		}
 	}
@@ -106,7 +106,7 @@ func (s *Server) accountAction(w http.ResponseWriter, r *http.Request) {
 		recoveryKey, err = s.account.resetPassword(input.RecoveryKey, input.Password)
 	case "prepare-macos":
 		if !s.macAccountHost() || !s.hasTrustedView(r) {
-			http.Error(w, "请在本机 Cage 窗口设置共用账密", http.StatusForbidden)
+			http.Error(w, "请在本机 Super Cage 窗口设置共用账密", http.StatusForbidden)
 			return
 		}
 		if input.Password != input.ConfirmPassword {

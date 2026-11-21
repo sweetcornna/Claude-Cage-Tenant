@@ -34,6 +34,7 @@ enum SimulatorWorkspacePreview {
         config.userContentController.addUserScript(WKUserScript(source: fixture, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let view = WKWebView(frame: .zero, configuration: config)
         view.scrollView.contentInsetAdjustmentBehavior = .never
+        view.usePaperBackground()
         view.navigationDelegate = delegate
         view.load(URLRequest(url: origin))
         return (view, delegate)

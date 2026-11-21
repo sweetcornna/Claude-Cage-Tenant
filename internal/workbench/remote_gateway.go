@@ -304,7 +304,7 @@ func (s *Server) routeRemote(w http.ResponseWriter, r *http.Request) bool {
 		defer s.diagnosticMu.Unlock()
 	}
 	if remote && strings.HasPrefix(r.URL.Path, "/api/mobile/") {
-		http.Error(w, "手机只连接当前电脑的 Cage 环境", http.StatusForbidden)
+		http.Error(w, "手机只连接当前电脑的 Super Cage 环境", http.StatusForbidden)
 		return true
 	}
 	if remote && (r.URL.Path == "/api/mobile-pair" || strings.HasPrefix(r.URL.Path, "/api/mobile-pair/")) {

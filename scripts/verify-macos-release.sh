@@ -14,12 +14,12 @@ validate_ticket() {
   done
 }
 shopt -s nullglob
-archives=("$directory"/Cage-*-macos-arm64.dmg)
-if [[ ${#archives[@]} != 1 ]]; then echo 'Expected exactly one Cage DMG.' >&2; exit 1; fi
+archives=("$directory"/Super-Cage-*-macos-arm64.dmg)
+if [[ ${#archives[@]} != 1 ]]; then echo 'Expected exactly one Super Cage DMG.' >&2; exit 1; fi
 sources=("$directory"/mihomo-v*-source.tar.gz)
 if [[ ${#sources[@]} != 1 ]]; then echo 'Expected exactly one Mihomo source archive.' >&2; exit 1; fi
 archive="${archives[0]}"
-version="${archive##*/Cage-}"
+version="${archive##*/Super-Cage-}"
 version="${version%-macos-arm64.dmg}"
 guest_source="$directory/cage-macos-guest-$version-source.tar.gz"
 [[ -f "$guest_source" ]] || { echo 'Expected the matching macOS guest corresponding source archive.' >&2; exit 1; }
@@ -43,7 +43,7 @@ mount="$(mktemp -d)"
 cleanup() { hdiutil detach "$mount" >/dev/null 2>&1 || true; rmdir "$mount" 2>/dev/null || true; }
 trap cleanup EXIT
 hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$archive" >/dev/null
-bundle="$mount/Cage.app"
+bundle="$mount/Super Cage.app"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CageVersion' "$bundle/Contents/Info.plist")" = "$version"
 codesign --verify --deep --strict --verbose=2 \
   -R='anchor apple generic and identifier "io.github.lee-xeo.claude-cage" and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' "$bundle"
@@ -53,4 +53,4 @@ cmp "$guest_source" "$bundle/Contents/Resources/guest-os/sources/${guest_source#
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 node "$script_dir/guest-os/collect-macos-sshfs-sources.mjs" verify "$guest_source" \
   "$bundle/Contents/Resources/guest-os/project/cage-sshfs" "$version"
-echo "Verified Developer ID, notarization, Gatekeeper, version and corresponding source: Cage $version"
+echo "Verified Developer ID, notarization, Gatekeeper, version and corresponding source: Super Cage $version"

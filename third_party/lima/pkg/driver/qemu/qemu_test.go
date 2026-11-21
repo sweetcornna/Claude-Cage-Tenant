@@ -59,6 +59,24 @@ func TestArgValue(t *testing.T) {
 	}
 }
 
+func TestBalloonDeviceFreePageReporting(t *testing.T) {
+	for _, tc := range []struct {
+		version *semver.Version
+		goos    string
+		want    string
+	}{
+		{semver.New("5.1.0"), "linux", "virtio-balloon,free-page-reporting=on"},
+		{semver.New("10.1.2"), "linux", "virtio-balloon,free-page-reporting=on"},
+		{semver.New("10.1.2"), "darwin", "virtio-balloon"},
+		{semver.New("5.0.1"), "linux", "virtio-balloon"},
+		{&semver.Version{}, "linux", "virtio-balloon"},
+		{nil, "linux", "virtio-balloon"},
+		{semver.New("11.0.0"), "windows", "virtio-balloon"},
+	} {
+		assert.Equal(t, tc.want, balloonDevice(tc.version, tc.goos))
+	}
+}
+
 func TestParseQemuVersion(t *testing.T) {
 	type testCase struct {
 		versionOutput string

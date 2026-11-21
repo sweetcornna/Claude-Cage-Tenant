@@ -254,6 +254,12 @@ func (s *Server) purgeSession(ctx context.Context, id string) error {
 	}
 	executions := append([]claudeExecution{}, record.Executions...)
 	executions = append(executions, claudeExecution{record.CLIID, record.Account, record.GuestConfig})
+	if record.codex() {
+		if err := s.purgeCodexConversation(ctx, record); err != nil {
+			return err
+		}
+		executions = nil
+	}
 	for _, execution := range executions {
 		input := map[string]any{
 			"cli_id": execution.CLIID, "config": execution.Config,
@@ -273,7 +279,7 @@ func (s *Server) purgeSession(ctx context.Context, id string) error {
 	// Keep only the identity needed to make retries and discovery idempotent.
 	// If this write fails, the archived record can safely retry guest cleanup.
 	tombstone := &mobileRecord{mobileSession: mobileSession{mobileSummary: mobileSummary{
-		ID: record.ID, Workspace: record.Workspace, Deleted: true, Purged: true,
+		ID: record.ID, Provider: record.Provider, Workspace: record.Workspace, Deleted: true, Purged: true,
 		Revision: record.Revision, Generation: record.Generation,
 	}, Turns: []mobileTurn{}}, CLIID: record.CLIID}
 	for _, execution := range record.Executions {

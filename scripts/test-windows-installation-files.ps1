@@ -76,9 +76,11 @@ function Commit([string]$Old, [string]$Stage, [string]$Receipt) {
 function Test-InstallerTransaction {
     if (!$windows -or $PSVersionTable.PSVersion.Major -lt 7) { throw 'The optional NSIS fixture requires PowerShell 7 on a disposable Windows user.' }
     $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ClaudeCage'
-    $desktop = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Cage.lnk'
-    $menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'Cage'
-    if ((Test-Path $key) -or (Test-Path -LiteralPath $desktop) -or (Test-Path -LiteralPath $menu)) { throw 'The NSIS fixture refuses an existing Cage registration or shortcuts.' }
+    $desktop = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Super Cage.lnk'
+    $menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'Super Cage'
+    # The installer also removes the shortcuts named before the Super Cage rename.
+    $legacy = @((Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Cage.lnk'), (Join-Path ([Environment]::GetFolderPath('Programs')) 'Cage'))
+    if ((Test-Path $key) -or (Test-Path -LiteralPath $desktop) -or (Test-Path -LiteralPath $menu) -or @($legacy | Where-Object { Test-Path -LiteralPath $_ }).Count) { throw 'The NSIS fixture refuses an existing Super Cage registration or shortcuts.' }
     $runtime = $false
     foreach ($hive in @([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryHive]::CurrentUser)) {
         $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey($hive, [Microsoft.Win32.RegistryView]::Registry32)

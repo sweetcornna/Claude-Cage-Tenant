@@ -73,3 +73,66 @@ func TestArchivedSessionQuery(t *testing.T) {
 		}
 	}
 }
+
+func TestPhoneControlRoutes(t *testing.T) {
+	const id = "0123456789abcdef"
+	for _, tc := range []struct {
+		method, path, query string
+		want                bool
+	}{
+		{"GET", "/api/mobile/environment", "", true},
+		{"POST", "/api/mobile/environment", "", false},
+		{"GET", "/api/mobile/environment", "x=1", false},
+		{"POST", "/api/mobile/environment/start", "", true},
+		{"POST", "/api/mobile/environment/stop", "", true},
+		{"POST", "/api/mobile/environment/restart", "", true},
+		{"GET", "/api/mobile/environment/restart", "", false},
+		{"POST", "/api/mobile/environment/update", "", false},
+		{"GET", "/api/mobile/environment/proxy", "", true},
+		{"POST", "/api/mobile/environment/proxy", "", false},
+		{"POST", "/api/mobile/environment/proxy/select", "", true},
+		{"POST", "/api/mobile/environment/proxy/delay", "", true},
+		{"POST", "/api/mobile/environment/proxy/import", "", false},
+		{"POST", "/api/mobile/environment/proxy/select", "node=1", false},
+		{"GET", "/api/mobile/terminals", "", true},
+		{"POST", "/api/mobile/terminals", "", true},
+		{"DELETE", "/api/mobile/terminals", "", false},
+		{"GET", "/api/mobile/terminals/" + id + "/output", "after=0", true},
+		{"GET", "/api/mobile/terminals/" + id + "/output", "after=18446744073709551615", true},
+		{"GET", "/api/mobile/terminals/" + id + "/output", "after=18446744073709551616", false},
+		{"GET", "/api/mobile/terminals/" + id + "/output", "after=01", false},
+		{"GET", "/api/mobile/terminals/" + id + "/output", "after=-1", false},
+		{"GET", "/api/mobile/terminals/" + id + "/output", "after=1&after=2", false},
+		{"GET", "/api/mobile/terminals/" + id + "/output", "after=1&epoch=2", false},
+		{"GET", "/api/mobile/terminals/" + id + "/output", "", false},
+		{"POST", "/api/mobile/terminals/" + id + "/output", "after=0", false},
+		{"POST", "/api/mobile/terminals/" + id + "/input", "", true},
+		{"POST", "/api/mobile/terminals/" + id + "/resize", "", true},
+		{"POST", "/api/mobile/terminals/" + id + "/close", "", true},
+		{"GET", "/api/mobile/terminals/" + id + "/input", "", false},
+		{"POST", "/api/mobile/terminals/" + id + "/input", "after=0", false},
+		{"POST", "/api/mobile/terminals/" + id + "/stream", "", false},
+		{"POST", "/api/mobile/terminals/" + strings.ToUpper(id) + "/input", "", false},
+		{"POST", "/api/mobile/terminals/" + id[:15] + "/input", "", false},
+		{"POST", "/api/mobile/terminals/" + id + "0/input", "", false},
+		{"POST", "/api/mobile/files/list", "", true},
+		{"POST", "/api/mobile/files/read", "", true},
+		{"POST", "/api/mobile/files/mkdir", "", true},
+		{"POST", "/api/mobile/files/upload/start", "", true},
+		{"POST", "/api/mobile/files/upload/chunk", "", true},
+		{"POST", "/api/mobile/files/upload/finish", "", true},
+		{"POST", "/api/mobile/files/upload/abort", "", true},
+		{"GET", "/api/mobile/files/list", "", false},
+		{"POST", "/api/mobile/files/delete", "", false},
+		{"POST", "/api/mobile/files/upload", "", false},
+		{"POST", "/api/mobile/files/read", "path=x", false},
+	} {
+		u := &url.URL{Path: tc.path, RawQuery: tc.query}
+		if got := allowed(tc.method, u); got != tc.want {
+			t.Errorf("%s %s allowed=%v, want %v", tc.method, u.RequestURI(), got, tc.want)
+		}
+	}
+	if allowed("GET", &url.URL{Path: "/api/mobile/environment", ForceQuery: true}) {
+		t.Fatal("empty query accepted")
+	}
+}

@@ -10,7 +10,9 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const Repository = "sweetcornna/Claude-Cage-Tenant"
+// Repository is the renamed Super Cage repository. GitHub serves asset URLs
+// under the current name, so download URLs under the old name are not trusted.
+const Repository = "sweetcornna/Super-Cage"
 const ReleasesURL = "https://api.github.com/repos/" + Repository + "/releases?per_page=100"
 
 // Releases must stay below the limit of every published App that still updates
@@ -36,24 +38,28 @@ type Candidate struct {
 	Checksums Asset  `json:"checksums"`
 }
 
-func archiveName(version, goos, goarch string) (string, error) {
+// archiveNames lists the accepted package names, current name first. Releases
+// before the Super Cage rename used the "Cage-" prefix.
+func archiveNames(version, goos, goarch string) ([]string, error) {
+	var suffix string
 	switch {
 	case goos == "darwin" && goarch == "arm64":
-		return "Cage-" + version + "-macos-arm64.dmg", nil
+		suffix = "-macos-arm64.dmg"
 	case goos == "windows" && goarch == "amd64":
-		return "Cage-" + version + "-windows-amd64-setup.exe", nil
+		suffix = "-windows-amd64-setup.exe"
 	// Linux only learns that a newer package exists; the system installs it.
 	case goos == "linux" && goarch == "amd64":
-		return "Cage-" + version + "-linux-amd64.deb", nil
+		suffix = "-linux-amd64.deb"
 	case goos == "android" && goarch == "arm64":
-		return "Cage-" + version + "-android-arm64.apk", nil
+		suffix = "-android-arm64.apk"
 	default:
-		return "", errors.New("此平台尚无 Cage 应用内更新发行包")
+		return nil, errors.New("此平台尚无 Super Cage 应用内更新发行包")
 	}
+	return []string{"Super-Cage-" + version + suffix, "Cage-" + version + suffix}, nil
 }
 
 func Select(releases []Release, current, goos, goarch string) (*Candidate, error) {
-	if _, err := archiveName(current, goos, goarch); err != nil {
+	if _, err := archiveNames(current, goos, goarch); err != nil {
 		return nil, err
 	}
 	currentTag := "v" + current
@@ -74,13 +80,16 @@ func Select(releases []Release, current, goos, goarch string) (*Candidate, error
 			continue
 		}
 		c := Candidate{Version: v}
-		name, _ := archiveName(v, goos, goarch)
+		names, _ := archiveNames(v, goos, goarch)
+		rank := len(names)
 		for _, a := range r.Assets {
 			if a.State != "uploaded" {
 				continue
 			}
-			if a.Name == name && a.Size > 0 && a.Size <= MaxArchive {
-				c.Archive = a
+			for i, name := range names {
+				if i < rank && a.Name == name && a.Size > 0 && a.Size <= MaxArchive {
+					c.Archive, rank = a, i
+				}
 			}
 			if a.Name == "SHA256SUMS" && a.Size > 0 && a.Size <= 64<<10 {
 				c.Checksums = a
@@ -90,7 +99,7 @@ func Select(releases []Release, current, goos, goarch string) (*Candidate, error
 			continue
 		}
 		base := "https://github.com/" + Repository + "/releases/download/" + r.Tag + "/"
-		if c.Archive.URL != base+name || (c.Checksums.URL != "" && c.Checksums.URL != base+"SHA256SUMS") {
+		if c.Archive.URL != base+c.Archive.Name || (c.Checksums.URL != "" && c.Checksums.URL != base+"SHA256SUMS") {
 			continue
 		}
 		if c.Archive.Digest == "" && c.Checksums.URL == "" {

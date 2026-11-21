@@ -169,7 +169,7 @@ func WindowsStartHint(w io.Writer, logs ...string) {
 	for _, l := range logs {
 		if b, err := os.ReadFile(l); err == nil && strings.Contains(strings.ToLower(string(b)), "whpx") {
 			if windowsHypervisorReady() == nil {
-				fmt.Fprintln(w, "Windows Hypervisor Platform is enabled, but QEMU could not initialize WHPX. Check the original QEMU error and any custom QEMU arguments; Cage uses kernel-irqchip=off for WHPX compatibility.")
+				fmt.Fprintln(w, "Windows Hypervisor Platform is enabled, but QEMU could not initialize WHPX. Check the original QEMU error and any custom QEMU arguments; Super Cage uses kernel-irqchip=off for WHPX compatibility.")
 				return
 			}
 			fmt.Fprintf(w, `QEMU could not use the Windows hypervisor. It needs the "Windows Hypervisor

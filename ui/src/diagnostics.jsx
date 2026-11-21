@@ -26,7 +26,7 @@ export function DiagnosticSettings() {
         // Fetch before downloading so authentication or disk failures are shown.
         const response = await fetch(runtimeURL("/diagnostics/export"));
         if (!response.ok) throw new Error((await response.text()).trim() || "诊断包导出失败");
-        if (!response.headers.get("content-type")?.startsWith("application/zip")) throw new Error("当前后台不支持诊断导出，请重新打开 Cage");
+        if (!response.headers.get("content-type")?.startsWith("application/zip")) throw new Error("当前后台不支持诊断导出，请重新打开 Super Cage");
         const url = URL.createObjectURL(await response.blob());
         const link = document.createElement("a"); link.href = url; link.download = "cage-diagnostics.zip"; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 30_000);

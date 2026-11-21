@@ -12,6 +12,7 @@ import (
 	"github.com/sylvinus/agent-vm/internal/cage"
 	"github.com/sylvinus/agent-vm/internal/diagnostics"
 	"github.com/sylvinus/agent-vm/internal/guestos"
+	"github.com/sylvinus/agent-vm/internal/guestprofile"
 	"github.com/sylvinus/agent-vm/internal/host"
 	"github.com/sylvinus/agent-vm/internal/hostimage"
 	"io"
@@ -112,6 +113,7 @@ type Server struct {
 	mobileCLI                                        mobileCLIStore
 	conversationMu                                   sync.Mutex
 	mobileConnectMu                                  sync.Mutex
+	mobileUploads                                    mobileUploads
 	audioClients                                     int
 	projectShares                                    map[string]*projectShare
 	projectErrors                                    []projectShareError
@@ -345,6 +347,7 @@ func (s *Server) handler() http.Handler {
 	s.agentRoutes(mux)
 	s.agentNativeRoutes(mux)
 	s.mobileCLIRoutes(mux)
+	s.mobileControlRoutes(mux)
 	s.mobileSurfaceRoutes(mux)
 	mux.HandleFunc("GET /api/mobile-pair", s.phoneStatus)
 	mux.HandleFunc("POST /api/mobile-pair", s.pairPhone)
@@ -375,7 +378,7 @@ func (s *Server) handler() http.Handler {
 			return
 		}
 		if !s.consumeTicket(v.Token) {
-			http.Error(w, "访问凭证无效，请从 Cage 应用重新打开。", http.StatusUnauthorized)
+			http.Error(w, "访问凭证无效，请从 Super Cage 应用重新打开。", http.StatusUnauthorized)
 			return
 		}
 		http.SetCookie(w, &http.Cookie{Name: s.cookieName(), Value: s.session, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 86400 * 30})
@@ -544,7 +547,7 @@ func (s *Server) handler() http.Handler {
 		if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/session" && r.URL.Path != "/api/launch" && r.URL.Path != "/api/handoff" {
 			c, e := r.Cookie(s.cookieName())
 			if e != nil || !equalSecret(c.Value, s.session) {
-				http.Error(w, "请从 Cage 应用重新打开工作台", 401)
+				http.Error(w, "请从 Super Cage 应用重新打开工作台", 401)
 				return
 			}
 		}
@@ -590,7 +593,7 @@ func (s *Server) handler() http.Handler {
 				}
 			}
 			if s.clientOnly || s.desktopEntry {
-				http.Error(w, "请连接运行 Cage 环境的主机", http.StatusConflict)
+				http.Error(w, "请连接运行 Super Cage 环境的主机", http.StatusConflict)
 				return
 			}
 		} else if s.macosGuest == nil && s.windowsGuest == nil && s.routeRemote(w, r) {
@@ -598,7 +601,7 @@ func (s *Server) handler() http.Handler {
 		}
 		ctx, finish, err := s.beginActivity(r.Context())
 		if err != nil {
-			http.Error(w, "后台正在更新，请重新打开 Cage。", http.StatusServiceUnavailable)
+			http.Error(w, "后台正在更新，请重新打开 Super Cage。", http.StatusServiceUnavailable)
 			return
 		}
 		defer finish()
@@ -608,13 +611,13 @@ func (s *Server) handler() http.Handler {
 		trustedDesktop := s.hasTrustedView(r)
 		phoneRoom := s.pairedPhoneRoom(r)
 		if (s.windowsGuest != nil || s.macosGuest != nil) && strings.HasPrefix(r.URL.Path, "/api/") && !bootstrapRoute && !trustedDesktop && phoneRoom == nil && !s.hasRemoteWindowsView(r) {
-			http.Error(w, "请通过本机 Cage 窗口或当前配对手机打开客机", http.StatusForbidden)
+			http.Error(w, "请通过本机 Super Cage 窗口或当前配对手机打开客机", http.StatusForbidden)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") && !accountRoute && !bootstrapRoute && !strings.HasPrefix(r.URL.Path, "/api/diagnostics") && !(r.Method == "GET" && r.URL.Path == "/api/appearance") {
 			epoch, unlocked := s.account.accessFor(trustedDesktop, phoneRoom != nil)
 			if !unlocked {
-				http.Error(w, "Cage 已锁定，请先登录", http.StatusLocked)
+				http.Error(w, "Super Cage 已锁定，请先登录", http.StatusLocked)
 				return
 			}
 			ctx, cancel := context.WithCancel(r.Context())
@@ -695,6 +698,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	running := s.vmRunning()
+	terminals := s.terminalsRevision()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, e := os.Stat(filepath.Join(s.profile, "previous-profile.json"))
@@ -714,6 +718,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		"keyboard":         s.preferences.Keyboard, "auto_timezone": s.preferences.AutoTimezone, "job": s.jobs.snapshot(),
 		"location": s.location, "network_error": s.currentNetworkErrorLocked(), "can_restore": e == nil,
 		"safety": s.safety, "environment_update_required": s.guestUpdateRequired, "environment_update_error": s.guestUpdateError,
+		"terminals_revision": terminals,
 	}
 	if s.windowsGuest != nil {
 		view["guest_system"] = guestos.Windows11
@@ -925,21 +930,37 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	s.launch(w, "start", func() error {
-		if err := s.prepareGuestProfile(input.GuestProfile, input.System); err != nil {
+	s.launch(w, "start", s.startRun(input.GuestProfile, input.System))
+}
+
+// startRun is the start job of an installed guest. The phone's start and
+// restart use it with no installation input, like the desktop's start.
+func (s *Server) startRun(options *guestprofile.Options, system string) func() error {
+	if s.windowsGuest != nil {
+		return s.startWindowsGuest
+	}
+	if s.macosGuest != nil {
+		return s.startMacOSGuest
+	}
+	return func() error {
+		if err := s.prepareGuestProfile(options, system); err != nil {
 			return err
 		}
 		if err := s.prepareEnvironment(); err != nil {
 			return err
 		}
 		return s.startEnvironment(true)
-	})
+	}
 }
 func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 	s.requestStop(w, false)
 }
 
 func (s *Server) requestStop(w http.ResponseWriter, logout bool) {
+	s.requestStopWith(w, logout, func(w http.ResponseWriter, job Job) { jsonReply(w, job) })
+}
+
+func (s *Server) requestStopWith(w http.ResponseWriter, logout bool, reply func(http.ResponseWriter, Job)) {
 	if err := s.requireStorageReady(); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -964,7 +985,7 @@ func (s *Server) requestStop(w http.ResponseWriter, logout bool) {
 	if logout {
 		kind = "logout"
 	}
-	s.launch(w, kind, s.stopEnvironment)
+	s.launchJob(w, kind, s.stopEnvironment, reply)
 }
 
 func (s *Server) cookieName() string { u, _ := url.Parse(s.origin); return cookieName + "_" + u.Port() }

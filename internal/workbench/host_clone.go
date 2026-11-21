@@ -49,7 +49,7 @@ func hostCloneSystemReserve(plan hostimage.Plan) int {
 
 func (s *Server) hostClone(w http.ResponseWriter, r *http.Request) {
 	if !s.hasTrustedView(r) || !s.localVMStorage() {
-		http.Error(w, "请在本机 Cage 窗口选择系统创建方式", http.StatusForbidden)
+		http.Error(w, "请在本机 Super Cage 窗口选择系统创建方式", http.StatusForbidden)
 		return
 	}
 	view, err := s.guestInstallView()

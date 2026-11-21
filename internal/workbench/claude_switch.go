@@ -55,6 +55,15 @@ func (s *Server) mobileSessionAccount(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &input) {
 		return
 	}
+	if view.Provider == codexProvider {
+		// Codex sessions continue in the account their thread was recorded in.
+		if input.Action != "inspect" {
+			http.Error(w, "Codex 会话不支持切换账号", 409)
+			return
+		}
+		jsonReply(w, map[string]any{"session": view, "supported": false, "candidates": []claudeSwitchOption{}})
+		return
+	}
 	if input.Action == "switch" {
 		if !input.Confirm || !mobileID(input.RequestID) || !validCLIUUID(input.SourceID) {
 			http.Error(w, "请确认本次账号接续并提供当前会话标识", 400)

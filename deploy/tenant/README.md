@@ -1,6 +1,6 @@
-# Cage 多租户宿主部署
+# Super Cage 多租户宿主部署
 
-`cage-tenant` 在 Linux Incus 宿主机上运行。门户每个 VM 记录对应专用项目中的 `cage-<id>` 虚拟机和独立可写根盘；没有 KVM 的宿主改用 Incus 系统容器，见[第 8 节](#8-无硬件虚拟化的宿主incus-系统容器)。空闲实例由网关自动冻结和停机，见[第 7 节](#7-空闲冷却)。网关只通过 Incus guest agent 接入每台 VM 自己的 Cage 回环端口。网关为每台 VM 默认启用托管的工作台账户：门户登录后自动进入工作台，不需要再次输入密码。首次连接空白 VM 时创建该账户；已有工作台账户保持不变，继续使用原有的解锁界面和密码保险箱。
+`cage-tenant` 在 Linux Incus 宿主机上运行。门户每个 VM 记录对应专用项目中的 `cage-<id>` 虚拟机和独立可写根盘；没有 KVM 的宿主改用 Incus 系统容器，见[第 8 节](#8-无硬件虚拟化的宿主incus-系统容器)。空闲实例由网关自动冻结和停机，见[第 7 节](#7-空闲冷却)；运行中 VM 的内存按宿主当前内存弹性调整，profile 的内存值是上限，见[第 9 节](#9-弹性内存vm-模式)。网关只通过 Incus guest agent 接入每台 VM 自己的 Super Cage 回环端口。网关为每台 VM 默认启用托管的工作台账户：门户登录后自动进入工作台，不需要再次输入密码。首次连接空白 VM 时创建该账户；已有工作台账户保持不变，继续使用原有的解锁界面和密码保险箱。
 
 ## 1. 准备 Linux 宿主机和专用项目
 
@@ -21,9 +21,9 @@ incus --force-local --project cage-tenant profile set default limits.memory=8GiB
 incus --force-local --project cage-tenant profile show default
 ```
 
-项目和每台 VM 的 CPU、内存与磁盘配额应按宿主储备设置。示例分配每台 4 vCPU、8 GiB 内存和 10 GiB 根盘。完整图形环境可能需要更大的根盘与更多内存。仅验证空闲控制器可从 2 vCPU、1 GiB 起步。
+项目和每台 VM 的 CPU、内存与磁盘配额应按宿主储备设置。示例分配每台 4 vCPU、最多 8 GiB 内存和 10 GiB 根盘；VM 模式下 profile 的 `limits.memory` 是每台 VM 的上限，网关按第 9 节在上限内调整运行中 VM 的实际内存。项目的 `limits.memory` 配额按每台 VM 的上限计算。完整图形环境可能需要更大的根盘与更多内存。仅验证空闲控制器可从 2 vCPU、1 GiB 起步。
 
-网关明确选择专用项目内的 `-incus-profile`（默认 `default`），不使用镜像关联的 profile。项目必须启用 `features.profiles=true`。网关在配备、接管及就绪复查时核对展开配置：只接受该 profile，要求显式正整数 vCPU、绝对内存大小，且有效值与 profile 一致；有效设备也必须一致。根盘只允许 `type=disk`、`path=/`、`pool` 和显式 `size`，不接受额外盘、宿主路径、socket、代理或其他共享设备，也不接受 `raw.*` 等自定义实例配置。已有实例若不匹配，查看网关宿主日志；保留原盘，先停机并由管理员核对配置再调整，不要临时放宽限制。不要在网关运行时改动 profile 或已运行 VM 的宿主侧配置：网关不是连续的配置审计器，也不能撤销已经生效的宿主配置。
+网关明确选择专用项目内的 `-incus-profile`（默认 `default`），不使用镜像关联的 profile。项目必须启用 `features.profiles=true`。网关在配备、接管及就绪复查时核对展开配置：只接受该 profile，要求显式正整数 vCPU 和绝对内存大小。vCPU 的有效值必须与 profile 一致；VM 的有效 `limits.memory` 可以是 profile 值，也可以是网关写入的实例级值，须为精确的 Incus 大小，且介于 1 GiB（profile 值更小时为 profile 值）与 profile 值之间。容器模式的内存仍须与 profile 一致。有效设备也必须一致。根盘只允许 `type=disk`、`path=/`、`pool` 和显式 `size`，不接受额外盘、宿主路径、socket、代理或其他共享设备，也不接受 `raw.*` 等自定义实例配置；唯一例外是第 9 节中开启 balloon 空闲页返还的那一条 profile 级 `raw.qemu.conf`，内容须逐字一致。已有实例若不匹配，查看网关宿主日志；保留原盘，先停机并由管理员核对配置再调整，不要临时放宽限制。不要在网关运行时改动 profile 或已运行 VM 的宿主侧配置：网关不是连续的配置审计器，也不能撤销已经生效的宿主配置。实例级 `limits.memory` 由网关自己维护（第 9 节），不要手动修改。
 
 示例配置的租户 VM 没有网卡。每台 VM 的代理订阅、节点和出口在该 VM 自己的工作台「网络与代理」中设置，代理核心运行在 VM 内，因此 VM 需要网卡才能使用代理出口。需要联网时，仅在管理员已配置并验证受信网络后，允许在 profile 中增加一个仅含 `type=nic`、`network=<网络名>` 和可选 `name` 的受管 NIC，设置 `-incus-network` 为同一个名字，并相应调整专用项目的 NIC 限制（不要放开其他网络）。使用宿主侧规则隔离 VM 间流量，并阻止 VM 访问宿主的服务与管理网段、其他私网和云元数据地址。IPv4、IPv6 与二层转发均须在部署时验证，网关不验证这些网络规则。宿主运行 Clash、Mihomo 等带 auto-redirect 的 TUN 透明代理时，VM 的 TCP 连接会被重定向到网桥地址上的代理端口；Incus 网络 ACL 若丢弃发往私网（含网桥地址）的流量，会连带切断全部外网。这种宿主改用 nftables 表实现隔离，参照无虚拟化版安装脚本写入的 `/etc/cage-tenant/guard.nft`：转发链丢弃私网、组播与 IPv6，输入链只放行来自网桥的 DHCP、DNS 和 `ct status dnat` 连接。控制端口继续只监听 VM 回环，宿主防火墙仅向浏览器开放 TLS 入口。Incus 管理 socket 的权限相当于宿主管理员权限，运行网关的专用系统账户和部署配置属于宿主信任边界。
 
@@ -32,9 +32,9 @@ incus --force-local --project cage-tenant profile show default
 ## 2. 制作空白 VM 镜像
 
 1. 在独立构建项目中从已验证的 Incus Linux **VM** 基础镜像启动一次性构建机。选择已安装并启用 Incus guest agent 的基础镜像。在 `cage-image-build` 项目导入验证过的 `debian-12-vm` 后执行 `incus --project cage-image-build launch local:debian-12-vm cage-template --vm`。为 Ubuntu 24.04 单独制作模板并使用独立镜像别名。
-2. 在构建机中安装 Cage Linux 服务端、所选工作环境的依赖、`socat` 和 `coreutils`。确认 `/usr/bin/socat` 与 `/usr/bin/head` 存在。以普通 `cage` 系统账户运行 `cage serve`，使用独立配置目录。`CLAUDE_CAGE_CONFIG=/home/cage/.claude-cage/config.json` 对应默认的 `-guest-control-path`。可用专用 systemd 用户服务和 `loginctl enable-linger cage` 确保无需登录即可开机启动。宿主提供嵌套虚拟化时，VM 内的 Cage 用本机模式运行自己的客机：再安装 `qemu-system-x86`（arm64 为 `qemu-system-arm`）、`qemu-utils`、`ovmf`、`openssh-client`、`iproute2` 和 `git`，把 `cage` 用户加入 `kvm` 组，并把 Linux 安装包 `/usr/lib/claude-cage/` 中的 `cage` 与 `mihomo` 放在同一目录（代理核心只在 `cage` 旁边查找）。`images:debian/12/cloud` 等 cloud 镜像会由 cloud-init 创建 UID 1000 的默认用户，建模板前删除该用户，并写入 `users: []` 禁止新 VM 首次启动时再建。
-3. 如采用 Cage 云工作环境，按云端文档准备当前版本的完整工作环境模板、rootless 引擎与用户服务。将经过校验的模板预载进**构建 VM 内**的 rootless 引擎，并用 `cage init` 和 `cage container-configure --json` 写入空白运行配置。使用 `deploy/cloud/cage-container-engine.service` 与 `deploy/cloud/cage-server.service`，依赖、镜像与 socket 都留在每台租户 VM 内。仅复制空白模板层，让新 VM 自行生成工作台、浏览器和工作环境身份。[Cage 云端构建说明](../cloud/README.md)
-4. 在一次性构建机停止 Cage 服务和引擎。按发行版镜像制作步骤清理构建机身份、SSH 密钥和构建日志。检查 Cage 配置和引擎镜像层，确保镜像内没有工作台账户或保险箱、项目、历史、`control.json`、会话、模型或代理凭据，以及任何用户数据。保持开机服务与 guest agent 启用后停止构建 VM。
+2. 在构建机中安装 Super Cage Linux 服务端、所选工作环境的依赖、`socat` 和 `coreutils`。确认 `/usr/bin/socat` 与 `/usr/bin/head` 存在。以普通 `cage` 系统账户运行 `cage serve`，使用独立配置目录。`CLAUDE_CAGE_CONFIG=/home/cage/.claude-cage/config.json` 对应默认的 `-guest-control-path`。可用专用 systemd 用户服务和 `loginctl enable-linger cage` 确保无需登录即可开机启动。宿主提供嵌套虚拟化时，VM 内的 Super Cage 用本机模式运行自己的客机：再安装 `qemu-system-x86`（arm64 为 `qemu-system-arm`）、`qemu-utils`、`ovmf`、`openssh-client`、`iproute2` 和 `git`，把 `cage` 用户加入 `kvm` 组，并把 Linux 安装包 `/usr/lib/claude-cage/` 中的 `cage` 与 `mihomo` 放在同一目录（代理核心只在 `cage` 旁边查找）。`images:debian/12/cloud` 等 cloud 镜像会由 cloud-init 创建 UID 1000 的默认用户，建模板前删除该用户，并写入 `users: []` 禁止新 VM 首次启动时再建。
+3. 如采用 Super Cage 云工作环境，按云端文档准备当前版本的完整工作环境模板、rootless 引擎与用户服务。将经过校验的模板预载进**构建 VM 内**的 rootless 引擎，并用 `cage init` 和 `cage container-configure --json` 写入空白运行配置。使用 `deploy/cloud/cage-container-engine.service` 与 `deploy/cloud/cage-server.service`，依赖、镜像与 socket 都留在每台租户 VM 内。仅复制空白模板层，让新 VM 自行生成工作台、浏览器和工作环境身份。[Super Cage 云端构建说明](../cloud/README.md)
+4. 在一次性构建机停止 Super Cage 服务和引擎。按发行版镜像制作步骤清理构建机身份、SSH 密钥和构建日志。检查 Super Cage 配置和引擎镜像层，确保镜像内没有工作台账户或保险箱、项目、历史、`control.json`、会话、模型或代理凭据，以及任何用户数据。保持开机服务与 guest agent 启用后停止构建 VM。
 
 将空白 VM 镜像收录到专用项目。生产启动命令可选择项目内通用别名或固定指纹。
 
@@ -62,7 +62,7 @@ incus --force-local --project cage-tenant image info local:cage-blank
 
 门户和工作台按名称创建时，使用目录第一项作为默认系统。每台 VM 保存创建时的系统 ID、显示名和完整镜像指纹。可以在目录下架系统并保留已配备 VM。尚未配备的记录使用保存的指纹，镜像失效时可在恢复原指纹后重试。单系统部署使用 `-incus-image`，对应 `debian-12`。生产建议传完整指纹。本机别名在网关启动时解析为固定指纹。配置 `-systems-file` 或 `-incus-image` 后才能创建新虚拟机。已有实例可用原记录继续打开。
 
-从专用项目启动一次性预检 VM，确认 agent、Cage 监听与镜像隔离。预检只打印是否通过，不打印控制文件、请求体或任何令牌。在示例项目的配额里为预检 VM 留一个位置，预检结束后按运维流程回收它。
+从专用项目启动一次性预检 VM，确认 agent、Super Cage 监听与镜像隔离。预检只打印是否通过，不打印控制文件、请求体或任何令牌。在示例项目的配额里为预检 VM 留一个位置，预检结束后按运维流程回收它。
 
 ```sh
 incus --force-local --project cage-tenant launch local:cage-blank cage-preflight --vm --profile default
@@ -73,11 +73,11 @@ incus --force-local --project cage-tenant exec cage-preflight --mode=non-interac
 incus --force-local --project cage-tenant config show cage-preflight --expanded
 ```
 
-首次引导时，待控制服务就绪再重试预检。`ss` 的 Cage 端口应位于 `127.0.0.1`。用两个独立预检租户确认实际项目、各自的 VM 根盘、网段隔离和独立账户。关停再启动其中一台后，验证测试项目文件仍存在。验证过程使用本地测试文件，保持模型调用关闭。
+首次引导时，待控制服务就绪再重试预检。`ss` 的 Super Cage 端口应位于 `127.0.0.1`。用两个独立预检租户确认实际项目、各自的 VM 根盘、网段隔离和独立账户。关停再启动其中一台后，验证测试项目文件仍存在。验证过程使用本地测试文件，保持模型调用关闭。
 
 ## 3. 构建并启动网关
 
-服务端归档 `Cage-Tenant-Server-*-linux-<架构>.tar.gz` 包含 `cage-tenant`、Web 门户、本文和 API 契约，不包含 Incus、反代或 VM 镜像。下载与宿主架构匹配的归档，校验发布页的 SHA-256，再在独立部署目录解压。在干净的 Git 工作区运行 `bash deploy/tenant/package-server.sh` 可在 `_output/` 构建 amd64 和 arm64 归档，打包时会校验二进制记录的提交号；仅需本机编译时，在仓库根执行 `go build -o ./cage-tenant ./cmd/cage-tenant`。
+服务端归档 `Super-Cage-Server-*-linux-<架构>.tar.gz`（v0.1.14 及更早为 `Cage-Tenant-Server-*`） 包含 `cage-tenant`、Web 门户、本文和 API 契约，不包含 Incus、反代或 VM 镜像。下载与宿主架构匹配的归档，校验发布页的 SHA-256，再在独立部署目录解压。在干净的 Git 工作区运行 `bash deploy/tenant/package-server.sh` 可在 `_output/` 构建 amd64 和 arm64 归档，打包时会校验二进制记录的提交号；仅需本机编译时，在仓库根执行 `go build -o ./cage-tenant ./cmd/cage-tenant`。
 
 以下从包含 `cage-tenant` 和 `ui/tenant` 的目录启动。`ui/tenant` 只需 `index.html`、`app.mjs` 和 `styles.css`。使用可信部署目录里的文件，并确保运行账户可写的状态目录权限为 `0700`。
 
@@ -91,7 +91,7 @@ incus --force-local --project cage-tenant config show cage-preflight --expanded
   -trust-loopback-client-ip
 ```
 
-空闲冷却默认开启（`-freeze-after 15m`、`-stop-after 72h`），参数和前提见第 7 节。
+空闲冷却默认开启（`-freeze-after 15m`、`-stop-after 72h`），参数和前提见第 7 节。VM 模式默认开启弹性内存（`-memory-interval 15s`），参数见第 9 节；现有启动命令和 systemd 单元无需修改。
 
 托管工作台账户默认启用。首次启动时，网关在状态目录创建私有文件 `guest-account.json`（`0600`），内容为 `{"username":"cage","secret":"<64 位小写十六进制>"}`；每个 VM 的密码由该密钥和 VM ID 派生，不写入 `state.json` 或浏览器。需要显式指定或与其它主机共享同一密钥时，可加 `-guest-account-file /etc/cage-tenant/guest-account.json`，文件必须为 `0600` 的同一 JSON 格式。更改或丢失密钥后，已有托管账户不会被改写或删除，但会回退到工作台自己的密码界面；需要保留自动进入时，应随状态目录一起备份该文件。
 
@@ -105,7 +105,7 @@ incus --force-local --project cage-tenant config show cage-preflight --expanded
 
 将 `cage.example.org` 与 `*.cage.example.org` 的 DNS 指向同一 TLS 代理。证书应覆盖这两个名字。对外域名、`-origin`、证书及客户端使用的端口须一致。反代保留原始 Host 和 Origin，用直接客户端地址覆盖 `X-Real-IP`，支持 WebSocket 并关闭响应缓冲。开启 `-trust-loopback-client-ip` 时，只有可信 TLS 代理可以直连网关。
 
-向用户提供 HTTPS 门户地址。用户直接在浏览器登录，创建或打开第一台 VM。门户随后加载该 VM 的 Cage 工作台，用户可从左栏 **虚拟机** 创建和切换。原生桌面版使用同一个工作台组件管理本机虚拟机。服务器清单归门户账户，本机清单归设备上的 Cage 账户。
+向用户提供 HTTPS 门户地址。用户直接在浏览器登录，创建或打开第一台 VM。门户随后加载该 VM 的 Super Cage 工作台，用户可从左栏 **虚拟机** 创建和切换。原生桌面版使用同一个工作台组件管理本机虚拟机。服务器清单归门户账户，本机清单归设备上的 Super Cage 账户。
 
 Nginx 示例。`map` 位于 `http` 块，其他虚拟主机使用各自配置。生产环境请避免记录请求体、Cookie、来源票据、查询字符串及工作台内容。
 
@@ -148,9 +148,22 @@ server {
         proxy_buffering off;
         proxy_cache off;
         proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+        send_timeout 1h;
     }
 }
 ```
+
+终端、浏览器画面和事件流是长连接。工作台每 20 秒在终端连接上发送心跳，并在客户端 90 秒无应答后释放连接；客户端在约 50 秒收不到任何数据时自行重连并从断点续传。沿途每一跳的空闲期限都应明显长于心跳间隔，上面三个 1 小时的超时即为此设置；省略时 nginx 默认 60 秒，网络稍有阻塞就会断开写入中的连接。
+
+如果公网入口是另一台机器上的 nginx `stream`（例如经 `proxy_protocol` 和 SSH 反向隧道转发到本机 nginx），在对应 `server` 中设置 `proxy_timeout 1h;`（默认 10 分钟），并为隧道开启保活，避免中间的 NAT 或防火墙静默丢弃连接：
+
+```sh
+ssh -N -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes \
+    -R 127.0.0.1:9443:127.0.0.1:443 relay.example.org
+```
+
+隧道断开时 `ssh` 会退出，应由 systemd 或 autossh 负责重启。
 
 工作台反代上限为 2050 MiB，给单文件 2 GiB 上限留出请求封装余量；更大的整个请求仍可能得到 `413`。`client_body_timeout` 限制两次读取之间的空闲时间，不限制正常持续上传的总时长。网关另外限制小 JSON 的整个读取时间；会话撤销会尝试中断网关与下游之间的读写，已提交到来宾的修改或反代已收下的数据无法撤回。
 
@@ -190,7 +203,7 @@ ps -C qemu-system-x86_64 -o pid,rss,%cpu,comm
 ps -C incus -o comm= | wc -l
 ```
 
-每台 VM 独立复用一个 Cage 会话和 HTTP 连接池，最多保留 8 条空闲 guest-agent 连接，空闲 15 秒后关闭。同一 VM 的 HTTP、流和 WebSocket 共享 64 条同时请求的上限，另保留两条连接用于握手和健康检查。长连接由正常的读写回压控制，登录撤销会关闭该会话正在使用的流和 WebSocket。
+每台 VM 独立复用一个 Super Cage 会话和 HTTP 连接池，最多保留 16 条空闲 guest-agent 连接，空闲 90 秒后关闭。同一 VM 的 HTTP、流和 WebSocket 共享 64 条同时请求的上限，另保留两条连接用于握手和健康检查。长连接由正常的读写回压控制，登录撤销会关闭该会话正在使用的流和 WebSocket。
 
 ## 7. 空闲冷却
 
@@ -204,7 +217,7 @@ ps -C incus -o comm= | wc -l
 
 - `-freeze-after`（默认 `15m`，`0` 关闭冷却，最短 `1m`）：空闲达到该时长后执行 `incus pause`，再把实例 cgroup 的当前内存用量写入 `memory.reclaim`，把内存换出到 swap。冻结前网关断开该实例已转发的请求和长连接（WebSocket、事件流）。下一个工作台请求先恢复实例再转发，浏览器不需要重新登录，工作台会自动重连。
 - `-stop-after`（默认 `72h`，`0` 表示一直保持冻结）：使用同一个空闲时钟。冻结的实例先恢复再正常关机，60 秒后仍未关机则强制停止，磁盘保留。门户随后显示 `stopped`，再次打开即冷启动。
-- `-idle-cpu-percent`（默认 `5`，单位为单核的百分比，`0` 表示不看来宾 CPU）：实例自身的 CPU 用量超过该比例时视为活动，没有浏览器连接时仍在工作的代理任务不会被冻结。实测空闲的 Cage 控制服务约占单核的 0.1%。
+- `-idle-cpu-percent`（默认 `5`，单位为单核的百分比，`0` 表示不看来宾 CPU）：实例自身的 CPU 用量超过该比例时视为活动，没有浏览器连接时仍在工作的代理任务不会被冻结。实测空闲的 Super Cage 控制服务约占单核的 0.1%。
 - 门户「打开」、经网关的每个请求，以及请求和流在任一方向上传输的数据都计入活动。工作台页面开着时会定期轮询，实例保持运行；关闭页面或断网后才开始计时。
 - 扫描间隔为 `-freeze-after` 的四分之一，最短 5 秒、最长 1 分钟。每轮用一次 Incus 查询读取全部实例。冷却状态只保存在内存中：网关重启后重新计时，之前被冻结的实例在下次打开时恢复。
 
@@ -217,7 +230,7 @@ ps -C incus -o comm= | wc -l
 - 不要对冻结的实例直接执行 `incus stop`。冻结的实例收不到关机信号；实测 Incus 6.0.0 在停止失败后把仍处于冻结的实例报告为 Running，随后的 `incus exec` 会一直挂起。应先 `incus start`（即恢复）再停止，网关自己的停机也按这个顺序执行。
 - VM 模式下冻结会暂停 QEMU 的 vCPU。本轮没有在 KVM 宿主上实测 VM 的内存换出；如果 QEMU 进程不在该实例自己的 Incus cgroup 中，网关会跳过换出并记录日志。
 
-实测环境：Lima arm64 虚拟机，无 `/dev/kvm`，Ubuntu 24.04，Incus 6.0.0 与 6.0.7；4 个容器租户，每个只运行空白模板里的 Cage 控制服务。
+实测环境：Lima arm64 虚拟机，无 `/dev/kvm`，Ubuntu 24.04，Incus 6.0.0 与 6.0.7；4 个容器租户，每个只运行空白模板里的 Super Cage 控制服务。
 
 | 项目 | 结果 |
 | --- | --- |
@@ -231,19 +244,19 @@ ps -C incus -o comm= | wc -l
 
 ## 8. 无硬件虚拟化的宿主（Incus 系统容器）
 
-无虚拟化版安装包（`Cage-Tenant-NoVirt-<版本>-linux-<架构>.tar.gz`）中的 `install.sh` 会自动完成本节的全部步骤，见[无虚拟化版说明](novirt/README.md)。下面是手动配置的说明。
+无虚拟化版安装包（`Super-Cage-NoVirt-<版本>-linux-<架构>.tar.gz`）中的 `install.sh` 会自动完成本节的全部步骤，见[无虚拟化版说明](novirt/README.md)。下面是手动配置的说明。
 
-没有 KVM（`/dev/kvm` 不存在，例如云主机未开嵌套虚拟化）时，用 `-incus-instance-type container` 启动网关。每个工作区成为专用项目中的 Incus 无特权系统容器 `cage-<id>`，网关的其余行为不变：仍通过 `user.cage-tenant.id` 标签认领实例，仍经 `incus exec` 和 `socat` 连接实例内回环监听的 Cage 控制端口。同一个项目只能使用一种实例类型，`-incus-image` 和 `-systems-file` 也只接受该类型的镜像。
+没有 KVM（`/dev/kvm` 不存在，例如云主机未开嵌套虚拟化）时，用 `-incus-instance-type container` 启动网关。每个工作区成为专用项目中的 Incus 无特权系统容器 `cage-<id>`，网关的其余行为不变：仍通过 `user.cage-tenant.id` 标签认领实例，仍经 `incus exec` 和 `socat` 连接实例内回环监听的 Super Cage 控制端口。同一个项目只能使用一种实例类型，`-incus-image` 和 `-systems-file` 也只接受该类型的镜像。
 
 **隔离差异。** 容器与宿主共用内核，隔离弱于虚拟机。请使用专用宿主并及时更新内核。网关拒绝 `security.privileged`、全部 `raw.*`、`linux.kernel_modules` 等键，不允许 profile 增加根盘和受管 NIC 以外的设备，并要求实例的资源与隔离设置与 profile 完全一致。需要更强隔离又没有 KVM 时，可以考虑 Dormice 使用的 gVisor（用户态内核），本仓库尚未实现。
 
 **宿主。**
 
-- 推荐 [Zabbly](https://github.com/zabbly/incus) 的 Incus 6.0 LTS（实测 6.0.7）。Ubuntu 24.04 自带的 6.0.0 能运行网关和 Cage 控制服务，但租户容器内的 rootless 引擎创建容器时会报 `open sysctl net.ipv4.ip_unprivileged_port_start file: reopen fd 8: permission denied`（runc 1.3.3 的 CVE-2025-52881 修复与旧版 LXC 不兼容，见 runc #4968）。同一宿主换成 6.0.7 并重启容器后可以正常创建。从发行版包换成 Zabbly 包时，现有实例会被停止，请安排在维护窗口。
+- 推荐 [Zabbly](https://github.com/zabbly/incus) 的 Incus 6.0 LTS（实测 6.0.7）。Ubuntu 24.04 自带的 6.0.0 能运行网关和 Super Cage 控制服务，但租户容器内的 rootless 引擎创建容器时会报 `open sysctl net.ipv4.ip_unprivileged_port_start file: reopen fd 8: permission denied`（runc 1.3.3 的 CVE-2025-52881 修复与旧版 LXC 不兼容，见 runc #4968）。同一宿主换成 6.0.7 并重启容器后可以正常创建。从发行版包换成 Zabbly 包时，现有实例会被停止，请安排在维护窗口。
 - 按第 7 节开启 swap。
 - 调高 inotify 上限，例如 `fs.inotify.max_user_instances=1048576` 和 `fs.inotify.max_user_watches=1048576`。无特权容器的 root 映射到宿主的同一个 uid，所有容器共用这个 uid 的 inotify 实例上限，systemd 每个容器要占几个，发行版默认的 128 只够少量容器启动，超出后容器内 systemd 报 `Failed to create control group inotify object: Too many open files` 并退出。
-- Ubuntu 23.10 起默认 `kernel.apparmor_restrict_unprivileged_userns=1`，会阻止容器内的 rootless 引擎创建用户命名空间（日志为 `rootlesskit ... fork/exec /proc/self/exe: permission denied`）。使用 Cage 云工作环境时，在 `/etc/sysctl.d/` 中设为 `0` 并持久化；升级 AppArmor 或 Incus 包后需复查。这会允许宿主上所有普通用户创建无特权用户命名空间，只应在专用宿主上这样设置。Debian 宿主没有这项限制。
-- Incus 默认为无特权容器提供 `/dev/fuse` 和 `/dev/net/tun`，并分配足够的 uid/gid 映射，Cage 云工作环境所需的 FUSE、TUN 和嵌套用户命名空间都不需要额外设备。
+- Ubuntu 23.10 起默认 `kernel.apparmor_restrict_unprivileged_userns=1`，会阻止容器内的 rootless 引擎创建用户命名空间（日志为 `rootlesskit ... fork/exec /proc/self/exe: permission denied`）。使用 Super Cage 云工作环境时，在 `/etc/sysctl.d/` 中设为 `0` 并持久化；升级 AppArmor 或 Incus 包后需复查。这会允许宿主上所有普通用户创建无特权用户命名空间，只应在专用宿主上这样设置。Debian 宿主没有这项限制。
+- Incus 默认为无特权容器提供 `/dev/fuse` 和 `/dev/net/tun`，并分配足够的 uid/gid 映射，Super Cage 云工作环境所需的 FUSE、TUN 和嵌套用户命名空间都不需要额外设备。
 
 **项目与 profile。** 受限项目中，`limits.memory.swap` 属于低级配置；Incus 6.0 检查 profile 时使用的是 `restricted.virtual-machines.lowlevel`，因此两项都要放开。放开后，`raw.*` 等键仍由网关拒绝，VM 配额为 0。
 
@@ -262,7 +275,7 @@ incus --force-local --project cage-tenant profile set default \
   security.nesting=true
 ```
 
-`security.nesting` 让容器内可以运行 Cage 的 rootless 引擎；`limits.processes` 限制任务数；`limits.memory.swap` 见第 7 节。以上 profile 已在测试机上实测。容器模式下网关还接受 `security.idmap.isolated`、`security.idmap.size`、`security.syscalls.intercept.mknod`、`security.syscalls.intercept.setxattr` 和 `limits.memory.swap.priority`，但 `security.idmap.isolated` 未验证通过：测试机上 Incus 为实例分配的独立区间不在 root 的 `/etc/subuid` 范围内，`newuidmap` 拒绝映射，实例无法启动；默认的 65536 个 ID 也容不下容器内 rootless 引擎需要的从属 ID。启用前先核对 root 的 subuid/subgid 区间，并把 `security.idmap.size` 设到 131072 以上，然后实测。
+`security.nesting` 让容器内可以运行 Super Cage 的 rootless 引擎；`limits.processes` 限制任务数；`limits.memory.swap` 见第 7 节。以上 profile 已在测试机上实测。容器模式下网关还接受 `security.idmap.isolated`、`security.idmap.size`、`security.syscalls.intercept.mknod`、`security.syscalls.intercept.setxattr` 和 `limits.memory.swap.priority`，但 `security.idmap.isolated` 未验证通过：测试机上 Incus 为实例分配的独立区间不在 root 的 `/etc/subuid` 范围内，`newuidmap` 拒绝映射，实例无法启动；默认的 65536 个 ID 也容不下容器内 rootless 引擎需要的从属 ID。启用前先核对 root 的 subuid/subgid 区间，并把 `security.idmap.size` 设到 131072 以上，然后实测。
 
 **空白容器镜像。** 步骤与第 2 节相同，区别是从容器镜像启动构建实例，并用系统服务运行 `cage serve`。构建项目需要一个受管网络用于安装软件包，构建网络不会进入发布的镜像。
 
@@ -279,7 +292,7 @@ incus --force-local --project cage-image-build exec cage-template -- systemctl e
 
 ```ini
 [Unit]
-Description=Cage control service
+Description=Super Cage control service
 After=network.target
 
 [Service]
@@ -295,8 +308,51 @@ RestartSec=3
 WantedBy=multi-user.target
 ```
 
-采用 Cage 云工作环境时，按[云端构建说明](../cloud/README.md)在构建容器内为 `cage` 用户准备 rootless 引擎、用户服务和 `loginctl enable-linger cage`。发布前按第 2 节第 4 步停止服务并清理身份（至少删除 `/home/cage/.claude-cage`、SSH host keys 和日志，清空 `/etc/machine-id`），然后 `incus publish`、导出并导入 `cage-tenant` 项目。
+采用 Super Cage 云工作环境时，按[云端构建说明](../cloud/README.md)在构建容器内为 `cage` 用户准备 rootless 引擎、用户服务和 `loginctl enable-linger cage`。发布前按第 2 节第 4 步停止服务并清理身份（至少删除 `/home/cage/.claude-cage`、SSH host keys 和日志，清空 `/etc/machine-id`），然后 `incus publish`、导出并导入 `cage-tenant` 项目。
 
 **启动网关。** 在第 3 节的命令上加 `-incus-instance-type container`，`-incus-image` 指向容器镜像。
 
-**本轮验证范围。** 在无 `/dev/kvm` 的 Ubuntu 24.04 arm64 虚拟机上：网关以容器模式创建、认领、连接 4 个租户（每个约 5 秒就绪，冷启动约 2.5 秒），经网关访问工作台，完成第 7 节的冻结、恢复、停机和重开。在 `security.nesting=true` 的无特权容器内，rootless Docker 29.0.0（runc 1.3.3）以 `--network none`、内存和进程上限运行容器，前提是 Incus 6.0.7 且宿主放开了上面的 AppArmor 限制。完整的 Cage 云工作环境镜像（仅支持 amd64）和真实模型调用未在容器租户中验证。
+**本轮验证范围。** 在无 `/dev/kvm` 的 Ubuntu 24.04 arm64 虚拟机上：网关以容器模式创建、认领、连接 4 个租户（每个约 5 秒就绪，冷启动约 2.5 秒），经网关访问工作台，完成第 7 节的冻结、恢复、停机和重开。在 `security.nesting=true` 的无特权容器内，rootless Docker 29.0.0（runc 1.3.3）以 `--network none`、内存和进程上限运行容器，前提是 Incus 6.0.7 且宿主放开了上面的 AppArmor 限制。完整的 Super Cage 云工作环境镜像（仅支持 amd64）和真实模型调用未在容器租户中验证。
+
+## 9. 弹性内存（VM 模式）
+
+VM 模式下，profile 的 `limits.memory` 是每台 VM 的内存上限，不是固定分配。网关按宿主当前的内存，在运行中调整每台 VM 的实例级 `limits.memory`。Incus 通过 virtio balloon 在线生效，VM 不重启。容器模式不调整：容器只占用实际用到的内存，其 `limits.memory` 仍须与 profile 一致。
+
+**启动在上限。** 停机的 VM 启动前，网关删除它的实例级 `limits.memory`，让它按 profile 上限启动。之后的调整都不超过启动时的内存，Incus 只移动 balloon，不热插内存（热插的内存在下次启动前收不回来）。网关的空闲停机之后也会删除该值。不经网关启动的 VM，例如宿主重启后由 Incus 自启动、或来宾在 VM 内自行重启，按当时的实例级大小启动，见下面的失败处理。
+
+**每轮做什么。** 每轮间隔为 `-memory-interval`（默认 `15s`）。网关读取宿主的 `/proc/meminfo` 和 `/proc/pressure/memory`、profile 上限，并经 `incus exec` 用 `/usr/bin/head` 读取每台运行中 VM 的 `/proc/meminfo`。来宾工作集按 `MemTotal − MemAvailable` 计算，不含页缓存。Incus 自己报告的 VM 内存用量是 `MemTotal − MemFree`，包含页缓存，不能用作下限。
+
+- **需要量**：工作集加余量（1 GiB 与工作集四分之一中的较大者），再加来宾内核占用，向上取整到 256 MiB，且不低于 `-memory-min`。
+- **立即增长**：VM 少于需要量时，下一轮直接增长到需要量，宿主紧张时也一样，因为来宾内 OOM 比宿主换页更糟。增长不超过 profile 上限，也不超过「宿主内存 − 预留」。
+- **宿主紧张时回收**：宿主 `MemAvailable` 低于预留的两倍，或 PSI `some avg10` 达到 10% 时，每台 VM 每轮最多缩小 512 MiB，直到需要量为止。回收的主要是来宾页缓存。
+- **公平份额**：份额 = (宿主内存 − 预留 − 冻结及本轮不调整的 VM 内存) / 可调整的运行中 VM 数。超过份额的 VM 每轮最多缩小 512 MiB，但不低于需要量。例如第二台 VM 启动后，两台会逐步让出内存。
+- **其余情况保持不变**：宿主有空闲内存本身不会让 VM 增长，所以缩小后不会自己弹回。差距不到 512 MiB 时不调整。
+- **不调整的 VM**：冻结、停机、正在准备或正在冷却的 VM 不调整；网关调整某台 VM 时，空闲冷却先等它完成。
+- **来宾不应答**：读取来宾 `/proc/meminfo` 失败的 VM 本轮不调整。连续两轮失败时，它可能正因内存不足而卡顿，网关把它恢复到上限（宿主紧张时每轮增长 512 MiB）。
+
+**失败处理。** 来宾 5 秒内没有到达目标时，Incus 报 `taking too long`。调整失败只记录网关日志，工作台保持就绪；缩小失败后，该 VM 一分钟内不再缩小。每次在线修改，Incus 都会设置 `volatile.vm.needs_reset`：来宾在 VM 内自行重启时，Incus 会完整重启 QEMU，按当时的实例级大小启动。这样的 VM 之后需要增长时，Incus 会热插内存。`volatile.vm.hotplug.memory` 不为空的 VM 在下次启动前只增长、不缩小。网关下次启动它时，会重新按上限启动。
+
+**参数。**
+
+- `-memory-interval`：默认 `15s`，`0` 关闭弹性内存，可设范围为 5 秒到 10 分钟。
+- `-memory-reserve`：宿主自身保留的内存，默认取 2 GiB 与宿主内存 15% 中的较大者。宿主可用内存低于它的两倍时，开始回收来宾缓存。宿主上有 ZFS ARC 等不计入 `MemAvailable` 的大块占用时，应调大该值，例如 `-memory-reserve 4GiB`。
+- `-memory-min`：给运行中 VM 的最小内存，默认 `2GiB`，不能低于 `1GiB`。
+
+网关启动时会记录一行 `elastic VM memory every …`，每次调整也会记录一行，例如 `workspace <id> memory 10240 MiB -> 9728 MiB (host memory is low)`。
+
+**算例。** 宿主 15 GiB，profile 上限 10 GiB，只有一台 VM 在运行。来宾 `MemTotal` 为 9890 MiB、`MemAvailable` 为 3783 MiB，宿主可用 3.1 GiB。预留是 2.25 GiB，宿主可用低于 4.5 GiB，算作紧张，VM 每 15 秒缩小 512 MiB：10 GiB → 9.5 → 9 → 8.5 GiB。宿主可用回到 4.5 GiB 以上时停止。如果宿主一直紧张，最低停在 8 GiB，即 6.0 GiB 工作集加余量和内核占用。
+
+### 空闲页返还（可选）
+
+Incus 6.0 创建的 virtio-balloon 设备没有开启 free page reporting，后续 Incus 版本默认开启。不开启时，来宾释放的内存要等 balloon 下次收缩才回到宿主。网关唯一接受的 `raw.qemu.conf` 是下面这一条 profile 级覆盖，它给 Incus 生成的 `device "qemu_balloon"` 加上 `free-page-reporting`：
+
+```sh
+# raw.qemu.conf 不能在 VM 运行时修改：先停网关，再停所有运行中的租户 VM。
+incus --force-local project set cage-tenant restricted.virtual-machines.lowlevel=allow
+incus --force-local --project cage-tenant profile set default \
+  raw.qemu.conf="$(printf '[device "qemu_balloon"]\nfree-page-reporting = "on"')"
+```
+
+`restricted.virtual-machines.lowlevel=allow` 会让该项目接受所有低级 VM 配置，例如 `raw.qemu` 和 `raw.apparmor`。网关仍拒绝这条以外的全部 `raw.*`，但 Incus 本身不再拦截，项目里的这类限制只剩网关校验一道。只在只有网关能访问 Incus socket 时这样设置。设置后，VM 下次启动时生效。在 VM 内执行 `cut -c6 /sys/bus/virtio/drivers/virtio_balloon/virtio*/features`，输出 `1` 表示来宾已协商该特性（第 6 个字符对应特性位 5，即 `VIRTIO_BALLOON_F_REPORTING`）。这项设置本轮没有在 KVM 宿主上实测。
+
+VM 内嵌套运行的 Super Cage 客机（QEMU 5.1 及以上；仅 Linux 宿主上的 QEMU）默认开启同一特性，嵌套客机释放的内存会先回到租户 VM，再由上面的设置或网关的 balloon 回到宿主。

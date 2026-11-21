@@ -139,7 +139,7 @@ try {
     false,
   );
   await page.getByRole("button", { name: "返回工作台", exact: true }).click();
-  await page.getByRole("button", { name: "启动 Cage 环境", exact: true }).click();
+  await page.getByRole("button", { name: "启动 Super Cage 环境", exact: true }).click();
   await page
     .getByRole("button", { name: "新建终端", exact: true })
     .first()

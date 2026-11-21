@@ -55,10 +55,33 @@ func (s *Server) proxyStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
+	state, label, running, active := s.proxyState(ctx, p, cfg)
+	_, selected := p.Find(p.Selected)
+	var version struct {
+		Version string `json:"version"`
+	}
+	if running {
+		_ = managedproxy.API(ctx, s.profile, "GET", "/version", nil, &version)
+	}
+	_, coreErr := managedproxy.CorePath()
+	route, routeErr := p.Route()
+	if route == nil {
+		route = append([]string{}, p.Chain...)
+	}
+	routeError := ""
+	if routeErr != nil && selected {
+		routeError = routeErr.Error()
+	}
+	jsonReply(w, map[string]any{"route": route, "route_error": routeError, "sources": sources, "selected": p.Selected, "port": p.Port, "running": running, "active": active, "state": state, "state_label": label, "network_open": state == "ready", "core_available": coreErr == nil, "version": version.Version, "revision": p.Revision, "bootstrap_dns": strings.Join(managedproxy.BootstrapDNSURLs(), "、"), "udp_blocked": true, "ipv6_blocked": true})
+}
+
+// proxyState is the user-facing state of the managed proxy, shared by the
+// desktop proxy page and the phone's environment view.
+func (s *Server) proxyState(ctx context.Context, p managedproxy.Store, cfg cage.Config) (state, label string, running, active bool) {
 	_, appliedErr := managedproxy.Applied(s.profile, cfg.ProxyURL, cfg.ProxyRevision)
-	active := appliedErr == nil
-	running := managedproxy.Running(ctx, s.profile, p)
-	state, label := "unconfigured", "尚未配置"
+	active = appliedErr == nil
+	running = managedproxy.Running(ctx, s.profile, p)
+	state, label = "unconfigured", "尚未配置"
 	_, selected := p.Find(p.Selected)
 	if selected {
 		state, label = "unapplied", "尚未应用"
@@ -81,22 +104,7 @@ func (s *Server) proxyStatus(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	var version struct {
-		Version string `json:"version"`
-	}
-	if running {
-		_ = managedproxy.API(ctx, s.profile, "GET", "/version", nil, &version)
-	}
-	_, coreErr := managedproxy.CorePath()
-	route, routeErr := p.Route()
-	if route == nil {
-		route = append([]string{}, p.Chain...)
-	}
-	routeError := ""
-	if routeErr != nil && selected {
-		routeError = routeErr.Error()
-	}
-	jsonReply(w, map[string]any{"route": route, "route_error": routeError, "sources": sources, "selected": p.Selected, "port": p.Port, "running": running, "active": active, "state": state, "state_label": label, "network_open": state == "ready", "core_available": coreErr == nil, "version": version.Version, "revision": p.Revision, "bootstrap_dns": strings.Join(managedproxy.BootstrapDNSURLs(), "、"), "udp_blocked": true, "ipv6_blocked": true})
+	return state, label, running, active
 }
 func (s *Server) proxyMutation(w http.ResponseWriter, r *http.Request) {
 	var input proxyInput
@@ -402,7 +410,7 @@ func (s *Server) applyProxy(p managedproxy.Store, old cage.Config, resumeVersion
 	if restartVM {
 		return s.startEnvironment(false)
 	}
-	s.setMessage("节点已应用；启动 Cage 环境后完成联网检查")
+	s.setMessage("节点已应用；启动 Super Cage 环境后完成联网检查")
 	return nil
 }
 
@@ -411,24 +419,34 @@ func (s *Server) proxyDelay(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	p, err := managedproxy.Load(s.profile)
+	delay, err := s.proxyNodeDelay(r.Context(), in.NodeID)
 	if err != nil {
 		requestError(w, err)
 		return
 	}
-	if _, ok := p.Find(in.NodeID); !ok {
-		requestError(w, errors.New("节点不存在"))
-		return
+	jsonReply(w, map[string]int{"delay": delay})
+}
+
+var (
+	errProxyNodeMissing = errors.New("节点不存在")
+	errProxyDelay       = errors.New("节点未载入核心或测速失败；请先应用节点以载入当前列表")
+)
+
+func (s *Server) proxyNodeDelay(ctx context.Context, id string) (int, error) {
+	p, err := managedproxy.Load(s.profile)
+	if err != nil {
+		return 0, err
+	}
+	if _, ok := p.Find(id); !ok {
+		return 0, errProxyNodeMissing
 	}
 	var v struct {
 		Delay int `json:"delay"`
 	}
-	err = managedproxy.API(r.Context(), s.profile, "GET", "/proxies/"+url.PathEscape(in.NodeID)+"/delay?timeout=5000&url="+url.QueryEscape("https://www.gstatic.com/generate_204"), nil, &v)
-	if err != nil {
-		requestError(w, errors.New("节点未载入核心或测速失败；请先应用节点以载入当前列表"))
-		return
+	if err = managedproxy.API(ctx, s.profile, "GET", "/proxies/"+url.PathEscape(id)+"/delay?timeout=5000&url="+url.QueryEscape("https://www.gstatic.com/generate_204"), nil, &v); err != nil {
+		return 0, errProxyDelay
 	}
-	jsonReply(w, v)
+	return v.Delay, nil
 }
 func (s *Server) proxyConnections(w http.ResponseWriter, r *http.Request) {
 	var response struct {

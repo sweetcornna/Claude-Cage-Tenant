@@ -149,7 +149,9 @@ type memoryPolicy struct {
 	idleSince       time.Time
 }
 
-func (p *memoryPolicy) next(now time.Time, s ResourceSample, hostPressure bool) uint64 {
+// hostPressure reports a host short of memory; quiet a guest whose CPUs are
+// nearly idle.
+func (p *memoryPolicy) next(now time.Time, s ResourceSample, hostPressure, quiet bool) uint64 {
 	const mib = uint64(1 << 20)
 	used := s.Total - s.Available + s.SwapTotal - s.SwapFree
 	reserve := max(uint64(1<<30), used/4)
@@ -161,6 +163,12 @@ func (p *memoryPolicy) next(now time.Time, s ResourceSample, hostPressure bool) 
 	if pressure || desired > p.target {
 		p.idleSince = time.Time{}
 		if hostPressure {
+			// The host is short as well: a guest under pressure gets what keeps
+			// it out of that pressure, never the whole budget, and a guest that
+			// only lacks its reserve waits.
+			if pressure {
+				return max(p.target, desired)
+			}
 			return p.target
 		}
 		if severe {
@@ -182,7 +190,16 @@ func (p *memoryPolicy) next(now time.Time, s ResourceSample, hostPressure bool) 
 	if p.idleSince.IsZero() {
 		p.idleSince = now
 	}
-	if now.Sub(p.idleSince) < 30*time.Second {
+	// Reclaim after sustained headroom: at once while the host is short of
+	// memory, sooner when the guest's CPUs are quiet.
+	wait := 30 * time.Second
+	switch {
+	case hostPressure:
+		wait = 0
+	case quiet:
+		wait = 10 * time.Second
+	}
+	if now.Sub(p.idleSince) < wait {
 		return p.target
 	}
 	// Never request another reclamation until the guest reflects the prior one.
@@ -190,8 +207,14 @@ func (p *memoryPolicy) next(now time.Time, s ResourceSample, hostPressure bool) 
 		return p.target
 	}
 	// Reclaim a quarter of the excess per probe (at least 256 MiB), so a VM that
-	// booted at its maximum does not take minutes to return unused memory.
-	step := max(256*mib, (p.target-desired)/4/(256*mib)*(256*mib))
+	// booted at its maximum does not take minutes to return unused memory; half
+	// of it for a short host or a quiet guest. Never below the guest's use plus
+	// its reserve.
+	step := (p.target - desired) / 4
+	if hostPressure || quiet {
+		step = (p.target - desired) / 2
+	}
+	step = max(256*mib, step/(256*mib)*(256*mib))
 	return max(desired, p.target-step)
 }
 
@@ -262,9 +285,11 @@ func StartResourceManager(parent context.Context, dir string, maximum uint64, cp
 				status.Error = ""
 				status.ObservedAt, status.Guest = now, &sample
 				status.Pressure = sample.Available < max(uint64(512<<20), sample.Total/8) || sample.Stall >= 1
+				quiet := false
 				if previous.Boot == sample.Boot && sample.cpuTotal > previous.cpuTotal && sample.cpuIdle >= previous.cpuIdle {
 					total, idle := sample.cpuTotal-previous.cpuTotal, sample.cpuIdle-previous.cpuIdle
 					status.CPUPercent = 100 * float64(total-min(idle, total)) / float64(total)
+					quiet = status.CPUPercent < 5
 				}
 				if previous.Boot == sample.Boot && sample.OOMKills > previous.OOMKills {
 					diagnostics.Log("warn", "resources", fmt.Sprintf("guest OOM kills increased by %d; available=%d target=%d maximum=%d", sample.OOMKills-previous.OOMKills, sample.Available, p.target, maximum))
@@ -272,7 +297,7 @@ func StartResourceManager(parent context.Context, dir string, maximum uint64, cp
 				if previous.Boot != sample.Boot {
 					p.idleSince = time.Time{}
 				}
-				target = p.next(now, sample, status.HostPressure)
+				target = p.next(now, sample, status.HostPressure, quiet)
 				previous = sample
 			}
 			if ctx.Err() != nil {

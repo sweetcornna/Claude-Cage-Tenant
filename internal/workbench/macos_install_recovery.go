@@ -61,7 +61,7 @@ func (s *Server) recordInstallRecovery(detail string) {
 // lifecycle operations. It never creates or substitutes a MacOSProfile.
 func (s *Server) macOSInstallRecovery(w http.ResponseWriter, r *http.Request) {
 	if !s.hasTrustedView(r) || !s.localVMStorage() {
-		http.Error(w, "请在本机 Cage 窗口继续安装", http.StatusForbidden)
+		http.Error(w, "请在本机 Super Cage 窗口继续安装", http.StatusForbidden)
 		return
 	}
 	recovery, err := guestos.LoadMacOSInstallRecovery(s.profile)
@@ -109,12 +109,12 @@ func (s *Server) macOSInstallRecovery(w http.ResponseWriter, r *http.Request) {
 		credential, loadErr := s.account.macGuestCredentials(r.Context(), install.ID)
 		if loadErr != nil {
 			s.recordInstallRecovery("读取原客机凭据失败：" + loadErr.Error())
-			http.Error(w, "暂时无法读取原客机凭据，请确认 Cage 账密后重试；原账户和磁盘已保留", http.StatusConflict)
+			http.Error(w, "暂时无法读取原客机凭据，请确认 Super Cage 账密后重试；原账户和磁盘已保留", http.StatusConflict)
 			return
 		}
 		if !guestos.ValidMacOSAccountName(credential.Username) || credential.Password == "" {
 			s.recordInstallRecovery("准备恢复入口被拒绝：原客机凭据不完整")
-			http.Error(w, "原客机凭据不完整，请在设置中确认 Cage 账密后重试；原账户和磁盘已保留", http.StatusConflict)
+			http.Error(w, "原客机凭据不完整，请在设置中确认 Super Cage 账密后重试；原账户和磁盘已保留", http.StatusConflict)
 			return
 		}
 		canRecover, loadErr := guestos.CanRecoverMacOSInstall(s.profile, install.ID)

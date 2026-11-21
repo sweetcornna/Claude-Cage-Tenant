@@ -1,0 +1,221 @@
+package tenant
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+	"unicode"
+)
+
+// The host files MemoryState reads; tests point them elsewhere.
+var (
+	hostMeminfo        = "/proc/meminfo"
+	hostMemoryPressure = "/proc/pressure/memory"
+)
+
+// ElasticMemory reports whether this runtime resizes running workspaces.
+// Only virtual machines are resized: a container takes host memory only as it
+// uses it, and a cgroup limit below its use would start its OOM killer.
+func (r *IncusRuntime) ElasticMemory() bool { return r.instanceType() == InstanceVM }
+
+// MemoryState reads this host's memory, the trusted profile ceiling and every
+// gateway-owned instance's memory size. Running VMs also report their guest
+// /proc/meminfo; a VM that does not answer within a few seconds is left
+// without guest figures and is not resized.
+func (r *IncusRuntime) MemoryState(ctx context.Context) (MemoryState, error) {
+	var state MemoryState
+	data, err := os.ReadFile(hostMeminfo)
+	if err != nil {
+		return state, errors.New("host memory is unreadable")
+	}
+	if state.HostTotal, state.HostAvailable, err = parseMeminfo(data); err != nil {
+		return state, err
+	}
+	if data, err := os.ReadFile(hostMemoryPressure); err == nil {
+		state.HostStall = parseMemoryStall(data)
+	}
+	profile, err := r.loadProfile(ctx)
+	if err != nil {
+		return state, err
+	}
+	state.Ceiling, _ = incusSizeBytes(profile.Config["limits.memory"])
+	// recursion=1 returns configuration without state, so it never waits on
+	// guest agents.
+	body, err := captureIncus(r.localCommand(ctx, "query", "local:/1.0/instances?recursion=1&project="+r.cfg.Project), 64<<20)
+	if err != nil {
+		return state, err
+	}
+	var records []instance
+	if json.Unmarshal(body, &records) != nil {
+		return state, errors.New("invalid Incus instance inventory")
+	}
+	state.Instances = make(map[string]InstanceMemory, len(records))
+	for _, record := range records {
+		id := record.Config[instanceLabel]
+		if record.Type != r.instanceType() || !vmIDPattern.MatchString(id) || record.Name != "cage-"+id {
+			continue
+		}
+		limit, ok := incusSizeBytes(record.ExpandedConfig["limits.memory"])
+		if !ok {
+			continue
+		}
+		state.Instances[id] = InstanceMemory{Status: record.Status, Limit: limit, Hotplugged: record.Config["volatile.vm.hotplug.memory"] != ""}
+	}
+	var running []string
+	for id, entry := range state.Instances {
+		if entry.Status == "Running" {
+			running = append(running, id)
+		}
+	}
+	guests := make([]InstanceMemory, len(running))
+	var probes sync.WaitGroup
+	slots := make(chan struct{}, 4)
+	for index, id := range running {
+		probes.Go(func() {
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			probe, cancel := context.WithTimeout(ctx, 5*time.Second)
+			total, available, err := r.guestMemory(probe, id)
+			cancel()
+			guests[index] = InstanceMemory{GuestTotal: total, GuestAvailable: available, GuestSilent: err != nil}
+		})
+	}
+	probes.Wait()
+	for index, id := range running {
+		entry := state.Instances[id]
+		entry.GuestTotal, entry.GuestAvailable, entry.GuestSilent = guests[index].GuestTotal, guests[index].GuestAvailable, guests[index].GuestSilent
+		state.Instances[id] = entry
+	}
+	return state, nil
+}
+
+// guestMemory reads MemTotal and MemAvailable inside a running VM. The guest
+// reports them, so a tenant can at most claim more need and get its own
+// profile ceiling, or claim less and shrink only itself.
+func (r *IncusRuntime) guestMemory(ctx context.Context, id string) (total, available int64, err error) {
+	body, err := r.capture(ctx, 16384, "exec", "local:cage-"+id, "--mode=non-interactive", "--",
+		"/usr/bin/head", "-c", "16384", "--", "/proc/meminfo")
+	if err != nil {
+		return 0, 0, err
+	}
+	return parseMeminfo(body)
+}
+
+var errMemoryNotRunning = errors.New("Incus instance is not running")
+
+// SetMemory changes a running VM's limits.memory. Incus applies it live
+// through the virtio balloon and waits a few seconds for the guest; a guest
+// that is slower makes this fail while QEMU keeps the new target.
+func (r *IncusRuntime) SetMemory(ctx context.Context, id string, size int64) error {
+	if r.instanceType() != InstanceVM || !vmIDPattern.MatchString(id) || size < MinimumMemory || size%(1<<20) != 0 {
+		return errors.New("invalid memory size")
+	}
+	unlock := r.lockInstance(id)
+	defer unlock()
+	body, err := captureIncus(r.localCommand(ctx, "query", "local:/1.0/instances/cage-"+id+"?project="+r.cfg.Project), 1<<20)
+	if err != nil {
+		return err
+	}
+	var record instance
+	if json.Unmarshal(body, &record) != nil || record.Name != "cage-"+id || record.Type != InstanceVM || record.Config[instanceLabel] != id {
+		return errors.New("Incus instance ownership does not match the workspace")
+	}
+	if record.Status != "Running" {
+		return errMemoryNotRunning
+	}
+	command := r.command(ctx, "config", "set", "local:cage-"+id, fmt.Sprintf("limits.memory=%dMiB", size>>20))
+	reason := &firstBytes{limit: 4096}
+	command.Stderr = reason
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("Incus memory change failed: %s", incusReason(reason.String(), err))
+	}
+	return nil
+}
+
+// firstBytes keeps the start of a stream and discards the rest.
+type firstBytes struct {
+	bytes.Buffer
+	limit int
+}
+
+func (b *firstBytes) Write(data []byte) (int, error) {
+	if room := b.limit - b.Len(); room > 0 {
+		b.Buffer.Write(data[:min(len(data), room)])
+	}
+	return len(data), nil
+}
+
+// incusReason is the first line of an Incus error, for the gateway log.
+func incusReason(stderr string, err error) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(stderr), "\n")
+	line = strings.Map(func(char rune) rune {
+		if unicode.IsControl(char) {
+			return -1
+		}
+		return char
+	}, strings.TrimPrefix(line, "Error: "))
+	if len(line) > 200 {
+		line = line[:200]
+	}
+	var exit *exec.ExitError
+	switch {
+	case line != "":
+		return line
+	case errors.As(err, &exit):
+		return exit.String()
+	default:
+		return err.Error()
+	}
+}
+
+// parseMeminfo returns MemTotal and MemAvailable of a /proc/meminfo in bytes.
+func parseMeminfo(data []byte) (total, available int64, err error) {
+	seen := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 3 || fields[2] != "kB" || (fields[0] != "MemTotal:" && fields[0] != "MemAvailable:") {
+			continue
+		}
+		value, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil || value < 0 || value > 1<<40 {
+			return 0, 0, errors.New("invalid memory observation")
+		}
+		if fields[0] == "MemTotal:" {
+			total = value << 10
+		} else {
+			available = value << 10
+		}
+		seen++
+	}
+	if seen != 2 || total <= 0 || available > total {
+		return 0, 0, errors.New("incomplete memory observation")
+	}
+	return total, available, nil
+}
+
+// parseMemoryStall returns the "some avg10" share of /proc/pressure/memory:
+// the percentage of the last ten seconds in which a task waited for memory.
+func parseMemoryStall(data []byte) float64 {
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "some" {
+			continue
+		}
+		for _, field := range fields[1:] {
+			if value, ok := strings.CutPrefix(field, "avg10="); ok {
+				if stall, err := strconv.ParseFloat(value, 64); err == nil && stall >= 0 && stall <= 100 {
+					return stall
+				}
+			}
+		}
+	}
+	return 0
+}
