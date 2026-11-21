@@ -842,7 +842,7 @@ def discover(request):
                 if bind_lease(connection, current, users) or settle_lease(connection, current, users) or "lease" not in current:
                     states[connection] = json.loads(json.dumps(current))
     leases = {key: state["lease"] for key, state in states.items() if isinstance(state.get("lease"), dict) and leased(state["lease"])}
-    groups = {state["run"]["pid"] for state in states.values() if alive(state.get("run"))} | {lease["pgid"] for lease in leases.values() if lease.get("pgid")}
+    runs = {state["run"]["pid"] for state in states.values() if alive(state.get("run"))}
     claimed = {claimed_thread(key, state) for key, state in states.items()} - {""}
     unbound = [lease for lease in leases.values() if not lease.get("thread")]
     index = read_json(ROOT / "index.json", {}) or {}
@@ -870,7 +870,12 @@ def discover(request):
             run = state.get("run") or {}
             ours = connection and alive(run)
             holders = [lease for lease in leases.values() if lease.get("thread") == thread and (lease.get("account") or "default") == account]
-            tui = {pid for pid in foreign(path, thread, users, groups) if not any(lease_member(lease, pid) for lease in leases.values())}
+            # A desktop TUI that moved to another thread (/new, /resume) writes
+            # it as any other process would: only the thread's own lease and
+            # an unbound one (not yet learnt) are not someone else.
+            mine = holders + [lease for lease in unbound if (lease.get("account") or "default") == account]
+            groups = runs | {lease["pgid"] for lease in mine if lease.get("pgid")}
+            tui = {pid for pid in foreign(path, thread, users, groups) if not any(lease_member(lease, pid) for lease in mine)}
             owner = "phone" if ours else "desktop" if holders else "external" if tui else ""
             lease = (state.get("lease") if connection in leases else None) or (holders[0] if holders else {})
             sessions.append({"thread_id": thread, "account": account, "connection": connection, "workspace": meta["cwd"],

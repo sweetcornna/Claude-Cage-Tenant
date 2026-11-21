@@ -552,6 +552,24 @@ class CodexSessionTests(unittest.TestCase):
             listed = sessions.discover({"accounts": ["default"], "workspaces": [str(self.project)]})
             self.assertTrue({thread for thread, _ in made} <= {item["thread_id"] for item in listed if not item["connection"]})
 
+    def test_a_thread_the_desktop_tui_moves_to_is_not_idle(self):
+        thread, _ = self.rollout(self.turn_rows("bound", "ok"))
+        other, other_path = self.rollout(self.turn_rows("after /new", "ok"))
+        connection = str(uuid.uuid4())
+        process = self.launch(connection, thread=thread)
+        proc = self.home / "proc"
+        (proc / str(process.pid) / "fd").mkdir(parents=True)
+        (proc / str(process.pid) / "cmdline").write_bytes(b"codex\0")
+        os.symlink(other_path, proc / str(process.pid) / "fd" / "9")
+        with patch.object(sessions, "PROC", proc):
+            listed = sessions.discover({"accounts": ["default"], "workspaces": [str(self.project)]})
+            viewed = sessions.view({"thread": other, "account": "default"})
+            with self.assertRaisesRegex(ValueError, "Codex 终端"):
+                self.send(str(uuid.uuid4()), other)
+        owners = {item["thread_id"]: item["owner"] for item in listed}
+        self.assertEqual(owners, {thread: "desktop", other: "external"})
+        self.assertEqual((viewed["owner"], viewed["can_send"]), ("external", False))
+
     def test_archive_stop_and_purge(self):
         os.environ["FAKE_CODEX_MODE"] = "sleep"
         connection, request_id = str(uuid.uuid4()), str(uuid.uuid4())
