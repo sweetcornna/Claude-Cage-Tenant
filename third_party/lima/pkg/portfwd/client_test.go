@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"gotest.tools/v3/assert"
 
@@ -78,7 +80,9 @@ func TestDialContextToCurrentGRPCTunnelFollowsReplacedClient(t *testing.T) {
 	assert.NilError(t, conn.Close())
 	select {
 	case err := <-freshDone:
-		assert.NilError(t, err)
+		// Closing right away can cancel the stream before the guest reads it
+		// to the end; either way the stream reached the new client.
+		assert.Assert(t, err == nil || status.Code(err) == codes.Canceled, err)
 	case <-time.After(time.Second):
 		assert.Assert(t, false, "the new client did not carry the tunnel")
 	}
