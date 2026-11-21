@@ -1,4 +1,6 @@
-"""Guest-side Codex CLI sessions for the phone: discovery, bounded transcripts and detached exec turns."""
+"""Guest-side Codex CLI sessions: discovery, bounded transcripts, detached phone exec
+turns, and the lease a desktop terminal's Codex TUI holds while it owns a thread."""
+import calendar
 import contextlib
 import fcntl
 import hashlib
@@ -29,13 +31,27 @@ LINE_LIMIT = 1 << 20
 LISTED = 300
 TOOL_LIMIT = 64
 ACCOUNT_REFUSED = 78
+# A desktop terminal's launch refused to start Codex; the message is on stderr.
+LAUNCH_REFUSED = 75
+PROBE_TIMEOUT = 15
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-ROLLOUT = re.compile(r"rollout-.+-(" + UUID + r")\.jsonl")
+# Newer CLIs name a rollout <thread>_<rollout id> when the two differ, and can
+# compress cold rollouts (.jsonl.zst), which this helper cannot read.
+ROLLOUT = re.compile(r"rollout-.+-(" + UUID + r")(?:_[0-9A-Za-z-]{1,64})?\.jsonl")
+COMPRESSED = re.compile(r"rollout-.+-(" + UUID + r")(?:_[0-9A-Za-z-]{1,64})?\.jsonl\.zst")
+STAMP = re.compile(r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})")
 # Newer CLIs hold a per-thread writer lock open while a session is open.
 WRITER_LOCK = re.compile(r"(" + UUID + r")\.lock")
 # Context some Codex versions record as user input. It is never a prompt.
 INJECTED = re.compile(r"\s*(?:<(?:environment_context|user_instructions|turn_aborted|user_shell_command|subagent_notification|skill|INSTRUCTIONS)\b|# AGENTS\.md instructions for )")
 TUI_OPEN = "这段会话正在电脑上的 Codex 终端中打开。请先退出该终端中的 Codex，再从手机继续。"
+DESKTOP_OPEN = "这段会话正在电脑的 Codex 终端中打开。可在手机的终端页打开该终端继续，或等电脑上退出 Codex 后再发送。"
+DESKTOP_NOTICE = "这段会话正在电脑的 Codex 终端中打开，手机上可以查看和停止本轮。"
+STATE_UNREADABLE = "电脑上这段 Codex 会话的状态无法读取，请在电脑上重新打开这段会话后再试。"
+PHONE_RUNNING = "手机发起的一轮仍在运行，完成后再在终端中继续。"
+OTHER_TERMINAL = "这段会话已在另一个电脑终端中打开。"
+OTHER_PROCESS = "这段会话正在其他 Codex 进程中打开，请先退出该进程后再继续。"
+COMPRESSED_NOTICE = "这段会话的历史由较新的 Codex 压缩保存，暂时无法在这里显示，可在电脑终端中继续。"
 _ORIGINAL_UMASK = None
 
 
@@ -58,14 +74,31 @@ def save(path, value):
     os.replace(temporary, path)
 
 
+def load_state(path):
+    """A state file's content and whether it could be read; a missing file is empty."""
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        return {}, True
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return {}, False
+    return (value, True) if isinstance(value, dict) else ({}, False)
+
+
 @contextlib.contextmanager
-def state_file(connection):
+def state_file(connection, strict=False):
+    """The state of one connection under its lock. strict refuses an unreadable
+    file, which could have recorded a desktop lease, instead of starting afresh."""
     folder = ROOT / identifier(connection)
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (folder / "lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         path = folder / "state.json"
-        state = read_json(path, {})
+        state, readable = load_state(path)
+        if strict and not readable:
+            raise ValueError(STATE_UNREADABLE)
         before = json.dumps(state, sort_keys=True)
         yield state
         if json.dumps(state, sort_keys=True) != before:
@@ -89,26 +122,164 @@ def within(path, root):
     return isinstance(path, str) and (path == root or path.startswith(root.rstrip("/") + "/"))
 
 
-def fingerprint(pid):
-    """Start time of a live process, so a reused PID never matches a recorded run."""
+def process_start(pid):
+    """Start time of a live process, so a reused PID never matches a recorded one:
+    "" when there is no such process, None when it cannot be told."""
     if not isinstance(pid, int) or pid <= 0:
         return ""
     stat = PROC / str(pid) / "stat"
     if (PROC / "self").exists() or stat.exists():
         try:
             fields = stat.read_text().rsplit(")", 1)[1].split()
-            return "" if fields[0] == "Z" else fields[19]
-        except (OSError, IndexError):
+        except FileNotFoundError:
             return ""
+        except (OSError, IndexError):
+            return None
+        if len(fields) < 20:
+            return None
+        return "" if fields[0] == "Z" else fields[19]
     try:
         listing = subprocess.run(["ps", "-o", "stat=,lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=2).stdout.strip()
     except (OSError, subprocess.SubprocessError):
-        return ""
+        return None
     return "" if not listing or listing.startswith("Z") else listing.split(None, 1)[-1]
+
+
+def fingerprint(pid):
+    return process_start(pid) or ""
 
 
 def alive(run):
     return isinstance(run, dict) and bool(run.get("start")) and fingerprint(run.get("pid")) == run["start"]
+
+
+def lease_state(lease):
+    """"held", "ended" or "unknown" for the lease of a desktop terminal's Codex
+    process. The lease belongs to that process, so a crash or exit ends it."""
+    if not isinstance(lease, dict) or not lease.get("start"):
+        return "ended"
+    current = process_start(lease.get("pid"))
+    if current is None:
+        return "unknown"
+    return "held" if current == lease["start"] else "ended"
+
+
+def leased(lease):
+    # An unknown state counts as held: the phone never writes when it is unclear.
+    return lease_state(lease) != "ended"
+
+
+def group_of(pid):
+    try:
+        return os.getpgid(pid)
+    except OSError:
+        return None
+
+
+def lease_member(lease, pid):
+    """Whether pid is the leased process or runs in its process group (a CLI
+    launcher can start the real binary as a child)."""
+    return pid == lease.get("pid") or bool(lease.get("pgid")) and group_of(pid) == lease["pgid"]
+
+
+def threads_held(lease, users):
+    """Threads whose writer lock or rollout a lease's processes hold open."""
+    files, threads = users
+    held = {thread for thread, pids in threads.items() if any(lease_member(lease, pid) for pid in pids)}
+    for path, pids in files.items():
+        match = ROLLOUT.fullmatch(Path(path).name)
+        if match and any(lease_member(lease, pid) for pid in pids):
+            held.add(match.group(1))
+    return held
+
+
+def stamp(value):
+    """Seconds since the epoch of an ISO time written by Codex (UTC), or None."""
+    match = STAMP.match(value) if isinstance(value, str) else None
+    if not match:
+        return None
+    try:
+        return float(calendar.timegm(tuple(int(part) for part in match.groups()) + (0, 0, 0)))
+    except (ValueError, OverflowError):
+        return None
+
+
+def real(path):
+    try:
+        return os.path.realpath(path) if isinstance(path, str) and path else ""
+    except (OSError, ValueError):
+        return ""
+
+
+def candidate(meta, created, lease):
+    """Whether a rollout may be the thread a new desktop session's Codex created:
+    the lease has no thread yet, the cwd is the lease's and it is not older."""
+    if not isinstance(lease, dict) or lease.get("thread") or not meta:
+        return False
+    root = real(lease.get("cwd"))
+    return bool(root) and within(real(meta.get("cwd")), root) and created >= float(lease.get("acquired_at") or 0) - 5
+
+
+def all_states(exclude=""):
+    """Every readable connection state, keyed by connection."""
+    states = {}
+    for path in ROOT.glob("*/state.json"):
+        try:
+            connection = identifier(path.parent.name)
+        except ValueError:
+            continue
+        if connection != exclude:
+            states[connection] = read_json(path, {}) or {}
+    return states
+
+
+def claimed_thread(connection, state):
+    if state.get("thread_id"):
+        return state["thread_id"]
+    return started_thread(ROOT / connection) if state.get("run") else ""
+
+
+def desktop_leases(thread, account, path, states):
+    """Held leases of other connections that own thread, or that may own it
+    because their new session has not learnt its thread yet."""
+    found = []
+    meta, created = None, 0.0
+    for connection, state in states.items():
+        lease = state.get("lease")
+        if not isinstance(lease, dict) or (lease.get("account") or "default") != account or not leased(lease):
+            continue
+        if lease.get("thread") == thread:
+            found.append(lease)
+        elif not lease.get("thread") and path is not None:
+            if meta is None:
+                try:
+                    meta = head(path) or {}
+                    created = meta.get("created") or path.stat().st_mtime
+                except OSError:
+                    meta, created = {}, 0.0
+            others = {claimed_thread(key, value) for key, value in states.items()}
+            if thread not in others and candidate(meta, created, lease):
+                found.append(lease)
+    return found
+
+
+def bind_lease(connection, state, users):
+    """Bind a new desktop session to the one thread its Codex process holds open.
+    Caller holds the connection's lock. Binding happens once; a thread the TUI
+    opens later never re-binds the session."""
+    lease = state.get("lease")
+    if not isinstance(lease, dict) or lease.get("thread") or state.get("thread_id") or lease_state(lease) != "held":
+        return ""
+    held = threads_held(lease, users)
+    if len(held) != 1:
+        return ""
+    thread = held.pop()
+    if any(claimed_thread(key, value) == thread for key, value in all_states(connection).items()):
+        return ""
+    if find_rollout(codex_home(lease.get("account") or "default"), thread) is None:
+        return ""
+    state["thread_id"] = lease["thread"] = thread
+    return thread
 
 
 def rollout_users():
@@ -186,8 +357,16 @@ def rollouts(home):
 
 
 def find_rollout(home, thread):
-    paths = [path for path in (home / "sessions").glob("[0-9]*/[0-9]*/[0-9]*/rollout-*-" + thread + ".jsonl") if path.is_file() and not path.is_symlink()]
+    folder = home / "sessions"
+    paths = [path for pattern in ("rollout-*-" + thread + ".jsonl", "rollout-*-" + thread + "_*.jsonl")
+             for path in folder.glob("[0-9]*/[0-9]*/[0-9]*/" + pattern) if path.is_file() and not path.is_symlink() and ROLLOUT.fullmatch(path.name)]
     return max(paths, key=lambda path: path.stat().st_mtime, default=None)
+
+
+def compressed_rollout(home, thread):
+    folder = home / "sessions"
+    return any(COMPRESSED.fullmatch(path.name) for pattern in ("rollout-*-" + thread + ".jsonl.zst", "rollout-*-" + thread + "_*.jsonl.zst")
+               for path in folder.glob("[0-9]*/[0-9]*/[0-9]*/" + pattern))
 
 
 def texts(content, kinds):
@@ -316,7 +495,8 @@ def session_meta(line):
     source = payload.get("source")
     # Sub-agent threads belong to their parent session and are never listed.
     subagent = payload.get("thread_source") == "subagent" or isinstance(source, dict) and "subagent" in source
-    return {"id": thread, "cwd": payload["cwd"], "subagent": bool(subagent), "title": ""}
+    return {"id": thread, "cwd": payload["cwd"], "subagent": bool(subagent), "title": "",
+            "created": stamp(row.get("timestamp")) or stamp(payload.get("timestamp"))}
 
 
 def head(path):
@@ -507,7 +687,15 @@ def view(request):
     home = codex_home(account)
     thread = identifier(request["thread"]) if request.get("thread") else ""
     connection = identifier(request["connection"]) if request.get("connection") else ""
+    readable = not connection or load_state(ROOT / connection / "state.json")[1]
+    users = rollout_users()
     with state_view(connection) as state:
+        lease = state.get("lease")
+        if isinstance(lease, dict) and lease_state(lease) == "ended":
+            state.pop("lease")
+            lease = None
+        if lease:
+            bind_lease(connection, state, users)
         if state and not state.get("thread_id"):
             state["thread_id"] = started_thread(ROOT / connection)
         if state.get("thread_id"):
@@ -521,8 +709,11 @@ def view(request):
         turns, cwd, pending, truncated = transcript(path, thread)
         run = state.get("run") or {}
         ours = alive(run)
-        groups = {run["pid"]} if ours else set()
-        tui = foreign(path, thread, rollout_users(), groups) if path else set()
+        leases = ([lease] if lease else []) + (desktop_leases(thread, account, path, all_states(connection)) if thread else [])
+        desktop = bool(leases)
+        groups = ({run["pid"]} if ours else set()) | {item["pgid"] for item in leases if item.get("pgid")}
+        tui = foreign(path, thread, users, groups) if path else set()
+        tui = {pid for pid in tui if not any(lease_member(item, pid) for item in leases)}
         claimed = set()
         for sent in state.get("sent", []):
             match = next((turn for turn in turns if id(turn) not in claimed and turn["_offset"] >= sent["offset"] and turn["_key"] == sent["key"]), None)
@@ -537,7 +728,7 @@ def view(request):
         if turns:
             last = turns[-1]
             mine = last["id"] == run.get("request_id")
-            if ours and (pending or mine and not last.get("_done")) or tui and pending:
+            if ours and (pending or mine and not last.get("_done")) or (tui or desktop) and pending:
                 last["status"] = "running"
             elif pending and last["status"] == "completed" and not last.get("_done"):
                 last["status"] = "interrupted"
@@ -547,10 +738,18 @@ def view(request):
                 elif run.get("exit_code") not in (None, 0):
                     last["status"], last["error"] = "failed", run_failure(ROOT / connection, run)
         notice = ""
-        if tui:
+        compressed = bool(thread and path is None and compressed_rollout(home, thread))
+        if not readable:
+            notice = STATE_UNREADABLE
+        elif desktop:
+            notice = DESKTOP_NOTICE
+        elif tui:
             notice = TUI_OPEN
+        elif compressed:
+            notice = COMPRESSED_NOTICE
         elif thread and path is None:
             notice = "未找到这段 Codex 会话的历史，可能已在电脑上删除。"
+        owner = "phone" if ours else "desktop" if desktop else "external" if tui else ""
         for turn in turns:
             for key in ("_offset", "_sources", "_key", "_done"):
                 turn.pop(key, None)
@@ -559,12 +758,16 @@ def view(request):
             turns.pop(0)
             shortened = True
         updated = max(path.stat().st_mtime if path else 0, float(run.get("finished_at") or run.get("started_at") or 0))
-        return {"thread_id": thread, "account": account, "connection": connection,
-                "workspace": cwd or (meta or {}).get("cwd") or state.get("cwd", ""),
-                "title": (meta or {}).get("title") or (turns[0]["prompt"].strip()[:40] if turns else ""),
-                "updated_at": updated, "turns": turns, "running": bool(ours or tui), "active": bool(ours or tui and pending),
-                "can_send": not ours and not tui and not (thread and path is None), "history_truncated": shortened,
-                "connection_notice": notice, "account_refused": not ours and run.get("exit_code") == ACCOUNT_REFUSED}
+        result = {"thread_id": thread, "account": account, "connection": connection,
+                  "workspace": cwd or (meta or {}).get("cwd") or state.get("cwd", "") or (lease or {}).get("cwd", ""),
+                  "title": (meta or {}).get("title") or (turns[0]["prompt"].strip()[:40] if turns else ""),
+                  "updated_at": updated, "turns": turns, "running": owner != "", "active": bool(ours or (tui or desktop) and pending),
+                  "can_send": readable and owner == "" and not (thread and path is None), "history_truncated": shortened,
+                  "connection_notice": notice, "account_refused": not ours and run.get("exit_code") == ACCOUNT_REFUSED,
+                  "owner": owner, "lease": (lease or {}).get("id", "")}
+    if request.get("probe"):
+        result["cli"] = probe({})
+    return result
 
 
 def cached_head(path, index, fresh):
@@ -581,14 +784,19 @@ def cached_head(path, index, fresh):
 def discover(request):
     roots = [root for root in request.get("workspaces", []) if isinstance(root, str) and root.startswith("/")]
     accounts = [account for account in request.get("accounts", []) if isinstance(account, str)]
-    states = {}
-    for path in ROOT.glob("*/state.json"):
-        try:
-            states[identifier(path.parent.name)] = read_json(path, {}) or {}
-        except ValueError:
-            continue
-    groups = {state["run"]["pid"] for state in states.values() if alive(state.get("run"))}
+    states = all_states()
     users = rollout_users()
+    # A new desktop session learns its thread from the process holding it.
+    for connection, state in states.items():
+        lease = state.get("lease")
+        if isinstance(lease, dict) and not lease.get("thread") and not state.get("thread_id") and lease_state(lease) == "held" and threads_held(lease, users):
+            with state_file(connection) as current:
+                if bind_lease(connection, current, users):
+                    states[connection] = json.loads(json.dumps(current))
+    leases = {key: state["lease"] for key, state in states.items() if isinstance(state.get("lease"), dict) and leased(state["lease"])}
+    groups = {state["run"]["pid"] for state in states.values() if alive(state.get("run"))} | {lease["pgid"] for lease in leases.values() if lease.get("pgid")}
+    claimed = {claimed_thread(key, state) for key, state in states.items()} - {""}
+    unbound = [lease for lease in leases.values() if not lease.get("thread")]
     index = read_json(ROOT / "index.json", {}) or {}
     fresh, sessions, listed = {}, [], set()
     for account in accounts:
@@ -604,25 +812,39 @@ def discover(request):
             if not meta or meta["subagent"] or not any(within(meta["cwd"], root) for root in roots):
                 continue
             thread = meta["id"]
+            # Until a new desktop session learns its thread, threads it may have
+            # created are withheld: listing one would make a second session
+            # for it that the phone could write to.
+            if thread not in claimed and any((lease.get("account") or "default") == account and candidate(meta, meta.get("created") or mtime, lease) for lease in unbound):
+                continue
             connection, state = next(((key, value) for key, value in states.items()
                                       if value.get("thread_id") == thread and value.get("account", "default") == account), ("", {}))
             run = state.get("run") or {}
             ours = connection and alive(run)
-            tui = foreign(path, thread, users, groups)
+            holders = [lease for lease in leases.values() if lease.get("thread") == thread and (lease.get("account") or "default") == account]
+            tui = {pid for pid in foreign(path, thread, users, groups) if not any(lease_member(lease, pid) for lease in leases.values())}
+            owner = "phone" if ours else "desktop" if holders else "external" if tui else ""
+            lease = (state.get("lease") if connection in leases else None) or (holders[0] if holders else {})
             sessions.append({"thread_id": thread, "account": account, "connection": connection, "workspace": meta["cwd"],
                              "title": meta.get("title") or "", "updated_at": max(mtime, float(run.get("started_at") or 0)),
-                             "running": bool(ours or tui), "active": bool(ours or tui and tail_pending(path))})
+                             "running": owner != "", "active": bool(ours or owner and tail_pending(path)),
+                             "owner": owner, "lease": lease.get("id", "")})
             listed.add(connection)
-    # A new session's first turn can run before its rollout is listed.
+    # A new session's first turn, or a new desktop session's TUI, can run
+    # before its rollout is listed.
     for connection, state in states.items():
         run = state.get("run") or {}
-        if connection in listed or state.get("account", "default") not in accounts or not alive(run):
+        ours, desktop = alive(run), connection in leases
+        if connection in listed or state.get("account", "default") not in accounts or not (ours or desktop):
             continue
-        if not any(within(state.get("cwd", ""), root) for root in roots):
+        cwd = state.get("cwd", "") or (leases.get(connection) or {}).get("cwd", "")
+        if not any(within(cwd, root) for root in roots):
             continue
         sessions.append({"thread_id": state.get("thread_id") or started_thread(ROOT / connection), "account": state.get("account", "default"),
-                         "connection": connection, "workspace": state.get("cwd", ""), "title": "",
-                         "updated_at": float(run.get("started_at") or 0), "running": True, "active": True})
+                         "connection": connection, "workspace": cwd, "title": "",
+                         "updated_at": float(run.get("started_at") or (leases.get(connection) or {}).get("acquired_at") or 0),
+                         "running": True, "active": ours, "owner": "phone" if ours else "desktop",
+                         "lease": (leases.get(connection) or {}).get("id", "")})
     if fresh != index:
         save(ROOT / "index.json", fresh)
     return sessions
@@ -652,7 +874,7 @@ def send(request):
     thread = identifier(request["thread"]) if request.get("thread") else ""
     cwd = Path(request["cwd"])
     folder = ROOT / connection
-    with state_file(connection) as state:
+    with state_file(connection, strict=True) as state:
         known = state.get("thread_id") or started_thread(folder)
         if known and thread and known != thread:
             raise ValueError("会话身份已变化，请重新读取会话列表")
@@ -668,11 +890,19 @@ def send(request):
         previous = state.get("run") or {}
         if alive(previous):
             raise ValueError("这段会话已有消息正在处理，请等待完成后再发送")
+        # A desktop terminal's Codex owns the thread while its lease holds.
+        lease = state.get("lease")
+        if isinstance(lease, dict):
+            if leased(lease):
+                raise ValueError(DESKTOP_OPEN)
+            state.pop("lease")
         path = None
         if thread:
             path = find_rollout(home, thread)
             if path is None:
                 raise ValueError("未找到这段 Codex 会话的历史，请重新读取会话列表")
+            if desktop_leases(thread, account, path, all_states(connection)):
+                raise ValueError(DESKTOP_OPEN)
             if foreign(path, thread, rollout_users(), set()):
                 raise ValueError(TUI_OPEN)
         if not cwd.is_absolute() or not cwd.is_dir():
@@ -748,11 +978,19 @@ def supervise(connection):
 
 def stop(request):
     connection = identifier(request["connection"])
-    request_id = identifier(request["request_id"])
+    # Archiving stops whatever phone turn runs, without knowing its request.
+    archive = request.get("reason") == "archive" and not request.get("request_id")
+    request_id = "" if archive else identifier(request["request_id"])
     if not (ROOT / connection).is_dir():
+        if archive:
+            return {"ok": True}
         raise ValueError("这次运行不是从手机发起的，请在电脑终端停止")
     with state_file(connection) as state:
         run = state.get("run") or {}
+        if archive:
+            if not alive(run):
+                return {"ok": True}
+            request_id = run.get("request_id") or ""
         if run.get("request_id") != request_id or not alive(run):
             raise ValueError("这次运行已结束或不是从手机发起的，请重新读取会话")
         state["stopped"] = request_id
@@ -775,21 +1013,193 @@ def purge(request):
     home = codex_home(account)
     thread = identifier(request["thread"]) if request.get("thread") else ""
     connection = identifier(request["connection"]) if request.get("connection") else ""
-    state = read_json(ROOT / connection / "state.json", {}) if connection else {}
-    if alive((state or {}).get("run")):
+    state, readable = load_state(ROOT / connection / "state.json") if connection else ({}, True)
+    if not readable:
+        raise ValueError(STATE_UNREADABLE)
+    if alive(state.get("run")):
         raise ValueError("Codex 仍在处理这段会话，请先停止本轮再删除")
-    thread = thread or (state or {}).get("thread_id", "")
+    if leased(state.get("lease")):
+        raise ValueError("这段会话正在电脑的 Codex 终端中打开，请先关闭该终端再删除")
+    thread = thread or state.get("thread_id", "")
     path = find_rollout(home, thread) if thread else None
     if path is not None:
         meta = head(path)
         if not meta or meta["id"] != thread or not within(meta["cwd"], request["workspace"]):
             raise ValueError("会话历史与已授权项目不一致，请检查电脑上的 Codex 配置")
+        if desktop_leases(thread, account, path, all_states(connection)):
+            raise ValueError("这段会话正在电脑的 Codex 终端中打开，请先关闭该终端再删除")
         if foreign(path, thread, rollout_users(), set()):
             raise ValueError("这段会话正在电脑上的 Codex 终端中打开，请先退出后再删除")
-        path.unlink()
+        # Codex's own delete also removes compressed history, metadata and
+        # spawned sub-agent threads; the file is removed here if it remains.
+        codex_delete(account, home, thread)
+        if path.exists():
+            path.unlink()
     if connection:
         shutil.rmtree(ROOT / connection, ignore_errors=True)
     return {"ok": True}
+
+
+def cli_environment():
+    env = {key: value for key, value in os.environ.items() if not key.startswith("CAGE_")}
+    env["PATH"] = os.pathsep.join([str(Path.home() / ".local/bin"), env.get("PATH", os.defpath)])
+    return env
+
+
+def help_commands(text):
+    """Subcommand names listed under "Commands:" in a --help text."""
+    names, inside = set(), False
+    for line in text.splitlines():
+        if line.strip() == "Commands:":
+            inside = True
+            continue
+        if inside:
+            if not line.strip():
+                break
+            match = re.match(r"  ([a-z][a-z0-9-]*)(?:\s|$)", line)
+            if match:
+                names.add(match.group(1))
+    return names
+
+
+def probe_binary(binary, env):
+    """What this Codex CLI supports, from its own help. Cached per binary."""
+    target = os.path.realpath(binary)
+    info = os.stat(target)
+    key = [target, info.st_size, info.st_mtime_ns]
+    cached = read_json(ROOT / "probe.json", {}) or {}
+    if cached.get("key") == key and isinstance(cached.get("result"), dict):
+        return dict(cached["result"])
+
+    def output(*args):
+        try:
+            done = subprocess.run([binary, *args], stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace",
+                                  timeout=PROBE_TIMEOUT, env=env, cwd=str(Path.home()))
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return done.stdout + done.stderr if done.returncode == 0 else ""
+
+    version, top = output("--version"), output("--help")
+    if version is None or top is None:
+        # Not cached: a slow or broken start is retried next time.
+        return {"installed": True, "complete": False, "version": "", "resume": False, "no_daemon": False, "resume_no_daemon": False, "delete": False}
+    found = re.search(r"(\d+\.\d+\.\d+[0-9A-Za-z.+-]*)", version or "")
+    commands = help_commands(top)
+    result = {"installed": True, "complete": True, "version": found.group(1) if found else "", "resume": "resume" in commands,
+              "no_daemon": "--no-daemon" in top, "resume_no_daemon": False, "delete": False}
+    if result["resume"]:
+        result["resume_no_daemon"] = "--no-daemon" in (output("resume", "--help") or "")
+    if "delete" in commands:
+        result["delete"] = "--force" in (output("delete", "--help") or "")
+    ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+    save(ROOT / "probe.json", {"key": key, "result": result})
+    return result
+
+
+def probe(request):
+    env = cli_environment()
+    binary = shutil.which("codex", path=env["PATH"])
+    if not binary:
+        return {"installed": False, "complete": True, "version": "", "resume": False, "no_daemon": False, "resume_no_daemon": False, "delete": False}
+    result = probe_binary(binary, env)
+    result["writer_locks"] = (codex_home("default") / "thread-writer-locks").is_dir()
+    return result
+
+
+def codex_delete(account, home, thread):
+    """Delete a thread through the CLI when it supports deleting by UUID."""
+    env = cli_environment()
+    binary = shutil.which("codex", path=env["PATH"])
+    if not binary or not probe_binary(binary, env).get("delete"):
+        return False
+    env.pop("CODEX_HOME", None)
+    if account != "default" or os.environ.get("CODEX_HOME"):
+        env["CODEX_HOME"] = str(home)
+    try:
+        return subprocess.run([binary, "delete", "--force", thread], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=20, env=env, cwd=str(Path.home())).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def tui_launch(request):
+    """Start a desktop terminal's Codex TUI under a lease on its connection. The
+    lease records this process, which becomes Codex through exec, so it lasts
+    exactly as long as that Codex runs. Never returns when Codex starts."""
+    connection = identifier(request["connection"])
+    lease_id = identifier(request["lease"])
+    account = request.get("account") or "default"
+    home = codex_home(account)
+    thread = identifier(request["thread"]) if request.get("thread") else ""
+    cwd = Path(request.get("cwd") or "")
+    if not cwd.is_absolute() or not cwd.is_dir():
+        raise ValueError("会话目录不可用，请确认项目文件夹已连接")
+    directories = request.get("additional_directories") or []
+    for directory in directories:
+        if not isinstance(directory, str) or not Path(directory).is_absolute() or not Path(directory).is_dir():
+            raise ValueError("项目文件夹未连接，请重新打开项目")
+    env = {key: value for key, value in os.environ.items() if key not in ("CAGE_CODEX_SUBJECT", "CAGE_CODEX_ACCOUNT_ID")}
+    env["PATH"] = os.pathsep.join([str(Path.home() / ".local/bin"), env.get("PATH", os.defpath)])
+    binary = shutil.which("codex", path=env["PATH"])
+    if not binary:
+        raise ValueError("未找到 Codex CLI。请先在环境中安装 Codex 后重试。")
+    caps = probe_binary(binary, cli_environment())
+    subject = request.get("subject") or ""
+    if account != "default":
+        if not re.fullmatch(r"[0-9a-f]{64}", subject):
+            raise ValueError("Codex 账号状态已变化，请重试")
+        if not ACCOUNT_HELPER.is_file():
+            raise ValueError("Super Cage 环境组件需要更新，请在电脑更新环境组件后重试")
+    start = fingerprint(os.getpid())
+    if not start:
+        raise ValueError("无法确认终端进程，请关闭此终端后重试")
+    users = rollout_users()
+    with state_file(connection) as state:
+        if state.get("account", account) != account:
+            raise ValueError("会话账号已变化，请重新读取会话列表")
+        known = state.get("thread_id") or started_thread(ROOT / connection)
+        if known and thread and known != thread:
+            raise ValueError("会话身份已变化，请重新读取会话列表")
+        thread = thread or known
+        if alive(state.get("run")):
+            raise ValueError(PHONE_RUNNING)
+        if leased(state.get("lease")):
+            raise ValueError(OTHER_TERMINAL)
+        others = all_states(connection)
+        if thread:
+            path = find_rollout(home, thread)
+            if path is None:
+                raise ValueError("未找到这段 Codex 会话的历史，可能已在电脑上删除。")
+            if desktop_leases(thread, account, path, others):
+                raise ValueError(OTHER_TERMINAL)
+            if foreign(path, thread, users, set()):
+                raise ValueError(OTHER_PROCESS)
+            if not caps.get("resume"):
+                raise ValueError("电脑上的 Codex 版本不支持继续会话，请更新 Codex 后重试。")
+        state.update(account=account, cwd=str(cwd))
+        if thread:
+            state["thread_id"] = thread
+        state["lease"] = {"id": lease_id, "pid": os.getpid(), "start": start, "pgid": os.getpgid(0), "thread": thread,
+                          "account": account, "cwd": str(cwd), "acquired_at": time.time()}
+    options = ["-C", str(cwd)]
+    for directory in directories:
+        options += ["--add-dir", directory]
+    # A shared background server could keep the thread loaded after the TUI
+    # exits; a TUI of its own ends its writes when it ends.
+    if caps.get("resume_no_daemon" if thread else "no_daemon"):
+        options.append("--no-daemon")
+    args = ["resume", *options, thread] if thread else options
+    if account == "default":
+        argv = [binary, *args]
+    else:
+        argv = [str(ACCOUNT_HELPER), "run", account, *args]
+        env["CAGE_CODEX_SUBJECT"] = subject
+    os.umask(_ORIGINAL_UMASK if _ORIGINAL_UMASK is not None else 0o022)
+    os.chdir(cwd)
+    try:
+        os.execve(argv[0], argv, env)
+    except OSError:
+        raise ValueError("无法启动 Codex，请检查环境后重试")
 
 
 def main():
@@ -800,7 +1210,18 @@ def main():
         os.umask(_ORIGINAL_UMASK)
         return supervise(argument)
     request = json.load(sys.stdin) if argument == "-" else json.loads(argument)
-    operations = {"discover": discover, "view": view, "send": send, "stop": stop, "purge": purge}
+    if mode == "tui-launch":
+        # Runs in a desktop terminal: refusals are shown there and end it.
+        try:
+            tui_launch(request)
+        except ValueError as error:
+            message = str(error)
+        except (OSError, KeyError, TypeError, subprocess.SubprocessError):
+            message = "电脑未能启动 Codex，请稍后重试。"
+        sys.stderr.buffer.write(("\r\n" + message + "\r\n").encode())
+        sys.stderr.flush()
+        return LAUNCH_REFUSED
+    operations = {"discover": discover, "view": view, "send": send, "stop": stop, "purge": purge, "probe": probe}
     if mode not in operations:
         raise ValueError("unsupported operation")
     try:
