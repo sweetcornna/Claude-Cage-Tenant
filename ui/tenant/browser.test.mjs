@@ -257,7 +257,7 @@ test(
       const vmA = await selectedVm();
       assert.match(vmA, /^[0-9a-f]{32}$/);
       await waitFor(`document.querySelector(".overlay h2")?.textContent.includes("正在开机")`, "开机等待");
-      assert.equal(await evaluate(`document.querySelector(".ctx-name").textContent`), "开发环境");
+      assert.equal(await evaluate(`document.querySelector('.tab[aria-selected="true"] .tab-name').textContent`), "开发环境");
       assert.equal(await evaluate(`document.querySelector(".ctx-system").textContent`), "Debian 12");
       assert.match(await evaluate(`document.querySelector(".overlay .elapsed").textContent`), /^已等待 \d+:\d{2}$/);
       await shot("03-starting");
@@ -400,7 +400,7 @@ test(
       await click(".home-btn");
       await waitFor(`document.querySelectorAll(".vm-card").length === 3`, "总览");
       assert.equal(await evaluate(`document.querySelectorAll("iframe").length`), 0);
-      assert.equal(await evaluate(`document.querySelector(".ctx-quota").textContent`), "已创建 3 / 5 台");
+      assert.equal(await evaluate(`document.querySelector(".home-quota").textContent`), "已创建 3 / 5 台");
       await shot("09-overview");
       await click(".vm-card", "测试环境");
       await waitFor(`(() => { const f = document.querySelector("iframe"); return !!f && new URL(f.src).origin === ${JSON.stringify(mock.vmOrigin(vmB))}; })()`, "从总览打开第二台", 10000);

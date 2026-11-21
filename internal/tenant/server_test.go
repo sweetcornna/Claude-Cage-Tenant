@@ -790,12 +790,20 @@ func TestTenantTicketsAndProxyBoundaries(t *testing.T) {
 	}
 	entry := fixture.request("GET", vmOrigin(first.ID), "/_tenant/enter", "", nil)
 	wantStatus(t, entry, 200, "")
-	if !strings.Contains(entry.Body.String(), `src="/_tenant/enter.js"`) || !strings.Contains(entry.Header().Get("Content-Security-Policy"), "frame-ancestors "+portalOrigin) {
+	// The entry page keeps its exact CSP (no style-src): its look comes from a stylesheet enter.js adopts,
+	// never from inline <style> or style attributes. Its only way back is a link to the portal origin.
+	page := entry.Body.String()
+	if entry.Header().Get("Content-Security-Policy") != "default-src 'none'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors "+portalOrigin ||
+		!strings.Contains(page, `src="/_tenant/enter.js"`) || !strings.Contains(page, `lang="zh-CN"`) || !strings.Contains(page, `href="`+portalOrigin+`"`) ||
+		strings.Contains(page, "{{portal}}") || strings.Contains(page, "<style") || strings.Contains(page, "style=") {
 		t.Fatal("incorrect entry page")
 	}
 	entryJS := fixture.request("GET", vmOrigin(first.ID), "/_tenant/enter.js", "", nil)
 	if !strings.Contains(entryJS.Body.String(), "history.replaceState") {
 		t.Fatal("entry must remove the fragment")
+	}
+	if !strings.Contains(entryJS.Body.String(), "adoptedStyleSheets") || !strings.Contains(entryJS.Body.String(), "工作台入口已失效") || strings.ContainsAny(enterCSS, "\"\\\n`") {
+		t.Fatal("entry script must carry the page style and the Chinese expiry text")
 	}
 	token := fixture.ticket(alice, first.ID)
 	wantStatus(t, fixture.enter(second.ID, token), 401, "unauthenticated")
