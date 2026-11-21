@@ -29,20 +29,9 @@ bash scripts/licenses.sh
 )
 export PATH="$mobile_dir/.build/bin:$PATH"
 if [[ -n "${JAVA_HOME:-}" ]]; then export PATH="$JAVA_HOME/bin:$PATH"; fi
+# Logo, doodles and icons are checked in; see scripts/brand-assets.mjs.
+node scripts/brand-assets.mjs --check
 if [[ "$platform" == ios ]]; then
-  brand=".build/ios/Assets.xcassets/CageMark.imageset"
-  mkdir -p "$brand"
-  cp ../ui/src/logo.png "$brand/mark.png"
-  printf '%s\n' '{"images":[{"filename":"mark.png","idiom":"universal"}],"info":{"author":"xcode","version":1}}' > "$brand/Contents.json"
-  devices=".build/ios/Assets.xcassets/PairDevices.imageset"
-  mkdir -p "$devices"
-  cp assets/pair-devices.png "$devices/devices.png"
-  sed 's/mark.png/devices.png/' "$brand/Contents.json" > "$devices/Contents.json"
-  icon=".build/ios/Assets.xcassets/AppIcon.appiconset"
-  mkdir -p "$icon"
-  printf '%s\n' '{"info":{"author":"xcode","version":1}}' > ".build/ios/Assets.xcassets/Contents.json"
-  cp ios/AppIcon.json "$icon/Contents.json"
-  sips -z 1024 1024 ../ui/src/logo.png --out "$icon/Cage.png" >/dev/null
   # One arm64 iPhone slice and one simulator slice for this Mac.
   # Each platform framework is then passed to -create-xcframework exactly once.
   (cd bindings && gomobile bind -target="ios/arm64,iossimulator/$(go env GOHOSTARCH)" -iosversion=17.0 -o "$mobile_dir/.build/ios/Cagemobile.xcframework" .)
@@ -62,7 +51,7 @@ if [[ "$platform" == ios ]]; then
     test -s "$app/embedded.mobileprovision"
     codesign --verify --deep --strict "$app"
     rm -r "$output/check"
-    printf 'Cage iPhone development IPA: %s\n' "$ipa"
+    printf 'Super Cage iPhone development IPA: %s\n' "$ipa"
   else
     xcodebuild -project ios/CageMobile.xcodeproj -target CageMobile -sdk iphoneos -configuration Debug \
       CODE_SIGNING_ALLOWED=NO SYMROOT="$mobile_dir/.build/ios/products" OBJROOT="$mobile_dir/.build/ios/obj" build

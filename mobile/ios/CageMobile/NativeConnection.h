@@ -28,4 +28,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable CMConnection *)openVirtualMachine:(NSString *)vmID assets:(NSString *)assets error:(NSError **)error NS_SWIFT_NAME(open(virtualMachine:assets:));
 - (void)close;
 @end
+
+/// A file the phone workbench asked to share. Go validates the name, media type
+/// and base64 data (at most 8 MiB); the file is written to a new private
+/// temporary directory that the caller removes after sharing.
+@interface CMSharedFile : NSObject
++ (nullable NSURL *)writeName:(NSString *)name mime:(NSString *)mime data:(NSString *)data
+    error:(NSError **)error NS_SWIFT_NAME(write(name:mime:data:));
+@end
 NS_ASSUME_NONNULL_END

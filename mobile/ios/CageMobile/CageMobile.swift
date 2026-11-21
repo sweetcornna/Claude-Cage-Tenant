@@ -42,6 +42,11 @@ final class DeviceWebBridge: NSObject, WKScriptMessageHandler {
            ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil, url.user == nil {
             UIApplication.shared.open(url)
         }
+        if action == "haptic", let style = body["style"] as? String {WorkbenchActions.haptic(style)}
+        if action == "share-file", let web = message.webView, let name = body["name"] as? String,
+           let data = body["data"] as? String {
+            WorkbenchActions.share(name: name, mime: body["mime"] as? String ?? "", data: data, from: web)
+        }
     }
 }
 
@@ -258,6 +263,7 @@ final class ConnectionModel: ObservableObject {
         config.userContentController.addUserScript(WKUserScript(source: deviceScript(id), injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let web = WKWebView(frame: .zero, configuration: config)
         web.scrollView.contentInsetAdjustmentBehavior = .never
+        web.usePaperBackground()
         web.navigationDelegate = delegate
         // WKWebView holds its navigation delegate weakly.
         navigationDelegates[id] = delegate
@@ -432,34 +438,132 @@ private struct Workspace: UIViewRepresentable {
     func updateUIView(_ view: WKWebView, context: Context) {}
 }
 
-private enum CageStyle {
-    static let paper = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark ? UIColor(white: 0.075, alpha: 1) : UIColor(red: 0.982, green: 0.978, blue: 0.967, alpha: 1)
-    })
-    static let ink = Color(uiColor: .label)
-    static let inverse = Color(uiColor: .systemBackground)
-}
-
-private struct CageButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var enabled
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .opacity(enabled ? (configuration.isPressed ? 0.9 : 1) : 0.5)
+/// Super Cage palette: ivory paper, dark ink, one clay accent (light / dark).
+enum CageStyle {
+    private static func dynamic(_ light: UInt32, _ dark: UInt32) -> UIColor {
+        func color(_ hex: UInt32) -> UIColor {
+            UIColor(red: CGFloat(hex >> 16 & 0xff) / 255, green: CGFloat(hex >> 8 & 0xff) / 255, blue: CGFloat(hex & 0xff) / 255, alpha: 1)
+        }
+        let (day, night) = (color(light), color(dark))
+        return UIColor { $0.userInterfaceStyle == .dark ? night : day }
+    }
+    static let paperColor = dynamic(0xFAF9F5, 0x1F1E1D)
+    static let paper = Color(uiColor: paperColor)
+    static let surface = Color(uiColor: dynamic(0xFFFFFF, 0x2A2926))
+    static let surface2 = Color(uiColor: dynamic(0xF0EEE6, 0x34322E))
+    static let line = Color(uiColor: dynamic(0xE6E3D8, 0x3D3A35))
+    static let ink = Color(uiColor: dynamic(0x1F1E1D, 0xF3EFE5))
+    static let ink2 = Color(uiColor: dynamic(0x6B655B, 0xABA597))
+    static let clay = Color(red: 0xD9 / 255, green: 0x77 / 255, blue: 0x57 / 255)
+    static let clayInk = Color(uiColor: dynamic(0xA4482A, 0xE8936F))
+    static let danger = Color(uiColor: dynamic(0xB3261E, 0xF2B8B5))
+    static let ok = Color(uiColor: dynamic(0x2E7D4F, 0x7BC79A))
+    static func serif(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight, design: .serif)
     }
 }
 
-private struct ActionLabel: View {
+extension WKWebView {
+    /// Matches the workbench page background so loading never flashes white.
+    func usePaperBackground() {
+        isOpaque = false
+        backgroundColor = CageStyle.paperColor
+        scrollView.backgroundColor = CageStyle.paperColor
+    }
+}
+
+extension View {
+    /// A text field on a soft rounded well.
+    func cageField() -> some View {
+        padding(.horizontal, 14).frame(minHeight: 52)
+            .background(CageStyle.surface2, in: RoundedRectangle(cornerRadius: 12))
+            .foregroundStyle(CageStyle.ink)
+    }
+    /// Paper background with white cards for Form and List screens.
+    func cageForm() -> some View {
+        scrollContentBackground(.hidden).background(CageStyle.paper)
+    }
+}
+
+struct CageButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(enabled ? (configuration.isPressed ? 0.82 : 1) : 0.45)
+    }
+}
+
+/// Primary actions are ink pills with paper text; secondary ones sit on the card with a hairline.
+struct ActionLabel: View {
     let title: String
-    let symbol: String
+    var symbol: String? = nil
     var primary = true
+    var danger = false
     var height: CGFloat = 52
     var body: some View {
-        Label(title, systemImage: symbol)
-            .font(.headline).frame(maxWidth: .infinity, minHeight: height)
-            .foregroundStyle(primary ? CageStyle.inverse : CageStyle.ink)
-            .background(primary ? CageStyle.ink : Color(uiColor: .secondarySystemFill),
-                        in: RoundedRectangle(cornerRadius: 16))
-            .contentShape(Rectangle())
+        HStack(spacing: 8) {
+            if let symbol {Image(systemName: symbol).font(.body.weight(.medium)).accessibilityHidden(true)}
+            Text(title)
+        }
+        .font(.system(size: 17, weight: .medium)).frame(maxWidth: .infinity, minHeight: height)
+        .foregroundStyle(danger ? CageStyle.danger : primary ? CageStyle.paper : CageStyle.ink)
+        .background(danger ? CageStyle.surface2 : primary ? CageStyle.ink : CageStyle.surface, in: RoundedRectangle(cornerRadius: 14))
+        .overlay {if !primary && !danger {RoundedRectangle(cornerRadius: 14).strokeBorder(CageStyle.line)}}
+        .contentShape(Rectangle())
+    }
+}
+
+/// A small pill for a state such as 运行中.
+struct StateChip: View {
+    let text: String
+    let tone: Color
+    var body: some View {
+        Text(text).font(.caption.weight(.medium)).foregroundStyle(tone)
+            .padding(.horizontal, 10).padding(.vertical, 4)
+            .background(tone.opacity(0.14), in: Capsule())
+    }
+}
+
+/// Light haptics and file export requested by the phone workbench through the
+/// cageDevices bridge: {action: "haptic", style} and {action: "share-file", name, mime, data}.
+enum WorkbenchActions {
+    private static var sharing = false
+    static func haptic(_ style: String) {
+        switch style {
+        case "light": UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        case "medium": UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        case "success": UINotificationFeedbackGenerator().notificationOccurred(.success)
+        case "warning": UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        default: break
+        }
+    }
+    static func share(name: String, mime: String, data: String, from web: WKWebView) {
+        guard !sharing else {return}
+        sharing = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Result { try CMSharedFile.write(name: name, mime: mime, data: data) }
+            DispatchQueue.main.async {
+                sharing = false
+                var top = web.window?.rootViewController
+                while let next = top?.presentedViewController {top = next}
+                guard let presenter = top, !presenter.isBeingDismissed, !(presenter is UIActivityViewController) else {
+                    if case .success(let file) = result {try? FileManager.default.removeItem(at: file.deletingLastPathComponent())}
+                    return
+                }
+                switch result {
+                case .success(let file):
+                    let sheet = UIActivityViewController(activityItems: [file], applicationActivities: nil)
+                    sheet.completionWithItemsHandler = {_, _, _, _ in try? FileManager.default.removeItem(at: file.deletingLastPathComponent())}
+                    sheet.popoverPresentationController?.sourceView = web
+                    sheet.popoverPresentationController?.sourceRect = CGRect(x: web.bounds.midX, y: web.bounds.maxY - 1, width: 1, height: 1)
+                    presenter.present(sheet, animated: true)
+                case .failure(let error):
+                    let alert = UIAlertController(title: "无法分享", message: error.localizedDescription, preferredStyle: .alert)
+                    alert.addAction(UIAlertAction(title: "好", style: .cancel))
+                    presenter.present(alert, animated: true)
+                }
+            }
+        }
     }
 }
 
@@ -482,7 +586,7 @@ private struct QRScanner: UIViewControllerRepresentable {
                 }
                 sawInvalidQR = true
             }
-            let invalidHint = "请扫描电脑「设置 → 远程连接」中的 Cage 配对二维码"
+            let invalidHint = "请扫描电脑「设置 → 远程连接」中的 Super Cage 配对二维码"
             if sawInvalidQR, hint.wrappedValue != invalidHint {
                 hint.wrappedValue = invalidHint
             }
@@ -544,24 +648,26 @@ private struct QRScannerScreen: View {
     let result: (String?) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var sweeping = false
-    @State private var hint = "将 Cage 配对二维码放入框内\n在电脑「设置 → 远程连接」中生成"
-    private let accent = Color(red: 0.91, green: 0.72, blue: 0.62)
+    @State private var hint = "将 Super Cage 配对二维码放入框内\n在电脑「设置 → 远程连接」中生成"
+    private let accent = CageStyle.clay
+    private let night = Color(red: 0x1F / 255, green: 0x1E / 255, blue: 0x1D / 255)
+    private let cream = Color(red: 0xF3 / 255, green: 0xEF / 255, blue: 0xE5 / 255)
     var body: some View {
         GeometryReader { geometry in
             let side = max(96, min(280, min(geometry.size.width - 56, geometry.size.height - 190)))
             let box = CGRect(x: (geometry.size.width - side) / 2, y: 24 + max(0, (geometry.size.height - 190 - side) / 2), width: side, height: side)
             ZStack(alignment: .bottom) {
                 #if targetEnvironment(simulator)
-                Color(white: 0.15)
+                night.opacity(0.9)
                 Image(systemName: "qrcode").resizable().interpolation(.none).scaledToFit()
-                    .foregroundStyle(.white.opacity(0.8)).frame(width: side * 0.65, height: side * 0.65)
+                    .foregroundStyle(cream.opacity(0.8)).frame(width: side * 0.65, height: side * 0.65)
                     .position(x: box.midX, y: box.midY).accessibilityHidden(true)
                 #else
                 QRScanner(hint: $hint, result: result)
                 #endif
-                FinderMask(box: box).fill(Color(red: 0.08, green: 0.09, blue: 0.09).opacity(0.72), style: FillStyle(eoFill: true))
+                FinderMask(box: box).fill(night.opacity(0.74), style: FillStyle(eoFill: true))
                     .allowsHitTesting(false)
-                RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.45), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 18).stroke(cream.opacity(0.4), lineWidth: 1)
                     .frame(width: side, height: side).position(x: box.midX, y: box.midY)
                     .allowsHitTesting(false)
                 FinderCorners().stroke(accent, style: StrokeStyle(lineWidth: 4, lineCap: .round))
@@ -576,12 +682,12 @@ private struct QRScannerScreen: View {
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
                 VStack(spacing: 12) {
-                    Text("连接你的电脑").font(.title2.bold())
-                    Text(hint).font(.subheadline).foregroundStyle(.white.opacity(0.88)).multilineTextAlignment(.center)
-                    Text(simulatorPreviewEnabled ? "模拟器预览 · 即将进入示例工作台" : "仅识别 Cage 配对码")
-                        .font(.caption).foregroundStyle(.white.opacity(0.6))
-                }.foregroundStyle(.white).padding(.horizontal, 24).padding(.bottom, 24).allowsHitTesting(false).accessibilityElement(children: .combine)
-            }.background(Color.black).onAppear {sweeping = true}
+                    Text("连接你的电脑").font(CageStyle.serif(24))
+                    Text(hint).font(.subheadline).foregroundStyle(cream.opacity(0.88)).multilineTextAlignment(.center)
+                    Text(simulatorPreviewEnabled ? "模拟器预览 · 即将进入示例工作台" : "仅识别 Super Cage 配对码")
+                        .font(.caption).foregroundStyle(Color(red: 0xAB / 255, green: 0xA5 / 255, blue: 0x97 / 255))
+                }.foregroundStyle(cream).padding(.horizontal, 24).padding(.bottom, 24).allowsHitTesting(false).accessibilityElement(children: .combine)
+            }.background(night).onAppear {sweeping = true}
                 .task {
                     #if targetEnvironment(simulator)
                     do {try await Task.sleep(for: .seconds(2))} catch {return}
@@ -589,7 +695,7 @@ private struct QRScannerScreen: View {
                     #endif
                 }
         }.toolbarColorScheme(.dark, for: .navigationBar)
-            .toolbarBackground(Color(red: 0.08, green: 0.09, blue: 0.09), for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
+            .toolbarBackground(night, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
     }
 }
 
@@ -605,11 +711,10 @@ private struct ConnectionSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 12) {
-                    Image("PairDevices").resizable().scaledToFit().frame(maxWidth: .infinity)
-                        .frame(height: 150).accessibilityHidden(true)
-                    Text("连接电脑").font(.title.bold())
-                    Text("在电脑的 Cage 设置中打开「远程连接」，生成配对二维码或复制配对码。")
-                        .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Image("DoodleLaptop").resizable().scaledToFit().frame(height: 116).accessibilityHidden(true)
+                    Text("连接电脑").font(CageStyle.serif(28)).foregroundStyle(CageStyle.ink).accessibilityAddTraits(.isHeader)
+                    Text("在电脑的 Super Cage 设置中打开「远程连接」，生成配对二维码或复制配对码。")
+                        .font(.subheadline).foregroundStyle(CageStyle.ink2).multilineTextAlignment(.center)
                         .padding(.bottom, 10)
                     Button {
                         Task { @MainActor in
@@ -624,50 +729,51 @@ private struct ConnectionSheet: View {
                     } label: {ActionLabel(title: "扫码连接", symbol: "qrcode.viewfinder")}
                     Button {manual = true} label: {ActionLabel(title: "使用配对码", symbol: "key", primary: false)}
                     if model.hasSaved || model.hasInvitation {
-                        Button("重新连接", action: model.reconnectSaved).frame(minHeight: 44).disabled(!model.canConnect)
+                        Button(action: model.reconnectSaved) {
+                            Text("重新连接已配对的电脑").font(.body.weight(.medium)).foregroundStyle(CageStyle.clayInk)
+                                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        }.disabled(!model.canConnect)
                     }
                     if !model.devices.isEmpty {
-                        Divider().padding(.vertical, 8)
-                        Text("已连接设备").font(.headline).frame(maxWidth: .infinity, alignment: .leading)
-                        Text("长按设备可取消连接").font(.footnote).foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        ForEach(model.devices) {device in
-                            Button {if disconnecting == nil {model.selectDevice(device.id)}} label: {
-                                HStack {Image(systemName: "desktopcomputer"); Text(device.name); Spacer(); Image(systemName: "chevron.right")}
-                                    .frame(minHeight: 48).contentShape(Rectangle())
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("已连接设备").font(.footnote.weight(.medium)).foregroundStyle(CageStyle.ink2)
+                            ForEach(model.devices) {device in
+                                Button {if disconnecting == nil {model.selectDevice(device.id)}} label: {
+                                    HStack(spacing: 12) {
+                                        Image(systemName: device.account == nil ? "laptopcomputer" : "server.rack")
+                                            .foregroundStyle(CageStyle.ink2).frame(width: 26).accessibilityHidden(true)
+                                        Text(device.name).foregroundStyle(CageStyle.ink).lineLimit(1)
+                                        Spacer()
+                                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(CageStyle.ink2)
+                                    }.padding(.horizontal, 14).frame(minHeight: 52)
+                                        .background(CageStyle.surface2, in: RoundedRectangle(cornerRadius: 12))
+                                        .contentShape(Rectangle())
+                                }
+                                .simultaneousGesture(LongPressGesture().onEnded { _ in disconnecting = device })
+                                .accessibilityAction(named: Text("取消连接")) {disconnecting = device}
                             }
-                            .simultaneousGesture(LongPressGesture().onEnded { _ in disconnecting = device })
-                            .accessibilityAction(named: Text("取消连接")) {disconnecting = device}
-                        }
+                            Text("长按设备可取消连接").font(.footnote).foregroundStyle(CageStyle.ink2)
+                        }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 16)
                     }
                     status
                 }.padding(24).frame(maxWidth: 520)
                     .frame(maxWidth: .infinity)
-            }.background(CageStyle.paper).buttonStyle(CageButtonStyle())
-                .navigationDestination(isPresented: $manual) {
-                    Form {
-                        Section {
-                            SecureField("粘贴电脑上的一次性配对码", text: $code)
-                                .textInputAutocapitalization(.never).autocorrectionDisabled()
-                            Button("连接电脑") {model.pair(code: code); code = ""}
-                                .accessibilityIdentifier("redeem-pair-code")
-                                .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.connecting)
-                        }
-                        if !model.status.isEmpty {Section {status}}
-                    }.navigationTitle("配对码")
-                }
+            }.background(CageStyle.surface).buttonStyle(CageButtonStyle())
+                .navigationDestination(isPresented: $manual) {pairCode}
                 .sheet(item: $disconnecting) {device in
-                    VStack(spacing: 20) {
-                        Text("取消连接？").font(.title2.bold())
-                        Text(device.name).foregroundStyle(.secondary)
+                    VStack(spacing: 14) {
+                        Text("取消连接？").font(CageStyle.serif(24)).foregroundStyle(CageStyle.ink)
+                        Text(device.name).foregroundStyle(CageStyle.ink)
                         Text("将关闭这台设备的连接。已保存的配对信息会保留。")
-                            .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                        Button("取消连接", role: .destructive) {
+                            .font(.subheadline).foregroundStyle(CageStyle.ink2).multilineTextAlignment(.center)
+                        Button {
                             model.disconnectDevice(device.id)
                             disconnecting = nil
-                        }.frame(maxWidth: .infinity, minHeight: 48)
-                        Button("保留连接") {disconnecting = nil}.frame(minHeight: 44)
-                    }.padding(24).presentationDetents([.height(300)]).presentationDragIndicator(.visible)
+                        } label: {ActionLabel(title: "取消连接", danger: true)}.padding(.top, 6)
+                        Button {disconnecting = nil} label: {ActionLabel(title: "保留连接", primary: false)}
+                    }.padding(24).buttonStyle(CageButtonStyle())
+                        .presentationDetents([.height(330)]).presentationDragIndicator(.visible)
+                        .presentationBackground(CageStyle.surface)
                 }
                 .sheet(isPresented: $scanning, onDismiss: {
                     if previewScanned {previewScanned = false; previewConnected()}
@@ -684,10 +790,25 @@ private struct ConnectionSheet: View {
                 }
         }.disabled(model.connecting).interactiveDismissDisabled(model.connecting)
             .presentationDetents([.fraction(0.72), .large]).presentationDragIndicator(.visible)
+            .presentationBackground(CageStyle.surface)
+    }
+    private var pairCode: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("粘贴电脑上复制的一次性配对码。").font(.subheadline).foregroundStyle(CageStyle.ink2)
+                SecureField("粘贴电脑上的一次性配对码", text: $code)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled().cageField()
+                Button {model.pair(code: code); code = ""} label: {ActionLabel(title: "连接电脑")}
+                    .accessibilityIdentifier("redeem-pair-code")
+                    .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.connecting)
+                status
+            }.padding(24).frame(maxWidth: 520).frame(maxWidth: .infinity)
+        }.background(CageStyle.surface).buttonStyle(CageButtonStyle())
+            .navigationTitle("配对码").navigationBarTitleDisplayMode(.inline)
     }
     @ViewBuilder private var status: some View {
         if !model.status.isEmpty {
-            Text(model.status).font(.footnote).foregroundStyle(.secondary)
+            Text(model.status).font(.footnote).foregroundStyle(CageStyle.ink2)
                 .accessibilityAddTraits(.updatesFrequently)
         }
     }
@@ -698,6 +819,37 @@ private enum CageTheme: String, CaseIterable {
     var scheme: ColorScheme? {
         switch self {case .system: return nil; case .light: return .light; case .dark: return .dark}
     }
+    @ViewBuilder var art: some View {
+        switch self {
+        case .system:
+            HStack(spacing: -18) {Image("DoodleSun").resizable().scaledToFit(); Image("DoodleMoon").resizable().scaledToFit()}
+        case .light: Image("DoodleSun").resizable().scaledToFit()
+        case .dark: Image("DoodleMoon").resizable().scaledToFit()
+        }
+    }
+}
+
+/// Three cards for 跟随系统 / 浅色 / 深色, the chosen one outlined in clay.
+private struct ThemePicker: View {
+    @Binding var theme: CageTheme
+    var body: some View {
+        HStack(spacing: 10) {
+            ForEach(CageTheme.allCases, id: \.self) {option in
+                let chosen = theme == option
+                Button {theme = option} label: {
+                    VStack(spacing: 4) {
+                        option.art.frame(height: 40).accessibilityHidden(true)
+                        Text(option.rawValue).font(.subheadline).foregroundStyle(CageStyle.ink)
+                    }.frame(maxWidth: .infinity, minHeight: 88)
+                        .background(chosen ? CageStyle.surface2 : CageStyle.surface, in: RoundedRectangle(cornerRadius: 12))
+                        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(chosen ? CageStyle.clay : CageStyle.line, lineWidth: chosen ? 1.5 : 1))
+                        .contentShape(Rectangle())
+                }.buttonStyle(CageButtonStyle())
+                    .accessibilityLabel("主题：" + option.rawValue)
+                    .accessibilityAddTraits(chosen ? .isSelected : [])
+            }
+        }
+    }
 }
 
 private struct SettingsScreen: View {
@@ -706,56 +858,46 @@ private struct SettingsScreen: View {
     let connect: () -> Void
     @State private var relaySettings = false
     @State private var advanced = false
-    @State private var themes = false
     @State private var picking = false
     @State private var confirmingForget = false
 
     var body: some View {
         Form {
             Section("外观") {
-                DisclosureGroup(isExpanded: $themes) {
-                    ForEach(CageTheme.allCases, id: \.self) {option in
-                        Button {
-                            theme = option; themes = false
-                        } label: {
-                            HStack {Text(option.rawValue); Spacer(); if theme == option {Image(systemName: "checkmark")}}
-                                .frame(minHeight: 44).contentShape(Rectangle())
-                        }.accessibilityAddTraits(theme == option ? .isSelected : [])
-                    }
-                } label: {
-                    HStack {
-                        Label("主题", systemImage: "circle.lefthalf.filled")
-                        Spacer(); Text(theme.rawValue).foregroundStyle(.secondary)
-                    }
-                }
-            }
+                ThemePicker(theme: $theme).listRowInsets(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
+            }.listRowBackground(CageStyle.surface)
             Section("电脑连接") {
                 Button("已归档会话", action: model.openArchivedSessions)
                     .disabled(model.selectedDevice == nil && !model.canConnect)
                 DisclosureGroup("中继设置", isExpanded: $relaySettings) {
                     Toggle("使用自建中继", isOn: Binding(get: {model.relay != CMConnection.defaultRelay()},
                                                      set: {model.relay = $0 ? "" : CMConnection.defaultRelay()}))
+                        .tint(CageStyle.clay)
                     if model.relay != CMConnection.defaultRelay() {
                         TextField("自建 VPS 的 HTTPS 地址", text: $model.relay)
                             .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    } else {Text("Cage 官方中继").foregroundStyle(.secondary)}
-                    Button("保存中继设置", action: model.saveRelay)
+                    } else {Text("Super Cage 官方中继").foregroundStyle(CageStyle.ink2)}
+                    Button("保存中继设置", action: model.saveRelay).foregroundStyle(CageStyle.clayInk)
                 }
                 DisclosureGroup("指纹与连接文件", isExpanded: $advanced) {
                     Text(CMConnection.usesSimulatorIdentity ? "模拟器测试身份的指纹" : "这台手机的指纹").font(.headline)
-                    Text(model.fingerprint).font(.caption.monospaced()).textSelection(.enabled)
+                    Text(model.fingerprint).font(.caption.monospaced()).foregroundStyle(CageStyle.ink2).textSelection(.enabled)
                     Button("复制手机指纹") {UIPasteboard.general.string = model.fingerprint; model.status = "手机指纹已复制"}
-                        .disabled(model.fingerprint.isEmpty)
-                    Button("导入连接文件") {picking = true}
+                        .foregroundStyle(CageStyle.clayInk).disabled(model.fingerprint.isEmpty)
+                    Button("导入连接文件") {picking = true}.foregroundStyle(CageStyle.clayInk)
                     TextField("电脑指纹 sha256:…", text: $model.pin).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Toggle("已核对电脑指纹", isOn: $model.verified)
-                    Button("保存已核对的主机", action: model.saveTrust).disabled(!model.verified)
-                    if model.hasInvitation || model.hasSaved {Button("连接工作台", action: connect).disabled(!model.canConnect)}
+                    Toggle("已核对电脑指纹", isOn: $model.verified).tint(CageStyle.clay)
+                    Button("保存已核对的主机", action: model.saveTrust).foregroundStyle(CageStyle.clayInk).disabled(!model.verified)
+                    if model.hasInvitation || model.hasSaved {
+                        Button("连接工作台", action: connect).foregroundStyle(CageStyle.clayInk).disabled(!model.canConnect)
+                    }
                 }
-                if model.canForget {Button("忘记主机", role: .destructive) {confirmingForget = true}}
+                if model.canForget {Button("忘记主机", role: .destructive) {confirmingForget = true}.foregroundStyle(CageStyle.danger)}
+            }.listRowBackground(CageStyle.surface)
+            if !model.status.isEmpty {
+                Section {Text(model.status).font(.footnote).foregroundStyle(CageStyle.ink2)}.listRowBackground(Color.clear)
             }
-            if !model.status.isEmpty {Section {Text(model.status).font(.footnote).foregroundStyle(.secondary)}}
-        }.navigationTitle("设置").disabled(model.connecting)
+        }.cageForm().navigationTitle("设置").disabled(model.connecting)
             .alert("忘记主机？", isPresented: $confirmingForget) {
                 Button("取消", role: .cancel) {}
                 Button("忘记主机", role: .destructive, action: model.forget)
@@ -776,12 +918,23 @@ struct CageMobileApp: App {
     @State private var pairing = false
     @State private var serverSheet = false
 
+    init() {
+        // Serif navigation titles; colours and bar backgrounds stay with the system.
+        func serif(_ size: CGFloat, _ weight: UIFont.Weight) -> UIFont {
+            let font = UIFont.systemFont(ofSize: size, weight: weight)
+            return UIFont(descriptor: font.fontDescriptor.withDesign(.serif) ?? font.fontDescriptor, size: size)
+        }
+        UINavigationBar.appearance().titleTextAttributes = [.font: serif(18, .medium)]
+        UINavigationBar.appearance().largeTitleTextAttributes = [.font: serif(34, .regular)]
+    }
+
     var body: some Scene {
         WindowGroup {
             NavigationStack {
                 Group {
                     if model.showingWorkspace, let device = model.selectedDevice {
                         Workspace(webView: device.webView).id(device.id)
+                            .background(CageStyle.paper.ignoresSafeArea())
                     } else {
                         home
                     }
@@ -799,7 +952,19 @@ struct CageMobileApp: App {
                     ServerSheet(model: servers, connections: model)
                         .tint(CageStyle.ink).preferredColorScheme(theme.scheme)
                 }
-                .onAppear {servers.connections = model}
+                .onAppear {
+                    servers.connections = model
+                    #if targetEnvironment(simulator)
+                    // Screenshot hook: xcrun simctl launch … -preview-screen pair|servers|settings|workspace
+                    switch UserDefaults.standard.string(forKey: "preview-screen") {
+                    case "pair": pairing = true
+                    case "servers": serverSheet = true
+                    case "settings": showingSettings = true
+                    case "workspace": model.startPreview()
+                    default: break
+                    }
+                    #endif
+                }
                 .onChange(of: model.showingWorkspace) { _, connected in
                     if connected {pairing = false; showingSettings = false; serverSheet = false}
                 }
@@ -813,25 +978,23 @@ struct CageMobileApp: App {
     }
     private var home: some View {
         GeometryReader { geometry in
-            let brandSpacing = min(60, max(28, geometry.size.height * 0.075)) + 32
+            let brandSpacing = min(56, max(28, geometry.size.height * 0.07)) + 16
             ScrollView {
                 VStack(spacing: 0) {
                     Spacer(minLength: 12)
                     VStack(spacing: brandSpacing) {
-                        VStack(spacing: 12) {
-                            Image("CageMark").resizable().scaledToFit().frame(width: 120, height: 120)
-                                .clipShape(RoundedRectangle(cornerRadius: 16)).accessibilityHidden(true)
-                            Text("Cage").font(.system(size: 36, weight: .semibold, design: .rounded))
+                        VStack(spacing: 0) {
+                            Image("Logo").resizable().scaledToFit().frame(width: 96, height: 96).accessibilityHidden(true)
+                            Text("Super Cage").font(CageStyle.serif(36)).foregroundStyle(CageStyle.ink)
+                                .padding(.top, 12).accessibilityAddTraits(.isHeader)
+                            Image("DoodleSquiggle").resizable().frame(width: 150, height: 12).accessibilityHidden(true)
+                            Text("在手机上接着写代码").font(.system(size: 16)).foregroundStyle(CageStyle.ink2).padding(.top, 14)
                         }
                         VStack(spacing: 12) {
-                            Button {pairing = true} label: {
-                                ActionLabel(title: "连接电脑", symbol: "desktopcomputer", height: 60)
-                            }
-                            Button {serverSheet = true} label: {
-                                ActionLabel(title: "连接服务器", symbol: "server.rack", primary: false, height: 60)
-                            }
+                            Button {pairing = true} label: {ActionLabel(title: "连接电脑", symbol: "laptopcomputer")}
+                            Button {serverSheet = true} label: {ActionLabel(title: "连接服务器", symbol: "server.rack", primary: false)}
                         }
-                    }.frame(maxWidth: 276).padding(.top, 32)
+                    }.frame(maxWidth: 300).padding(.top, 24)
                     Spacer(minLength: 12)
                 }.padding(.horizontal, 24).frame(maxWidth: .infinity).frame(minHeight: geometry.size.height)
             }.scrollBounceBehavior(.basedOnSize)
