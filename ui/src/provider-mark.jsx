@@ -12,12 +12,13 @@ const names = { claude: "Claude", codex: "Codex" };
 // lays out the same whichever provider fills it. One prop picks the provider.
 // An account number, when there is one, sits in a small pill on the corner,
 // outside the layout box. It is drawn by CSS from data-number, so it stays
-// crisp text at 1x and never joins the row's textContent.
+// crisp text at 1x and never joins the row's textContent. The slot is an <i>,
+// not a span: row code and tests take a row's first span as its title.
 export function ProviderMark({ provider = "claude", accountNumber, size = 16, className = "", decorative = false }) {
   const number = Number.isInteger(accountNumber) && accountNumber > 0 ? String(accountNumber) : "";
   const label = (names[provider] || provider) + (number ? ` · 账号 ${number}` : "");
   return (
-    <span className={`provider-mark provider-mark-${provider}${className ? " " + className : ""}`}
+    <i className={`provider-mark provider-mark-${provider}${className ? " " + className : ""}`}
       style={{ width: size, height: size }} data-number={number || undefined}
       role={decorative ? undefined : "img"} aria-label={decorative ? undefined : label} aria-hidden={decorative || undefined}>
       <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -25,6 +26,6 @@ export function ProviderMark({ provider = "claude", accountNumber, size = 16, cl
           ? <path d={codex} fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
           : <path d={claude} fill="currentColor" />}
       </svg>
-    </span>
+    </i>
   );
 }

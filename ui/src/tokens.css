@@ -1,4 +1,4 @@
-/* Super Cage design tokens — docs/design/super-cage.md §1–3.
+/* Super Cage design tokens — brand/design-language.md §1–3.
  *
  * At runtime the appearance provider writes the active theme's colours onto
  * :root (appearance-state.mjs themeVariables), for every preset. The values

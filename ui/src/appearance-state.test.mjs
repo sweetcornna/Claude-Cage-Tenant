@@ -255,7 +255,7 @@ test("accessible presets keep text, state colors, focus, borders and all ANSI te
 });
 
 
-// docs/design/super-cage.md §1: the Super Cage theme, token by token.
+// brand/design-language.md §1: the Super Cage theme, token by token.
 const designTokens = {
   light: {
     "--paper": "#faf9f5", "--chrome": "#f3f1ea", "--surface": "#ffffff", "--soft": "#f0eee6",
@@ -318,7 +318,7 @@ test("Super Cage text, focus and terminal colours stay legible", () => {
     for (const key of ["--ink", "--muted", "--clay-ink", "--green", "--amber", "--error"])
       for (const background of ["--paper", "--chrome", "--surface"])
         // State colours are text on paper and cards; on chrome they only
-        // colour icons and dots (docs/design/super-cage.md §1).
+        // colour icons and dots (brand/design-language.md §1).
         check(vars[key], vars[background], background === "--chrome" && ["--green", "--amber"].includes(key) ? 3 : 4.5, `${key} on ${background}`);
     check(vars["--ink"], vars["--selected"], 4.5, "ink on selected");
     check(vars["--button-ink"], vars["--button"], 4.5, "primary button");

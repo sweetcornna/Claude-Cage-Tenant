@@ -1,5 +1,5 @@
 /* Base layer: element defaults and the shared controls (buttons, inputs,
- * checkboxes, radios, switches, selects). docs/design/super-cage.md §2–3.
+ * checkboxes, radios, switches, selects). brand/design-language.md §2–3.
  * Selectors use :where() so any component class overrides them. */
 @layer base {
   :root {

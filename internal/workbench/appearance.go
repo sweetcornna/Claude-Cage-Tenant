@@ -47,7 +47,7 @@ type Appearance struct {
 }
 
 // superCageTheme mirrors the "super-cage" preset in ui/src/appearance-presets.mjs
-// (the token table in docs/design/super-cage.md). It is the default for
+// (the token table in brand/design-language.md). It is the default for
 // profiles that have never saved an appearance.
 func superCageTheme(dark bool) AppearanceTheme {
 	if dark {

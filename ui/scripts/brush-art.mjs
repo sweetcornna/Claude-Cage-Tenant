@@ -1,5 +1,5 @@
 // Generates the desktop's hand-drawn art in the brush hand of the Super Cage
-// mark (docs/design/super-cage.md §4): each centre line becomes a filled
+// mark (brand/design-language.md §4): each centre line becomes a filled
 // stroke that is thick in the middle and thin at its ends, with a little
 // irregular pressure. Clay shapes stay plain fills.
 //

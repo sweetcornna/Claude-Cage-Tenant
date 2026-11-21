@@ -1,4 +1,4 @@
-// Font stacks from docs/design/super-cage.md §2 (no web fonts). Windows CJK
+// Font stacks from brand/design-language.md §2 (no web fonts). Windows CJK
 // falls through to Microsoft YaHei UI, never to SimSun.
 export const systemUIFont =
   '-apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC", sans-serif';
@@ -79,7 +79,7 @@ function luminance(hex) {
   return r * 0.2126 + g * 0.7152 + b * 0.0722;
 }
 // Returns every CSS custom property the UI reads. The design tokens
-// (--paper … --error, docs/design/super-cage.md §1) are derived from the
+// (--paper … --error, brand/design-language.md §1) are derived from the
 // legacy names below so that every preset, built-in or saved, fills the same
 // token set; overrides in theme.colors win over derived values.
 export function themeVariables(theme, variant) {

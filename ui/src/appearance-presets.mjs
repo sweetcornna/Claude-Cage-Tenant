@@ -22,7 +22,7 @@ const dark = (accent, surface, ink, colors = {}, terminal = {}) => ({
 });
 
 // Super Cage is the default; its values are the token table in
-// docs/design/super-cage.md §1 and are mirrored by ui/src/tokens.css and the Go
+// brand/design-language.md §1 and are mirrored by ui/src/tokens.css and the Go
 // default in internal/workbench/appearance.go.
 export const superCage = {
   light: {

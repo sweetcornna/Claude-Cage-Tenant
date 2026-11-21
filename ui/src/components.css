@@ -1,6 +1,6 @@
 /* Components layer: menus, popovers, dialogs, toasts, banners, chips, status
  * dots, list rows, empty states, the nudge card, form rows and the
- * hand-drawn art. docs/design/super-cage.md §3–4. */
+ * hand-drawn art. brand/design-language.md §3–4. */
 @layer components {
   /* ── Hand-drawn art ─────────────────────────────────────── */
   .doodle,

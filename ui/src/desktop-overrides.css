@@ -1,7 +1,7 @@
 /* Desktop look for components the phone shares (icon-hints, inline-select).
  * Their own stylesheets stay as the phone needs them; these rules are
  * unlayered and one :root step more specific, so they win on the desktop
- * whatever order the bundles load in. docs/design/super-cage.md §1–3. */
+ * whatever order the bundles load in. brand/design-language.md §1–3. */
 :root .icon-hint {
   padding: 5px 9px;
   border: 0;
@@ -20,11 +20,6 @@
   padding: 0 8px;
   font-size: var(--fs-nav);
   font-weight: 400;
-}
-
-/* The provider slot's account pill hangs outside its box (shell.css). */
-:root .sidebar-session > .provider-mark {
-  overflow: visible;
 }
 
 :root .inline-select-trigger {

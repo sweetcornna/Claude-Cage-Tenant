@@ -39,7 +39,7 @@ export function relativeTime(value, now = Date.now()) {
   return dayFormat.format(time);
 }
 
-// The workbench home (docs/design/super-cage.md §6): a greeting, one calm
+// The workbench home (brand/design-language.md §6): a greeting, one calm
 // environment card with one primary action, then recent sessions and projects.
 export function WorkbenchHome({
   status, storageRecovery, setupProgress, busy, running, setupProxy, network, runtimeLabel,

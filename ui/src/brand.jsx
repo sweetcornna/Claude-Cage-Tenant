@@ -2,7 +2,7 @@ import React from "react";
 import fullMark from "./brand/mark.svg?raw";
 import smallMark from "./brand/mark-small.svg?raw";
 
-// The Super Cage mark (docs/design/super-cage.md §5). Its path data is large,
+// The Super Cage mark (brand/design-language.md §5). Its path data is large,
 // so it is added to the document once as two <symbol>s and every use is a
 // <use> reference. Ink follows currentColor; the light follows --clay and its
 // glow --clay-soft.

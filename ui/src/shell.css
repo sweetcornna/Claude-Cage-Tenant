@@ -1,6 +1,6 @@
 /* Shell layer: the window frame, sidebar, pane headers, status bar, the
  * workbench home, management pages and the boot screen.
- * docs/design/super-cage.md §6. */
+ * brand/design-language.md §6. */
 @layer shell {
   /* ── Frame ──────────────────────────────────────────────── */
   .app {
@@ -380,7 +380,7 @@
   .sidebar-tab.active > button[role="tab"] {
     font-weight: 550;
   }
-  .sidebar-tab > button[role="tab"] > span:not(.provider-mark) {
+  .sidebar-tab > button[role="tab"] > span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

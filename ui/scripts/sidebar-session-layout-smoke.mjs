@@ -42,7 +42,7 @@ try {
       assert.ok(row.iconX !== undefined, `missing session icon: ${row.title}`);
       assert.ok(Math.abs(row.iconX - layout[0].iconX) < 1, `session icons misaligned: ${JSON.stringify(layout)}`);
       assert.ok(Math.abs(row.textX - layout[0].textX) < 1, `session titles misaligned: ${JSON.stringify(layout)}`);
-      // docs/design/super-cage.md §3: sidebar rows are 32–34 px high.
+      // brand/design-language.md §3: sidebar rows are 32–34 px high.
       assert.ok(row.height >= 32, `session row too short: ${row.title}`);
       assert.ok(row.titleRight <= row.right, `title overflow: ${row.title}`);
     }
