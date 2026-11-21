@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -368,6 +369,7 @@ func TestCodexOwnerStatesKeepTheTerminalUnavailable(t *testing.T) {
 	}{{"", false, ""}, {"phone", false, "phone"}, {"external", false, "external"}, {"desktop", false, "external"}, {"", true, "desktop"}, {"phone", true, "desktop"}} {
 		item["owner"], item["running"], item["active"] = tc.guest, tc.guest != "", tc.guest != ""
 		view["owner"], view["can_send"], view["running"], view["active"] = tc.guest, tc.guest == "", tc.guest != "", tc.guest != ""
+		view["connection_notice"] = map[string]string{"desktop": "这段会话正在电脑的 Codex 终端中打开，手机上可以查看和停止本轮。"}[tc.guest]
 		guest.reply("discover", []any{item})
 		guest.reply("view", view)
 		var terminal *terminalSession
@@ -394,6 +396,10 @@ func TestCodexOwnerStatesKeepTheTerminalUnavailable(t *testing.T) {
 			t.Fatalf("%+v: view %s", tc, w.Body.String())
 		}
 		if tc.want == "desktop" && session.ConnectionNotice != codexDesktopNotice {
+			t.Fatalf("%+v: notice %q", tc, session.ConnectionNotice)
+		}
+		// A lease with no terminal here must not promise a desktop stop.
+		if tc.guest == "desktop" && !tc.bound && session.ConnectionNotice != codexExternalNotice {
 			t.Fatalf("%+v: notice %q", tc, session.ConnectionNotice)
 		}
 		if terminal != nil {
@@ -903,10 +909,11 @@ func TestCodexArchiveClosesTheTerminalAndStopsThePhoneTurn(t *testing.T) {
 	}
 }
 
-// A Codex session through the shipped helper on both devices: the phone's
-// turn, the desktop terminal's Codex under its lease, refusals on both lines,
-// and release when the TUI quits. A stand-in CLI writes the rollout records.
-func TestCodexDesktopTerminalThroughShippedHelper(t *testing.T) {
+// shippedCodexWorkbench serves Codex sessions through the shipped helper over
+// the test SSH, with a stand-in Codex CLI. Its exec turns wait while ~/hold
+// exists.
+func shippedCodexWorkbench(t *testing.T) (*Server, string, string) {
+	t.Helper()
 	if _, err := os.Stat("/usr/bin/python3"); err != nil {
 		t.Skip("python3 unavailable")
 	}
@@ -956,6 +963,8 @@ def row(kind, payload):
         stream.write(json.dumps({"type": kind, "payload": payload}) + "\n")
 row("event_msg", {"type": "task_started"})
 row("response_item", {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]})
+while (pathlib.Path.home() / "hold").exists():
+    time.sleep(0.05)
 row("response_item", {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "reply: " + text}]})
 row("event_msg", {"type": "task_complete"})
 `
@@ -967,6 +976,14 @@ row("event_msg", {"type": "task_complete"})
 	}
 	mobileTestSSH(t, s, home, []string{"HOME=" + home, "PATH=" + bin + ":/usr/bin:/bin"})
 	s.ready = true
+	return s, project, home
+}
+
+// A Codex session through the shipped helper on both devices: the phone's
+// turn, the desktop terminal's Codex under its lease, refusals on both lines,
+// and release when the TUI quits. A stand-in CLI writes the rollout records.
+func TestCodexDesktopTerminalThroughShippedHelper(t *testing.T) {
+	s, project, home := shippedCodexWorkbench(t)
 	id := uuid.NewString()
 	if w := request(s, "POST", "/api/mobile/cli/sessions", s.origin, `{"id":"`+id+`","workspace":"`+project+`","provider":"codex"}`, true); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
@@ -1067,6 +1084,106 @@ row("event_msg", {"type": "task_complete"})
 	if view.Turns[1].Text != "reply: after the desktop" {
 		t.Fatalf("turn %+v", view.Turns[1])
 	}
+}
+
+// An open on the desktop and a phone message racing for one thread never both
+// win: the server's operation lock orders them, the bound terminal refuses the
+// phone, a running phone turn refuses the open.
+func TestCodexOpenAndPhoneSendNeverBothWin(t *testing.T) {
+	s, project, home := shippedCodexWorkbench(t)
+	id := uuid.NewString()
+	if w := request(s, "POST", "/api/mobile/cli/sessions", s.origin, `{"id":"`+id+`","workspace":"`+project+`","provider":"codex"}`, true); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	path := "/api/mobile/cli/sessions/" + id
+	send := func(text string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]string{"request_id": uuid.NewString(), "text": text})
+		return request(s, "POST", path+"/messages", s.origin, string(body), true)
+	}
+	wait := func(what string, done func(mobileSession) bool) {
+		deadline := time.Now().Add(25 * time.Second)
+		for {
+			w := request(s, "GET", path, "", "", true)
+			var view mobileSession
+			if w.Code == 200 && json.Unmarshal(w.Body.Bytes(), &view) == nil && done(view) {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: %s", what, w.Body.String())
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	idle := func(view mobileSession) bool {
+		return view.Owner == "" && view.CanSend != nil && *view.CanSend && len(view.Turns) > 0
+	}
+	if w := send("first"); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	wait("first turn", idle)
+	hold := filepath.Join(home, "hold")
+	wins := map[string]int{}
+	for round := 0; round < 4; round++ {
+		if err := os.WriteFile(hold, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+		var opened, sent *httptest.ResponseRecorder
+		var group sync.WaitGroup
+		gate := make(chan struct{})
+		group.Add(2)
+		go func() {
+			defer group.Done()
+			<-gate
+			// Odd rounds let the phone's send take the operation lock first.
+			for deadline := time.Now().Add(5 * time.Second); round%2 == 1 && time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+				if !s.op.TryLock() {
+					break
+				}
+				s.op.Unlock()
+			}
+			opened = request(s, "POST", "/api/cli/sessions/"+id+"/open", s.origin, "{}", true)
+		}()
+		go func() { defer group.Done(); <-gate; sent = send(fmt.Sprintf("round %d", round)) }()
+		close(gate)
+		group.Wait()
+		if opened.Code == 200 && sent.Code == 200 {
+			t.Fatalf("round %d: both won", round)
+		}
+		switch {
+		case opened.Code == 200:
+			wins["desktop"]++
+			t.Logf("round %d: phone refused: %s", round, strings.TrimSpace(sent.Body.String()))
+			if sent.Code != 409 {
+				t.Fatalf("round %d: phone %d %s", round, sent.Code, sent.Body.String())
+			}
+			var view mobileSession
+			_ = json.Unmarshal(opened.Body.Bytes(), &view)
+			terminal := s.terminals.get(view.DesktopTerminalID)
+			screen := terminal.subscribe()
+			readTerminalUntil(t, screen, "codex tui ready")
+			screen.Close()
+			if err := terminal.enqueueInput(context.Background(), "q\r"); err != nil {
+				t.Fatal(err)
+			}
+			awaitTerminalSignal(t, terminal.done)
+			s.terminals.remove(terminal.id)
+			_ = os.Remove(hold)
+		case sent.Code == 200:
+			wins["phone"]++
+			t.Logf("round %d: open refused: %s", round, strings.TrimSpace(opened.Body.String()))
+			if opened.Code != 409 {
+				t.Fatalf("round %d: open %d %s", round, opened.Code, opened.Body.String())
+			}
+			if bound := s.terminals.boundCodex(id); bound != nil {
+				t.Fatalf("round %d: a terminal was bound beside the phone turn", round)
+			}
+			_ = os.Remove(hold)
+		default:
+			t.Fatalf("round %d: neither won: open %d %s, send %d %s", round, opened.Code, opened.Body.String(), sent.Code, sent.Body.String())
+		}
+		wait(fmt.Sprintf("round %d release", round), idle)
+	}
+	t.Logf("wins %v", wins)
 }
 
 type httpResponse struct {

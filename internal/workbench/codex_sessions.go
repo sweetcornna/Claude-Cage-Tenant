@@ -93,6 +93,10 @@ type codexCLICaps struct {
 
 const codexDesktopNotice = "这段会话正在电脑的 Codex 终端中打开，手机上可以查看和停止本轮。"
 
+// A guest lease this server has no terminal for (one that outlived its
+// terminal, or another workbench's) reads as another process.
+const codexExternalNotice = "这段会话正在电脑上的 Codex 终端中打开。请先退出该终端中的 Codex，再从手机继续。"
+
 var errCodexDesktopOwned = errors.New("这段会话正在电脑的 Codex 终端中打开。可在手机的终端页打开该终端继续，或等电脑上退出 Codex 后再发送。")
 
 // codexOwner is who writes a Codex session's thread. A live terminal of this
@@ -419,6 +423,8 @@ func (s *Server) codexConversationView(ctx context.Context, record *mobileRecord
 	record.ConnectionNotice = current.ConnectionNotice
 	if owner == "desktop" {
 		record.ConnectionNotice = codexDesktopNotice
+	} else if owner == "external" && current.Owner == "desktop" {
+		record.ConnectionNotice = codexExternalNotice
 	}
 	record.CanSend, record.HistoryTruncated = &canSend, current.HistoryTruncated
 	record.Owner, record.Active = owner, current.Active && owner != ""
