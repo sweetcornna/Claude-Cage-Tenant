@@ -125,6 +125,44 @@ export function codexMenuLabel(capabilities) {
   return capabilities?.sessions ? "Codex 会话" : "Codex 终端";
 }
 
+// GET /api/cli/sessions/{id}: after (the view's revision) and epoch (its
+// generation) answer 204 while unchanged; wait holds that (a server whose list
+// carries revisions).
+export function sessionViewPath(id, { after = "", epoch = "", wait = 0 } = {}) {
+  const query = new URLSearchParams();
+  if (after !== "" && after !== undefined && after !== null) {
+    query.set("after", String(after));
+    if (epoch) query.set("epoch", epoch);
+    if (wait > 0) query.set("wait", String(wait));
+  }
+  const text = query.toString();
+  return "/api/cli/sessions/" + encodeURIComponent(id) + (text ? "?" + text : "");
+}
+
+// The archive confirmation says what archiving does to whoever writes now.
+export function archiveCopy(session, { closing = false } = {}) {
+  const kept = "历史将保留，可从设置中的已归档会话恢复。";
+  if (!isCodexSession(session)) {
+    return { title: "归档这段会话？", body: "归档会关闭关联终端。" + kept, confirm: "归档会话" };
+  }
+  const owner = sessionOwner(session);
+  const body = owner === "desktop" ? "关闭后这段会话会归档：Codex 终端会关闭，正在进行的一轮会停止。"
+    : owner === "phone" ? "归档会停止手机上正在运行的这一轮。"
+      : owner === "external" ? "归档只在 Super Cage 中收起这段会话，不会停止其他进程中的 Codex。"
+        : "";
+  return { title: closing ? "关闭并归档这段会话？" : "归档这段会话？", body: body + kept, confirm: closing ? "关闭并归档" : "归档会话" };
+}
+
+// The state word in the header of a Codex session's pane.
+export function codexStateWord(session, { closed = false } = {}) {
+  if (closed) return "已结束";
+  const owner = sessionOwner(session);
+  if (owner === "phone") return session?.active ? "手机正在运行" : "手机上打开";
+  if (owner === "external") return "在其他进程中打开";
+  if (owner === "desktop") return session?.active ? "运行中" : "空闲";
+  return "空闲";
+}
+
 export const ERROR_COPY = {
   desktopOwned: "这段会话正在电脑的 Codex 终端中打开。可在手机的终端页打开该终端继续，或等电脑上退出 Codex 后再发送。",
   phoneRunning: READONLY_REASONS.phone,

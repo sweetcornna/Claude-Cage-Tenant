@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { sessionKey } from "./session-order.mjs";
 import { canContinueInTerminal, canStopFromPane, codexCapabilities, codexMenuLabel, codexSessionAccountLabel, codexSessionAction,
-  isCodexSession, isCodexTab, mixedSessionRows, ownerState, providerChip, providerLabel, purgeCopy, sessionListPath, sessionOwner,
+  isCodexSession, isCodexTab, mixedSessionRows, archiveCopy, codexStateWord, sessionViewPath, ownerState, providerChip, providerLabel, purgeCopy, sessionListPath, sessionOwner,
   shouldGateStartup, showSessionAccount } from "./session-provider.mjs";
 
 const codex = (id, owner = "", extra = {}) => ({ id, provider: "codex", owner, title: id, ...extra });
@@ -90,4 +90,30 @@ test("account labels, purge copy, capabilities and the menu entry", () => {
   assert.deepEqual(caps, { known: true, sessions: true, cli: { version: "0.171.0" } });
   assert.equal(codexMenuLabel(caps), "Codex 会话");
   assert.equal(codexMenuLabel(codexCapabilities({})), "Codex 终端");
+});
+
+test("the view path carries the hold only with a revision", () => {
+  assert.equal(sessionViewPath("a b"), "/api/cli/sessions/a%20b");
+  assert.equal(sessionViewPath("x", { after: 0 }), "/api/cli/sessions/x?after=0");
+  assert.equal(sessionViewPath("x", { after: 7, epoch: "g1", wait: 25 }), "/api/cli/sessions/x?after=7&epoch=g1&wait=25");
+  assert.equal(sessionViewPath("x", { wait: 25 }), "/api/cli/sessions/x", "no wait without after");
+});
+
+test("archive copy names what stops", () => {
+  assert.equal(archiveCopy(claude("a")).body, "归档会关闭关联终端。历史将保留，可从设置中的已归档会话恢复。");
+  const closing = archiveCopy(codex("a", "desktop"), { closing: true });
+  assert.equal(closing.title, "关闭并归档这段会话？");
+  assert.match(closing.body, /^关闭后这段会话会归档/);
+  assert.match(archiveCopy(codex("a", "phone")).body, /停止手机上/);
+  assert.match(archiveCopy(codex("a", "external")).body, /不会停止其他进程/);
+  assert.equal(archiveCopy(codex("a", "")).body, "历史将保留，可从设置中的已归档会话恢复。");
+  assert.match(archiveCopy(codex("a", "surprise")).body, /不会停止其他进程/, "unknown owners read as external");
+});
+
+test("state words", () => {
+  assert.equal(codexStateWord(codex("a", "desktop", { active: true })), "运行中");
+  assert.equal(codexStateWord(codex("a", "desktop")), "空闲");
+  assert.equal(codexStateWord(codex("a", "phone", { active: true })), "手机正在运行");
+  assert.equal(codexStateWord(codex("a", "external")), "在其他进程中打开");
+  assert.equal(codexStateWord(codex("a", "desktop"), { closed: true }), "已结束");
 });

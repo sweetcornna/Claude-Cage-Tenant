@@ -2,7 +2,7 @@
 import { createRequire } from "node:module";
 import { defaultAppearance, presets } from "../src/appearance-state.mjs";
 import { claudeScienceRoute } from "./claude-science-fixture.mjs";
-import { codexSessionsRoute, seedCodexSessions } from "./codex-session-fixture.mjs";
+import { codexMenuTerminal, codexSessionsRoute, codexTerminalRoute, seedCodexSessions } from "./codex-session-fixture.mjs";
 const require = createRequire(import.meta.url);
 export async function createWorkbench({
   viewport = { width: 1280, height: 850 },
@@ -172,6 +172,7 @@ export async function createWorkbench({
       if (account) return route.fulfill({ json: { session: { id: account[1] }, supported: false, candidates: [] } });
       return route.fulfill({ json: { sessions: [], notice: "" } });
     }
+    if (codexSessions && path.startsWith("/terminals/") && await codexTerminalRoute(route, request, path, body, state) !== false) return;
     if (startupFailure && path === "/status") return route.fulfill({ status: 503, body: "测试：控制服务暂不可用" });
     let result = {};
     if (path === "/favorites") {
@@ -335,6 +336,9 @@ export async function createWorkbench({
           status: 400,
           body: "请先通过打开项目添加该文件夹",
         });
+      // A menu Codex terminal becomes a session where the client asks for it.
+      if (codexSessions && body?.kind === "codex" && new URL(request.url()).searchParams.get("providers") && !state.codexOlderServer)
+        return route.fulfill({ json: codexMenuTerminal(state, body) });
       const tab = {
         id: "term-" + ++state.sequence,
         title: "终端 " + (state.terminals.length + 1),
