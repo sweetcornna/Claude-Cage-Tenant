@@ -13,7 +13,7 @@ finally { $identity.Dispose() }
 if (!$administrator) { throw 'Use an elevated disposable Windows runner for temporary test certificate trust.' }
 $repository = Split-Path $PSScriptRoot -Parent
 $registration = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ClaudeCage'
-if (Test-Path $registration) { throw 'Use a test account without an installed Cage application.' }
+if (Test-Path $registration) { throw 'Use a test account without an installed Super Cage application.' }
 $root = Join-Path ([IO.Path]::GetTempPath()) ('cage-update-flow-' + [guid]::NewGuid().ToString('N'))
 $reportBase = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
 $reportPath = Join-Path $reportBase ('cage-smoke-update-' + [guid]::NewGuid().ToString('N') + '.json')

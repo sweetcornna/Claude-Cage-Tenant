@@ -1,4 +1,4 @@
-name: Publish Cage after an explicit release request
+name: Publish Super Cage after an explicit release request
 on:
   workflow_dispatch:
     inputs:

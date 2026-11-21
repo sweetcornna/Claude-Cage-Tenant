@@ -6,7 +6,7 @@ param([Parameter(Mandatory)][string]$Installer, [switch]$RequireSignedQemu)
 if (-not $IsWindows) { throw 'Installation smoke tests must run on Windows.' }
 $target = Join-Path $env:LOCALAPPDATA ('Programs/Cage-test-' + [guid]::NewGuid().ToString('N'))
 $savedKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ClaudeCage'
-if (Test-Path $savedKey) { throw 'Use a disposable Windows user without an existing Cage installation.' }
+if (Test-Path $savedKey) { throw 'Use a disposable Windows user without an existing Super Cage installation.' }
 $fixture = Join-Path $PSScriptRoot 'personal-data-fixture.mjs'
 $manifest = Join-Path ([IO.Path]::GetTempPath()) ('cage-personal-data-' + [guid]::NewGuid().ToString('N') + '.json')
 Invoke-BuildTool 'node' @($fixture, 'seed', $env:USERPROFILE, $manifest)
@@ -36,12 +36,12 @@ function Run-Installer {
         throw "Installer returned $($process.ExitCode), expected $ExpectedExitCode"
     }
 }
-$desktopShortcut = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Cage.lnk'
-$startMenuDirectory = Join-Path ([Environment]::GetFolderPath('Programs')) 'Cage'
+$desktopShortcut = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Super Cage.lnk'
+$startMenuDirectory = Join-Path ([Environment]::GetFolderPath('Programs')) 'Super Cage'
 function Assert-Shortcuts {
     param([bool]$Desktop, [bool]$StartMenu)
     if ((Test-Path -LiteralPath $desktopShortcut) -ne $Desktop) { throw 'Desktop shortcut differs from the installer selection.' }
-    foreach ($name in @('Cage.lnk', 'Uninstall Cage.lnk')) {
+    foreach ($name in @('Super Cage.lnk', 'Uninstall Super Cage.lnk')) {
         if ((Test-Path -LiteralPath (Join-Path $startMenuDirectory $name)) -ne $StartMenu) { throw "Start menu shortcut differs from the installer selection: $name" }
     }
     if ($Desktop) {
@@ -113,7 +113,7 @@ while (((Test-Path -LiteralPath $target) -or (Test-Path $savedKey) -or
 if (Test-Path -LiteralPath (Join-Path $target 'Cage.exe')) { throw 'Uninstall left Cage.exe behind.' }
 if (Test-Path -LiteralPath (Join-Path $target 'Uninstall.exe')) { throw 'Uninstall left its launcher behind.' }
 if (Test-Path -LiteralPath $target) { throw 'Uninstall left packaged files or directories that would block installation into the same folder.' }
-if (Test-Path $savedKey) { throw 'Uninstall left the Cage registration behind.' }
+if (Test-Path $savedKey) { throw 'Uninstall left the Super Cage registration behind.' }
 Assert-PersonalData
 Assert-Shortcuts $false $false
 Write-Host 'Install, WebView2 workbench, reinstall, uninstall and user-data preservation passed. VM startup was not tested.'

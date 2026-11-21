@@ -1,4 +1,4 @@
-name: Build Cage for Apple Silicon
+name: Build Super Cage for Apple Silicon
 on:
   workflow_call:
     inputs:
@@ -98,7 +98,7 @@ jobs:
       - name: Native application updater
         run: bash scripts/test-app-updates.sh
       - name: External Agent CLI with an isolated profile
-        run: node scripts/agent-cli-smoke.mjs "$PWD/_output/Cage.app/Contents/Resources/cage"
+        run: node scripts/agent-cli-smoke.mjs "$PWD/_output/Super Cage.app/Contents/Resources/cage"
       - name: Native account credential status
         run: bash scripts/test-account-device.sh
       - name: Patched networking and shared files
@@ -107,23 +107,23 @@ jobs:
         run: bash scripts/licenses --check
       - name: Verify the application bundle
         run: |
-          codesign --verify --deep --strict _output/Cage.app
-          _output/Cage.app/Contents/Resources/cage --help
-          _output/Cage.app/Contents/Resources/mihomo -v
-          [[ "$(lipo -archs _output/Cage.app/Contents/MacOS/Cage)" == arm64 ]]
+          codesign --verify --deep --strict "_output/Super Cage.app"
+          "_output/Super Cage.app/Contents/Resources/cage" --help
+          "_output/Super Cage.app/Contents/Resources/mihomo" -v
+          [[ "$(lipo -archs "_output/Super Cage.app/Contents/MacOS/Cage")" == arm64 ]]
       - name: Archive a complete development App with executable permissions
         if: ${{ !inputs.release }}
         run: |
           version=$(tr -d '\r\n' < VERSION)
           mkdir -p _output/ci-macos-test
           archive="$PWD/_output/ci-macos-test/Cage-$version-macos-arm64-test.tar.gz"
-          tar -czf "$archive" -C _output Cage.app
+          tar -czf "$archive" -C _output "Super Cage.app"
           check=$(mktemp -d "$RUNNER_TEMP/cage-app-archive.XXXXXX")
           trap 'rm -rf "$check"' EXIT
           tar -xzf "$archive" -C "$check"
-          codesign --verify --deep --strict "$check/Cage.app"
+          codesign --verify --deep --strict "$check/Super Cage.app"
           for executable in Contents/MacOS/Cage Contents/Resources/cage Contents/Resources/mihomo Contents/Resources/CageUpdateInstaller; do
-            test -x "$check/Cage.app/$executable"
+            test -x "$check/Super Cage.app/$executable"
           done
           (cd _output/ci-macos-test && shasum -a 256 "${archive##*/}" > SHA256SUMS)
       - uses: actions/upload-artifact@v4
@@ -185,7 +185,7 @@ jobs:
           release="$PWD/_output/releases/$version"
           node scripts/release-version.mjs metadata macos "$release/build-metadata.json"
           mkdir -p _output/ci-macos-release
-          cp "$release/Cage-$version-macos-arm64.dmg" "$release/mihomo-$source_version-source.tar.gz" "$release/cage-macos-guest-$version-source.tar.gz" "$release/SHA256SUMS" "$release/build-metadata.json" _output/ci-macos-release/
+          cp "$release/Super-Cage-$version-macos-arm64.dmg" "$release/mihomo-$source_version-source.tar.gz" "$release/cage-macos-guest-$version-source.tar.gz" "$release/SHA256SUMS" "$release/build-metadata.json" _output/ci-macos-release/
           (cd _output/ci-macos-release && shasum -a 256 --check SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:

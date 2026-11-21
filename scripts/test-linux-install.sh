@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [[ -f /.dockerenv && $(id -u) == 0 ]] || { echo 'Run this destructive package test as root in a disposable Docker container.' >&2; exit 2; }
-[[ $# == 1 && -f "$1" ]] || { echo 'Usage: test-linux-install.sh /path/to/Cage-linux-amd64.deb' >&2; exit 2; }
+[[ $# == 1 && -f "$1" ]] || { echo 'Usage: test-linux-install.sh /path/to/Super-Cage-linux-amd64.deb' >&2; exit 2; }
 package=$(realpath "$1")
 test_user=cage-package-test
 id "$test_user" >/dev/null 2>&1 || useradd -m -s /bin/bash "$test_user"
@@ -42,13 +42,13 @@ if dpkg -i "$package" > "$report_dir/running-upgrade.log" 2>&1; then
   echo 'FAIL: installer replaced a running Cage backend.' >&2
   exit 1
 fi
-grep -q 'Cage is running' "$report_dir/running-upgrade.log"
+grep -q 'Super Cage is running' "$report_dir/running-upgrade.log"
 verify_personal_data
 if dpkg --remove claude-cage > "$report_dir/running-remove.log" 2>&1; then
   echo 'FAIL: uninstaller removed a running Cage backend.' >&2
   exit 1
 fi
-grep -q 'Cage is running' "$report_dir/running-remove.log"
+grep -q 'Super Cage is running' "$report_dir/running-remove.log"
 verify_personal_data
 runuser -u "$test_user" -- env CLAUDE_CAGE_CONFIG="$profile" /usr/bin/claude-cage prepare-update --json > "$report_dir/guard-stop.json"
 wait_for_package_exit

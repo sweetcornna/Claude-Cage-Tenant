@@ -188,7 +188,7 @@ enum CageUpdateFiles {
     static func verifyApp(_ url: URL, version: String, team: String, gatekeeper: Bool = true, validation: CageUpdateValidation? = nil) throws {
         try validation?.checkCancellation()
         let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-        guard values.isDirectory == true, values.isSymbolicLink != true, url.pathExtension == "app" else { throw CageUpdateError("更新包中缺少有效的 Cage.app") }
+        guard values.isDirectory == true, values.isSymbolicLink != true, url.pathExtension == "app" else { throw CageUpdateError("更新包中缺少有效的 Super Cage.app") }
         let plist = url.appendingPathComponent("Contents/Info.plist")
         guard let info = try PropertyListSerialization.propertyList(from: Data(contentsOf: plist), format: nil) as? [String: Any],
               info["CFBundleIdentifier"] as? String == cageUpdateBundleID,
@@ -235,10 +235,19 @@ enum CageUpdateFiles {
         try validation?.checkCancellation()
         return try body(mount)
     }
+    // Images published before the Super Cage rename hold Cage.app. The private
+    // verified copy keeps its fixed name, which the installer helper checks.
+    static func imageApp(in mount: URL) throws -> URL {
+        for name in ["Super Cage.app", "Cage.app"] {
+            let url = mount.appendingPathComponent(name, isDirectory: true)
+            if FileManager.default.fileExists(atPath: url.path) { return url }
+        }
+        throw CageUpdateError("更新包中缺少有效的 Super Cage.app")
+    }
     static func extract(archive: URL, hash: String, version: String, team: String, directory: URL, validation: CageUpdateValidation? = nil) throws -> URL {
         guard try digest(archive, validation: validation) == hash else { throw CageUpdateError("安装包下载后发生变化，请重新下载") }
         return try withMountedImage(archive: archive, directory: directory, validation: validation) { mount in
-            let source = mount.appendingPathComponent("Cage.app", isDirectory: true)
+            let source = try imageApp(in: mount)
             try validateTree(source, validation: validation)
             try verifyApp(source, version: version, team: team, validation: validation)
             let target = directory.appendingPathComponent("Cage.app", isDirectory: true)
@@ -360,7 +369,7 @@ final class CageAppUpdater {
             try CageUpdateFiles.privateDirectory(root)
             try CageUpdateFiles.write(data, to: root.appendingPathComponent("launch-\(token).json"))
             launchAcknowledged = true
-            change(["phase": "current", "message": "Cage 已更新至 \(state["currentVersion"] as? String ?? "")"])
+            change(["phase": "current", "message": "Super Cage 已更新至 \(state["currentVersion"] as? String ?? "")"])
         } catch { failure("更新已安装，但启动确认未能保存") }
     }
     private func change(_ values: [String: Any]) {
@@ -451,7 +460,7 @@ final class CageAppUpdater {
                 DispatchQueue.main.async { if self.validationTask === task { self.validationTask = nil } }
             }
             do {
-                guard !self.bundleURL.path.hasPrefix("/Volumes/"), self.bundleURL.pathExtension == "app" else { throw CageUpdateError("请先将 Cage 安装到应用程序目录，再自动更新") }
+                guard !self.bundleURL.path.hasPrefix("/Volumes/"), self.bundleURL.pathExtension == "app" else { throw CageUpdateError("请先将 Super Cage 安装到应用程序目录，再自动更新") }
                 try CageUpdateFiles.verifyApp(prepared.app, version: prepared.version, team: prepared.team, validation: task)
                 let helper = prepared.directory.appendingPathComponent("CageUpdateInstaller")
                 let originalHelper = self.bundleURL.appendingPathComponent("Contents/Resources/CageUpdateInstaller")
@@ -519,7 +528,7 @@ final class CageAppUpdater {
                             try self.installerInput?.fileHandleForWriting.write(contentsOf: Data("COMMIT\n".utf8))
                             try self.installerInput?.fileHandleForWriting.close()
                             self.installationCommitted = true
-                            self.change(["phase": "installing", "message": "正在安装并重启 Cage"])
+                            self.change(["phase": "installing", "message": "正在安装并重启 Super Cage"])
                             self.quit()
                         } catch { self.abortInstaller(); self.failure("无法开始安装，原应用已保留"); self.reconnect() }
                     case "stop_required" where !stop:
