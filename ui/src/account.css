@@ -289,7 +289,8 @@
 }
 .account-gate .account-entry .field-help[role="status"] { color: var(--amber); text-align: left; }
 .account-gate .account-local-note { margin-top: 28px; color: var(--muted); }
-.account-gate .account-recovery-note { color: var(--faint); }
+.account-gate .account-recovery-note { color: var(--faint); text-wrap: pretty; }
+.account-gate .account-entry-intro { text-wrap: pretty; }
 .account-gate > .account-exit-app { color: var(--muted); font-size: var(--fs-secondary); font-weight: 500; }
 .account-gate > .account-exit-app:hover:enabled { color: var(--ink); }
 @media (max-height: 650px) {
