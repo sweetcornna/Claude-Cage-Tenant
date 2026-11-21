@@ -147,12 +147,12 @@ type mobileRun struct {
 	pending      *mobileDecision
 }
 type mobileCLIStore struct {
-	mu         sync.Mutex
-	active     map[string]*mobileRun
-	catalog    map[string]mobileSummary
-	running    map[string]bool // Fresh guest process observation, never restored from disk.
-	desktop    map[string]bool // Claude Desktop ownership from the same live observation.
-	codexLive  map[string]bool // Codex process observation from the latest Codex discovery.
+	mu        sync.Mutex
+	active    map[string]*mobileRun
+	catalog   map[string]mobileSummary
+	running   map[string]bool // Fresh guest process observation, never restored from disk.
+	desktop   map[string]bool // Claude Desktop ownership from the same live observation.
+	codexLive map[string]bool // Codex process observation from the latest Codex discovery.
 	// codexOwner is the guest's latest owner of each Codex session's thread;
 	// the server's own bound terminals take precedence (codexOwner()).
 	codexOwner map[string]string
