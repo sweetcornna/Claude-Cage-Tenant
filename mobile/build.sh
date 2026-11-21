@@ -29,7 +29,7 @@ bash scripts/licenses.sh
 )
 export PATH="$mobile_dir/.build/bin:$PATH"
 if [[ -n "${JAVA_HOME:-}" ]]; then export PATH="$JAVA_HOME/bin:$PATH"; fi
-# Logo, doodles and icons are checked in; see scripts/brand-assets.mjs.
+# Doodles are checked in; see scripts/brand-assets.mjs. The logo and app icons come from brand/generate.mjs.
 node scripts/brand-assets.mjs --check
 if [[ "$platform" == ios ]]; then
   # One arm64 iPhone slice and one simulator slice for this Mac.
