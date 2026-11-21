@@ -27,14 +27,22 @@ var cliResumePrompt string
 //go:embed claude_account_resume.md
 var claudeAccountResumePrompt string
 
-var cliChannelEncoded = func() string {
+// cliChannelInstalled is the helper as the bootstrap installs it in the guest.
+var cliChannelInstalled = func() string {
 	var helper strings.Builder
 	for _, line := range strings.Split(cliChannelHelper, "\n") {
 		if strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "#") {
 			helper.WriteString(line + "\n")
 		}
 	}
-	bundle := []byte(strings.Join([]string{helper.String(), cliResumePrompt, claudeAccountResumePrompt}, "\x00"))
+	return helper.String()
+}()
+
+// cliChannelVersion names the installed helper files.
+var cliChannelVersion = fmt.Sprintf("%x", sha256.Sum256([]byte(cliChannelHelper+cliResumePrompt+claudeAccountResumePrompt)))
+
+var cliChannelEncoded = func() string {
+	bundle := []byte(strings.Join([]string{cliChannelInstalled, cliResumePrompt, claudeAccountResumePrompt}, "\x00"))
 	var compressed bytes.Buffer
 	writer, _ := gzip.NewWriterLevel(&compressed, gzip.BestCompression)
 	_, _ = writer.Write(bundle)
@@ -87,6 +95,9 @@ type terminalConversation struct {
 	Active              bool         `json:"active"`
 	ConnectionNotice    string       `json:"connection_notice"`
 	HistoryTruncated    bool         `json:"history_truncated"`
+	// WatchKey comes only from the resident helper: view-wait answers when
+	// what this view was read from changes.
+	WatchKey string `json:"watch_key"`
 }
 
 func cliChannelCommand(mode, argument string) string {
@@ -95,7 +106,7 @@ func cliChannelCommand(mode, argument string) string {
 	bootstrap := fmt.Sprintf(`import base64,gzip,os,pathlib,sys,tempfile
 d=pathlib.Path.home()/".local/share/cage/cli-channel-code"
 d.mkdir(parents=True,exist_ok=True,mode=0o700)
-n="%x"
+n="%s"
 a=gzip.decompress(base64.b85decode("%s")).decode().split("\0")
 for s,v in zip((".py",".resume.md",".account-resume.md"),a):
  p=d/(n+s)
@@ -106,7 +117,7 @@ for s,v in zip((".py",".resume.md",".account-resume.md"),a):
   os.replace(t,p)
 p=d/(n+".py")
 os.execv(sys.executable,[sys.executable,"-I",str(p),*sys.argv[1:]])
-`, sha256.Sum256([]byte(cliChannelHelper+cliResumePrompt+claudeAccountResumePrompt)), cliChannelEncoded)
+`, cliChannelVersion, cliChannelEncoded)
 	return shellescape.QuoteCommand([]string{"python3", "-I", "-c", bootstrap, mode, argument})
 }
 
@@ -122,7 +133,20 @@ func (s *Server) runCLIChannel(ctx context.Context, mode string, input any, outp
 	if s.windowsGuest != nil {
 		return s.windowsCLIRequest(ctx, map[string]any{"action": "channel", "mode": mode, "input": input}, output)
 	}
-	return s.runGuestHelper(ctx, started, "cli-channel", mode, s.cliHelperCommand(mode, "-"), input, output)
+	if s.residentCLIChannel(ctx, mode, input, output) {
+		return nil
+	}
+	if err := s.runGuestHelper(ctx, started, "cli-channel", mode, s.cliHelperCommand(mode, "-"), input, output); err != nil {
+		return err
+	}
+	s.cliDiscovery.helperInstalled(s)
+	return nil
+}
+
+// guestLoginCommand runs helper from the guest's login shell with the login
+// shell's own output sent to stderr.
+func guestLoginCommand(helper string) string {
+	return "exec /bin/bash -c " + shellescape.Quote("exec 3>&1 1>&2; exec /bin/bash -lc "+shellescape.Quote("exec 1>&3 3>&-; exec "+helper))
 }
 
 // runGuestHelper writes input as JSON to a helper started from the guest's
@@ -133,8 +157,7 @@ func (s *Server) runGuestHelper(ctx context.Context, started time.Time, source, 
 	if err != nil {
 		return err
 	}
-	command := "exec /bin/bash -c " + shellescape.Quote("exec 3>&1 1>&2; exec /bin/bash -lc "+shellescape.Quote("exec 1>&3 3>&-; exec "+helper))
-	cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", command)
+	cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", guestLoginCommand(helper))
 	cmd.Stdin = strings.NewReader(string(data))
 	var stderr fileControlStderr
 	cmd.Stderr = &stderr
@@ -307,6 +330,7 @@ func (s *Server) terminalConversationView(ctx context.Context, id string) (mobil
 	if err := s.runCLIChannel(ctx, "view", input, &current); err != nil {
 		return mobileSession{}, err
 	}
+	s.cliDiscovery.noteView(id, input, current.WatchKey)
 	root := s.cliWorkspace(record.Workspace)
 	if legacy := s.macOSLegacyWorkspace(record); legacy != "" {
 		root = legacy

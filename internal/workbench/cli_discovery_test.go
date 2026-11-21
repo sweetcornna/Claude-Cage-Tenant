@@ -9,11 +9,15 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"al.essio.dev/pkg/shellescape"
+	"github.com/google/uuid"
 )
 
 // observedGuest keeps the real host bootstrap and SSH path and replaces only
@@ -205,5 +209,107 @@ func TestSessionListNeverSharesAnEarlierDiscovery(t *testing.T) {
 	}
 	if len(latest.Sessions) != 1 || latest.Sessions[0].Title != "after" {
 		t.Fatalf("later list = %+v", latest.Sessions)
+	}
+}
+
+// residentGuest prepares a guest home with a login profile and a claude CLI
+// that count their runs, and the real channel helper.
+func residentGuest(t *testing.T, s *Server) (home string, logins, claudeRuns func() int) {
+	t.Helper()
+	home, _ = filepath.EvalSymlinks(t.TempDir())
+	bin := filepath.Join(home, "bin")
+	if err := os.MkdirAll(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cli := "#!/bin/sh\n[ \"$1\" = agents ] || exit 64\necho run >> \"$HOME/claude-runs\"\nprintf '[]\\n'\n"
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(cli), 0700); err != nil {
+		t.Fatal(err)
+	}
+	profile := "echo login >> \"$HOME/logins\"\nexport PATH=" + shellescape.Quote(bin) + ":/usr/bin:/bin\n"
+	if err := os.WriteFile(filepath.Join(home, ".bash_profile"), []byte(profile), 0600); err != nil {
+		t.Fatal(err)
+	}
+	mobileTestSSH(t, s, home, []string{"HOME=" + home, "PATH=/usr/bin:/bin", "CLAUDE_CONFIG_DIR=" + filepath.Join(home, ".claude")})
+	t.Cleanup(s.cliDiscovery.resident.close)
+	count := func(name string) func() int {
+		return func() int {
+			data, _ := os.ReadFile(filepath.Join(home, name))
+			return strings.Count(string(data), "\n")
+		}
+	}
+	return home, count("logins"), count("claude-runs")
+}
+
+func writeTranscript(t *testing.T, path string, rows ...map[string]any) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	stream, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	for _, row := range rows {
+		data, _ := json.Marshal(row)
+		if _, err := stream.Write(append(data, '\n')); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestSessionListsUseOneResidentGuestHelper(t *testing.T) {
+	s, id, project := metadataFixture(t)
+	home, logins, claudeRuns := residentGuest(t, s)
+	record, err := s.mobileCLI.record(s.profile, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history := filepath.Join(home, ".claude", "projects", "fixture", record.CLIID+".jsonl")
+	writeTranscript(t, history, map[string]any{"cwd": guestPath(project), "type": "user", "uuid": uuid.NewString(), "message": map[string]string{"content": "guest title"}})
+	s.ready = true
+	title := func() string {
+		t.Helper()
+		code, answer := sessionList(t, s, "")
+		if code != http.StatusOK || len(answer.Sessions) != 1 || answer.Notice != "" {
+			t.Fatalf("list = %d %+v", code, answer)
+		}
+		return answer.Sessions[0].Title
+	}
+	// The first request installs the channel helper with an ordinary login;
+	// the second starts the resident helper with one more.
+	for want := 1; want <= 2; want++ {
+		if got := title(); got != "guest title" || logins() != want || claudeRuns() != want {
+			t.Fatalf("request %d: title %q, %d logins, %d CLI listings", want, got, logins(), claudeRuns())
+		}
+	}
+	for range 3 {
+		if got := title(); got != "guest title" || logins() != 2 || claudeRuns() != 2 {
+			t.Fatalf("an unchanged list cost a login or a CLI listing: title %q, %d logins, %d listings", got, logins(), claudeRuns())
+		}
+	}
+	writeTranscript(t, history, map[string]any{"type": "custom-title", "customTitle": "renamed in the guest"})
+	if got := title(); got != "renamed in the guest" || logins() != 2 {
+		t.Fatalf("a changed transcript: title %q after %d logins", got, logins())
+	}
+	// Reading the session itself uses the same helper.
+	for range 2 {
+		if w := request(s, "GET", "/api/mobile/cli/sessions/"+id, s.origin, "", true); w.Code != http.StatusOK {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+	if logins() != 2 {
+		t.Fatalf("session reads opened %d logins", logins()-2)
+	}
+	if s.cliDiscovery.viewKeys[id].key == "" {
+		t.Fatal("the resident view left no watch key")
+	}
+	// A resident helper that ended is started again with one login.
+	if err := exec.Command("pkill", "-f", cliChannelVersion+" "+fmt.Sprintf("%x", sha256.Sum256([]byte(cliChannelInstalled)))).Run(); err != nil {
+		t.Fatal("no resident helper to stop:", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if got := title(); got != "renamed in the guest" || logins() != 3 {
+		t.Fatalf("after the helper ended: title %q, %d logins", got, logins())
 	}
 }
