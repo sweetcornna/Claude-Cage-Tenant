@@ -49,6 +49,7 @@ try {
   const title = await page.locator(".env-hero h1").innerText();
   assert.match(title, /环境/);
   await page.getByRole("button", { name: "切换节点", exact: true }).waitFor();
+  await drawer.waitFor({ state: "hidden" });
   await shot(page, "environment");
   // Terminals list renders.
   await page.getByRole("button", { name: "展开侧栏", exact: true }).click();

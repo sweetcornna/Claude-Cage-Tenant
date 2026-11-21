@@ -40,7 +40,7 @@ export function Home({ catalog, project, onProject, provider, onProvider, creati
     </div>
     {stopped && <button type="button" className="env-nudge" onClick={onEnvironment}>
       <Doodle name="moon" className="nudge-doodle" />
-      <span><strong>环境还没有运行</strong><small>点这里启动，启动后就能开始对话和使用终端。</small></span>
+      <span><strong>环境还没有运行</strong><small>点一下启动，就能对话和用终端。</small></span>
       <ChevronRight size={18} />
     </button>}
     <Composer value={draft} onChange={setDraft} onSubmit={submit} canSend={canSend} busy={creating}
