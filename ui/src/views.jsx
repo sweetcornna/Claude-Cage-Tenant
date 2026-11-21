@@ -524,6 +524,8 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
       openedAt = 0;
       replayRemaining = 0;
       replayFrame = false;
+      // Each connection proves again that its server sends heartbeats.
+      stream.heartbeats = false;
       setLink((state) => (state === "stalled" ? "retrying" : state));
       armNotice();
       openTimer = setTimeout(() => lost(current), terminalConnectTimeoutMs);

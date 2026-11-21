@@ -65,7 +65,23 @@ for (const platform of ["darwin", "windows", "linux"]) {
     await page.waitForFunction(() => document.querySelector(".xterm-rows")?.textContent.includes("Select login method"));
     assert.equal(await page.locator(".terminal-host").isVisible(), true);
     assert.equal(await page.getByRole("button", { name: "重新连接", exact: true }).count(), 0);
+
+    // A fresh view of a session that is still starting can be waiting for
+    // login. It becomes interactive without channel readiness, and the user
+    // can reveal it immediately.
+    await page.reload();
+    await page.getByRole("tab", { name: "Claude 1", exact: true }).click();
+    await page.getByText("正在准备 Claude 会话…", { exact: true }).waitFor();
+    terminalSocket.send(Buffer.from("\x1b[2J\x1b[HSelect login method\r\n1. Claude account"));
+    await page.clock.fastForward(8100);
+    await page.locator(".terminal-host").waitFor({ state: "visible" });
+    assert.ok((await page.locator(".xterm-rows").textContent()).includes("Select login method"));
+    await page.reload();
+    await page.getByRole("tab", { name: "Claude 1", exact: true }).click();
+    await page.getByText("正在准备 Claude 会话…", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "显示启动过程", exact: true }).click();
+    await page.locator(".terminal-host").waitFor({ state: "visible" });
     assert.deepEqual(fixture.errors, []);
-    console.log(`PASS: ${platform} hides split confirmation output, waits for repaint, restores focus, and reconnects without hiding the terminal`);
+    console.log(`PASS: ${platform} hides split confirmation output, waits for repaint, restores focus, reconnects without hiding the terminal, and exposes stalled/login output`);
   } finally { await fixture.browser.close(); }
 }
