@@ -114,12 +114,15 @@ func (r *IncusRuntime) Stop(ctx context.Context, spec LaunchSpec) error {
 			return errors.New("Incus instance resume before stop failed")
 		}
 	}
-	if r.command(ctx, "stop", name, "--timeout=60").Run() == nil {
-		return nil
+	if r.command(ctx, "stop", name, "--timeout=60").Run() != nil {
+		if err := r.command(ctx, "stop", name, "--force").Run(); err != nil {
+			return errors.New("Incus instance stop failed")
+		}
 	}
-	if err := r.command(ctx, "stop", name, "--force").Run(); err != nil {
-		return errors.New("Incus instance stop failed")
-	}
+	// The next boot, also one Incus starts by itself, uses the full ceiling.
+	unlock := r.lockInstance(spec.VMID)
+	r.resetMemory(ctx, spec.VMID, record.Config)
+	unlock()
 	return nil
 }
 

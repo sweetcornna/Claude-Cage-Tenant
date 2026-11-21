@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -37,7 +38,12 @@ type IncusConfig struct {
 	InstanceType string
 }
 
-type IncusRuntime struct{ cfg IncusConfig }
+type IncusRuntime struct {
+	cfg IncusConfig
+	// locks holds one *sync.Mutex per workspace ID. It orders the gateway's
+	// memory changes on an instance with its boot, see lockInstance.
+	locks sync.Map
+}
 
 func NewIncus(cfg IncusConfig) (*IncusRuntime, error) {
 	if !dnsLabel.MatchString(cfg.Project) || cfg.Project == "default" {
@@ -180,7 +186,13 @@ func (r *IncusRuntime) Prepare(ctx context.Context, spec LaunchSpec) (*Workspace
 	case "Stopped", "Frozen":
 		// Start also resumes an instance frozen by idle cooling, including one
 		// frozen before a gateway restart.
-		if err := r.command(ctx, "start", name).Run(); err != nil {
+		unlock := r.lockInstance(spec.VMID)
+		if record.Status == "Stopped" {
+			r.resetMemory(ctx, spec.VMID, record.Config)
+		}
+		err := r.command(ctx, "start", name).Run()
+		unlock()
+		if err != nil {
 			return nil, errors.New("Incus instance start failed")
 		}
 	case "Running":
@@ -223,6 +235,30 @@ func (r *IncusRuntime) Prepare(ctx context.Context, spec LaunchSpec) (*Workspace
 		}
 	}
 	return nil, errController
+}
+
+// lockInstance serializes the gateway's own memory changes on one instance
+// with its boot, so a resize never lands between the reset to the profile
+// ceiling and the start. It returns the unlock function.
+func (r *IncusRuntime) lockInstance(id string) func() {
+	value, _ := r.locks.LoadOrStore(id, new(sync.Mutex))
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
+// resetMemory drops the instance-local limits.memory of a stopped VM, so it
+// boots at the profile ceiling. Every later resize then stays within the boot
+// memory, where Incus moves the balloon and never hotplugs memory that cannot
+// be removed again. On failure the VM boots at its last size, which the policy
+// still accepts. Caller holds the instance lock.
+func (r *IncusRuntime) resetMemory(ctx context.Context, id string, local map[string]string) {
+	if r.instanceType() != InstanceVM || local["limits.memory"] == "" {
+		return
+	}
+	if err := r.command(ctx, "config", "unset", "local:cage-"+id, "limits.memory").Run(); err != nil && ctx.Err() == nil {
+		log.Printf("cage-tenant: workspace %s memory reset before boot failed; it boots at its last memory size", id)
+	}
 }
 
 func (r *IncusRuntime) ResolveImage(ctx context.Context, configured string) (string, error) {

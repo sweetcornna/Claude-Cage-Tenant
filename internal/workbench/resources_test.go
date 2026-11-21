@@ -23,7 +23,8 @@ func TestResourceAllocationSaveAndStartup(t *testing.T) {
 			t.Fatalf("startup limits = %d/%d, %v", m, c, err)
 		}
 	}
-	check(8, 5)
+	// Automatic: three eighths of the 24 GiB host, within its 12 GiB share.
+	check(9, 5)
 	for _, body := range []string{
 		`{"allocation":{"automatic":false,"memory_gib":0,"cpus":2}}`,
 		`{"allocation":{"automatic":false,"memory_gib":13,"cpus":2}}`,
@@ -33,7 +34,7 @@ func TestResourceAllocationSaveAndStartup(t *testing.T) {
 		if w := request(s, "POST", "/api/environment/resources", s.origin, body, true); w.Code == 200 {
 			t.Fatalf("accepted invalid allocation: %s", body)
 		}
-		check(8, 5)
+		check(9, 5)
 	}
 	before, _ := os.ReadFile(s.configPath)
 	if w := request(s, "POST", "/api/environment/resources", s.origin, `{"allocation":{"automatic":false,"memory_gib":4,"cpus":2}}`, true); w.Code != 200 {
@@ -63,5 +64,5 @@ func TestResourceAllocationSaveAndStartup(t *testing.T) {
 	if w = request(s, "POST", "/api/environment/resources", s.origin, `{"allocation":{"automatic":true}}`, true); w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
-	check(8, 5)
+	check(9, 5)
 }
