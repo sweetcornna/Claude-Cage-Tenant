@@ -27,6 +27,7 @@ import { TerminalMenu } from "./terminal-menu";
 import { InitializationGate } from "./initialization";
 import { MacOSAppWindow } from "./macos-claude-window";
 import { ClaudeDesktop } from "./claude-desktop";
+import { ClaudeSciencePanel } from "./claude-science";
 import { ClaudeAccountsPanel, useClaudeAccounts } from "./claude-accounts";
 import { CodexAccountsPanel, useCodexAccounts } from "./codex-accounts";
 import { codexTerminalDetail, codexTerminalLabel, codexTerminalSupported } from "./codex-accounts-state.mjs";
@@ -1572,6 +1573,8 @@ function App() {
             desktopOpen={!managementPage && desktopOpen}
             onClaudeWeb={() => openBrowserPage("https://claude.ai/")}
             onClaudeDesktop={() => { setManagementPage(""); setHome(false); setDesktopOpen(true); }}
+            onClaudeScience={() => setManagementPage("claude-science")}
+            claudeScienceOpen={managementPage === "claude-science"}
             onEditor={openEditor}
             onSettings={openSettings}
             onAccountConfirm={confirm}
@@ -1611,7 +1614,7 @@ function App() {
             <main className="management-page" aria-labelledby={managementPage + "-title"}>
               <header className="chrome management-header">
                 {sidebarButton()}
-                <h1 id={managementPage + "-title"} tabIndex={-1}>{managementPage === "tailscale" ? "Tailscale" : managementPage === "codex-accounts" ? "Codex 账号管理" : "Claude 账号管理"}</h1>
+                <h1 id={managementPage + "-title"} tabIndex={-1}>{managementPage === "tailscale" ? "Tailscale" : managementPage === "claude-science" ? "Claude Science" : managementPage === "codex-accounts" ? "Codex 账号管理" : "Claude 账号管理"}</h1>
               </header>
               <div className="management-content">
                 {managementPage === "tailscale" ? <TailscalePanel status={status}
@@ -1625,7 +1628,7 @@ function App() {
                     const nativeGuest = ["macos", "windows-11"].includes(status.guest_system);
                     if (nativeGuest && !await confirm({ title: "更新环境组件？", body: "更新会重新连接浏览器和显示组件，请先保存工作。设备身份、公钥和个人数据保留。", confirm: "更新组件" })) return;
                     await action(nativeGuest ? "/environment/update" : "/tailscale/install", {});
-                  }} /> : managementPage === "codex-accounts" ? <CodexAccountsPanel store={codexProfiles} tabs={tabs} onConfirm={confirm}
+                  }} /> : managementPage === "claude-science" ? <ClaudeSciencePanel status={status} onOpen={showBrowserResult} onConfirm={confirm} onDetails={() => setDetails(true)} /> : managementPage === "codex-accounts" ? <CodexAccountsPanel store={codexProfiles} tabs={tabs} onConfirm={confirm}
                   running={status.vm_running} environmentBusy={busy || storageRecovery}
                   login={(id) => createTerminal(workspace, "codex-login", id)} /> : <ClaudeAccountsPanel store={claudeProfiles} tabs={tabs} onConfirm={confirm}
                   running={status.vm_running} environmentBusy={busy || storageRecovery}
