@@ -54,6 +54,8 @@
 .archived-session + .archived-session { border-top: 1px solid var(--line); }
 .archived-session-row { display: flex; align-items: center; gap: 16px; min-height: 42px; }
 .archived-session-title { min-width: 0; flex: 1; display: grid; gap: 5px; }
+/* The Codex mark leads a Codex title on its first line. */
+.archived-session-title .archived-provider { margin-inline-end: 6px; color: var(--muted); vertical-align: -2px; }
 .archived-sessions .archived-session-title h4 { margin: 0; font-size: 15px; font-weight: 550; overflow-wrap: anywhere; line-height: 1.5; }
 .archived-session-title time, .archive-note { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; line-height: 1.5; }
 .archived-session-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; flex: none; }

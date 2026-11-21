@@ -5,7 +5,7 @@ import { useSessionSnapshot } from "./cli-sessions";
 import { EmptyState } from "./drawings";
 import { ProviderMark } from "./provider-mark";
 import { afterOutcome, initialPoll, pollQuery } from "./session-poll.mjs";
-import { canContinueInTerminal, canStopFromPane, codexSessionAccountLabel, codexStateWord, READONLY_REASONS,
+import { canContinueInTerminal, canStopFromPane, codexSessionAccountLabel, codexStateWord, CONTINUE_HINTS, PHONE_OWNER_NOTICES, READONLY_REASONS,
   sessionOwner, sessionViewPath } from "./session-provider.mjs";
 import { MessageBody, ToolActivity, TranscriptContext } from "./mobile-cli/transcript.jsx";
 import "./codex-session-pane.css";
@@ -102,7 +102,9 @@ export function CodexSessionPane({ id, store, held, projectOf, accounts, titleId
   const title = session?.title || "新会话";
   const account = session ? codexSessionAccountLabel(session, accounts) : "";
   const reason = owner === "phone" || owner === "external" ? READONLY_REASONS[owner] : "";
-  const notice = session?.connection_notice && session.connection_notice !== reason ? session.connection_notice : "";
+  const notice = session?.connection_notice && session.connection_notice !== reason && !PHONE_OWNER_NOTICES.has(session.connection_notice)
+    ? session.connection_notice : "";
+  const hint = CONTINUE_HINTS[owner] || CONTINUE_HINTS.phone;
   // The server reuses its own terminal when this server's Codex holds the thread.
   const canContinue = Boolean(session) && (canContinueInTerminal(session) || owner === "desktop");
   return (
@@ -143,11 +145,11 @@ export function CodexSessionPane({ id, store, held, projectOf, accounts, titleId
                   </label>
                 )}
                 <button className="primary" onClick={continueHere} disabled={!canContinue || opening.busy || busy}
-                  title={canContinue ? undefined : "本轮完成后可用"} aria-describedby={canContinue ? undefined : "codex-continue-hint"}>
+                  title={canContinue ? undefined : hint} aria-describedby={canContinue ? undefined : "codex-continue-hint"}>
                   <TerminalSquare size={15} aria-hidden="true" />在终端中继续
                 </button>
               </div>
-              {!canContinue && <p id="codex-continue-hint" className="codex-session-hint">本轮完成后可用</p>}
+              {!canContinue && <p id="codex-continue-hint" className="codex-session-hint">{hint}</p>}
               {stop.error && <p className="codex-session-error" role="alert">{stop.error}</p>}
               {opening.error && <p className="codex-session-error" role="alert">{opening.error}</p>}
             </section>

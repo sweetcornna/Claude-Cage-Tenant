@@ -55,6 +55,15 @@ export const READONLY_REASONS = {
   phone: "手机发起的一轮仍在运行，完成后再在终端中继续。",
   external: "这段会话正在其他 Codex 进程中打开，请先退出该进程后再继续。",
 };
+// When "在终端中继续" becomes available, per owner.
+export const CONTINUE_HINTS = { phone: "本轮完成后可用", external: "退出其他 Codex 进程后可用" };
+// The server's owner notices (connection_notice) are worded for the phone
+// ("再从手机继续"); the desktop pane states the owner in its own words and
+// shows only the history notices.
+export const PHONE_OWNER_NOTICES = new Set([
+  "这段会话正在电脑的 Codex 终端中打开，手机上可以查看和停止本轮。",
+  "这段会话正在电脑上的 Codex 终端中打开。请先退出该终端中的 Codex，再从手机继续。",
+]);
 
 // What a click on a Codex row does: focus its live tab, open it (the server
 // reuses a terminal it already has), or show it read-only with the reason.

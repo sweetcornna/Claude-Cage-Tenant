@@ -68,6 +68,7 @@ for (const mode of ["light", "dark"]) {
       // The home card's block shows the reason without opening anything.
       const block = page.locator(".home-environment .network-explanation");
       await block.getByText(item.explanation().reason).waitFor();
+      await page.locator(".home-environment").getByText(item.label, { exact: true }).waitFor();
       assert.equal(await block.getByRole("button", { name: "立即重新检测" }).count(), item.recheck ? 1 : 0, item.name + " recheck in the card");
       await button.click();
       const popover = page.getByRole("dialog", { name: /./ }).and(page.locator(".network-popover"));

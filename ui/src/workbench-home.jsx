@@ -16,6 +16,7 @@ import { MacOSLogin } from "./macos-login";
 import { ProjectRecovery } from "./project-recovery";
 import { ProviderMark } from "./provider-mark";
 import { NetworkExplanation, networkTone } from "./network-explanation";
+import { explanationView } from "./safety-state.mjs";
 import { isCodexSession, ownerState } from "./session-provider.mjs";
 import { SafetyMessage } from "./safety-message";
 import { SetupProgress } from "./setup-progress";
@@ -91,10 +92,12 @@ export function WorkbenchHome({
       : guestSystem?.activate ? "打开工作台" : guestSystem?.pending ? "继续安装"
       : guestSystem && guestSystem.guest_system !== "debian-13" ? "安装客户机" : "启动 Super Cage 环境"
     : !status.ready ? "恢复浏览器" : !workspace && projectsAvailable ? "打开项目" : "新建终端";
-  const statusLabel = busy ? runtimeLabel : running ? network.label : setupProxy ? "等待配置代理" : "环境已停止";
   // The server's explanation of a closed or uncertain gate (calm unless the
   // user must act); an older server sends none and the card stays as it was.
   const gateTone = running && !busy ? networkTone(network) : "";
+  // Named as in the status bar once the gate explains itself.
+  const statusLabel = busy ? runtimeLabel : running ? gateTone && explanationView(network.explanation)?.label || network.label
+    : setupProxy ? "等待配置代理" : "环境已停止";
   const art = storageRecovery ? "plug" : ready ? null : "server";
   // A terminal can still be opened when the browser is down or no project is chosen.
   const terminalShortcut = running && (!status.ready || (!workspace && projectsAvailable));

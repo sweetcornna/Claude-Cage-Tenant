@@ -75,7 +75,10 @@ export function ArchivedSessions({ request = desktopSessionRequest, ready, onRes
     let live = true, timer;
     const load = async () => {
       try {
-        const result = await request(sessionListPath({ archived: true }).replace(/^\/api\/cli/, ""));
+        // The desktop asks for Codex rows; the phone lists both already, and an
+        // older phone link may refuse parameters it does not know.
+        const result = await request(request === desktopSessionRequest
+          ? sessionListPath({ archived: true }).replace(/^\/api\/cli/, "") : "/sessions?archived=true");
         if (live) {
           const list = result.sessions || [];
           setSessions(list); setReadError(result.notice || "");
@@ -186,7 +189,7 @@ export function ArchivedSessions({ request = desktopSessionRequest, ready, onRes
         return <article className="archived-session" key={session.id}>
           <div className="archived-session-row">
             <ArchiveSelection items={[session]} selected={selected} onToggle={toggleSelection} disabled={busy} label={`选择会话 ${session.title || "新会话"}`} />
-            <div className="archived-session-title">{isCodexSession(session) && <ProviderMark provider="codex" size={14} />}<h4>{session.title || "新会话"}</h4>
+            <div className="archived-session-title"><h4>{isCodexSession(session) && <ProviderMark provider="codex" size={14} className="archived-provider" />}{session.title || "新会话"}</h4>
               {!Number.isNaN(date.valueOf()) && <time dateTime={session.updated_at}>{archiveDate.format(date)}</time>}
             </div>
             <div className="archived-session-actions">

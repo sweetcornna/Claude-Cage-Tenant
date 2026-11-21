@@ -395,7 +395,8 @@ export function WorkspaceTabs({
                   agent={tab.terminalKind === "claude" || tab.terminalKind === "claude-login" || tab.terminalKind === "codex" || tab.terminalKind === "codex-login" || Boolean(tab.cli_session_id) || Boolean(tab.claude_account_id)}
                   provider={terminalProvider(tab)} accountNumber={tab.claudeAccountNumber} />
                 <span>{title}</span>
-                {tab.claudeLabel && <small className="claude-tab-profile">{tab.claudeLabel}</small>}
+                {/* A phone or external row names its owner instead; the account is in the label and tooltip. */}
+                {tab.claudeLabel && !ownerChip && <small className="claude-tab-profile">{tab.claudeLabel}</small>}
                 {saved[tab.id]?.pinned && <Pin size={11} className="tab-pin" />}
                 {ownerChip && <small className="chip session-owner-chip">{ownerChip.label}</small>}
                 {!horizontal && !vertical && (opening

@@ -1765,6 +1765,9 @@ function App() {
                         onSectionChange={openBrowserSettings}
                         onSaved={next => setSettings(previous => ({ ...previous, ...next }))}
                         onInternal={openInternalPage} onOpenPage={openSettingsPageResult} onConfirm={confirm} />}
+                      </Suspense>
+                      {/* Its own boundary: a page loading beside it must not hide a live display. */}
+                      <Suspense fallback={null}>
                       {status.ready && <RemoteView ref={remote} visible={Boolean(liveBrowserVisible && !settingsOpen && liveBrowser?.kind !== "browser-settings")}
                         copyScope={webPanes.map(tab => `${tab.id}:${tab.document || ""}`).join("|")}
                         focused={dualBrowser || liveBrowser?.id === active} keyboard={status.keyboard}
@@ -1955,6 +1958,8 @@ function App() {
           onConfirm={confirm}
         />
       )}
+      </Suspense>
+      <Suspense fallback={null}>
       {projectDialog && (
         <ProjectDialog
           current={settings}

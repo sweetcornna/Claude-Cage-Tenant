@@ -13,7 +13,8 @@ const useRow = (store, id) => useSessionSnapshot(store, (list) => list.sessions.
 export function CodexTerminalDetail({ store, tab, label }) {
   const row = useRow(store, tab.cli_session_id);
   const state = codexStateWord(row || { provider: "codex", owner: "desktop" }, { closed: tab.closed });
-  return <>{["Codex", label, state].filter(Boolean).join(" · ")}</>;
+  // The session's own account label first, as on its row and the home.
+  return <>{["Codex", row?.account_label || label, state].filter(Boolean).join(" · ")}</>;
 }
 
 // Stop (Esc into the TUI, through the server), pin, rename; reopen once Codex
