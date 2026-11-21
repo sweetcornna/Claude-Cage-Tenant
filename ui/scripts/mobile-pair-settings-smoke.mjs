@@ -70,10 +70,10 @@ try {
   await statusHeld;
   await confirmRemoval();
   await page.getByRole("button", { name: "移除手机", exact: true }).click();
-  await page.getByRole("heading", { name: "用手机连接 Cage", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "用手机连接 Super Cage", exact: true }).waitFor();
   releaseStatus();
   await statusDelivered;
-  await page.getByRole("heading", { name: "用手机连接 Cage", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "用手机连接 Super Cage", exact: true }).waitFor();
   assert.equal(await page.getByLabel("已配对手机", { exact: true }).count(), 0);
   assert.equal(removals, 1);
   assert.deepEqual(errors, []);

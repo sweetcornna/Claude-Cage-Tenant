@@ -93,7 +93,7 @@ export function MobilePairSettings({ relay, savedRelay, onChange, onConfirm }) {
         </p>
       </div>
       <section className="remote-pair-card" aria-label="手机配对">
-        <h4>{paired ? "手机已配对" : "用手机连接 Cage"}</h4>
+        <h4>{paired ? "手机已配对" : "用手机连接 Super Cage"}</h4>
         {paired && (
           <p className="remote-pair-device" aria-label="已配对手机">
             {device?.model ? (
@@ -102,7 +102,7 @@ export function MobilePairSettings({ relay, savedRelay, onChange, onConfirm }) {
                 <span>{device.platform === "ios" ? "iOS" : "Android"}</span>
               </>
             ) : (
-              <span>型号待获取，请更新手机端 Cage 后重新连接。</span>
+              <span>型号待获取，请更新手机端 Super Cage 后重新连接。</span>
             )}
           </p>
         )}
@@ -110,7 +110,7 @@ export function MobilePairSettings({ relay, savedRelay, onChange, onConfirm }) {
           <p role="status">在手机上点「重新连接」即可打开工作台。</p>
         ) : (
           <p className="remote-pair-instruction">
-            打开手机 Cage，选择「连接电脑」，用「扫码连接」扫描二维码，或选择「使用配对码」粘贴电脑上复制的配对码。
+            打开手机 Super Cage，选择「连接电脑」，用「扫码连接」扫描二维码，或选择「使用配对码」粘贴电脑上复制的配对码。
           </p>
         )}
         {paired && power?.active && <p className="note">远程待机已请求主机保持运行，屏幕可正常熄灭。移除配对或结束后台服务后恢复原系统休眠策略。</p>}

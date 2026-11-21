@@ -1,16 +1,25 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
-import { Archive, ArrowLeft, ArrowUp, LoaderCircle, Monitor, RefreshCw, Settings, Square, Terminal } from "lucide-react";
+import { Archive, ArrowLeft, LoaderCircle, Menu, Monitor, RefreshCw, SquarePen } from "lucide-react";
 import { RemoteDisplay } from "./remote-browser";
-import { CodeNavigation, ProjectTree, WorkspaceDrawer, workspaceTools } from "./workspace-drawer";
+import { CodeNavigation, ProjectTree, WorkspaceDrawer, workspaceCoreTools, workspaceTools } from "./workspace-drawer";
+import { Home } from "./home";
+import { Composer, useAttachments } from "./composer";
+import { EnvironmentView, useEnvironment } from "./environment";
+import { environmentSummary } from "./environment-state.mjs";
+import { TerminalsView } from "./terminals";
+import { FilesView } from "./files";
+import { Doodle, Logo } from "./doodles";
+import { ProviderBadge } from "./session-row";
 import { deviceCommand } from "./device-navigation.mjs";
-import cageLogo from "../logo.png";
 import { accessDenied, request, sessionPath } from "./transport.mjs";
 import { recoverPendingMessage, retryableSessionError, sessionFailureMessage, sessionRetryDelay, sessionRetryLimit } from "./session-recovery.mjs";
 import { SessionActionDialog, sortSessions } from "./session-row";
 import { ArchivedSessions } from "../cli-sessions";
 import { SessionAccount } from "../session-account";
 import "./mobile.css";
+import "./super.css";
 import { IconHints } from "../icon-hints.jsx";
 import { MessageBody, ToolActivity, TranscriptContext } from "./transcript";
 
@@ -32,8 +41,10 @@ function route() {
   const value = history.state?.cageCLI || (new URLSearchParams(location.search).get("page") === "archived" ? {tool:"archived"} : null);
   const id = value?.displayID || value?.browser;
   const displayID = typeof id === "string" && /^[a-f0-9-]{36}$/.test(id) ? id : "";
-  const tool = ["settings", "archived"].includes(value?.tool) ? value.tool : displayID && ["browser", "claude", "desktop"].includes(value.tool) ? value.tool : displayID ? "browser" : "code";
-  return {tool, displayID, project: typeof value?.project === "string" ? value.project : "", session: typeof value?.session === "string" ? value.session : ""};
+  const tool = ["settings", "archived", "terminal", "files", "environment"].includes(value?.tool) ? value.tool : displayID && ["browser", "claude", "desktop"].includes(value.tool) ? value.tool : displayID ? "browser" : "code";
+  const terminal = typeof value?.terminal === "string" && /^[0-9a-f]{16}$/.test(value.terminal) ? value.terminal : "";
+  return {tool, displayID, project: typeof value?.project === "string" ? value.project : "", session: typeof value?.session === "string" ? value.session : "",
+    terminal, path: typeof value?.path === "string" ? value.path : ""};
 }
 function saveRoute(next, push) {
   history[push ? "pushState" : "replaceState"]({ ...history.state, cageCLI: next }, "");
@@ -55,7 +66,10 @@ function Empty({ icon: Icon, title, children }) {
 function App() {
   const [current, setCurrent] = useState(route);
   const [addressSlot, setAddressSlot] = useState(null);
-  const [drawer, setDrawer] = useState(() => phoneWorkspace && !history.state?.cageCLI && route().tool === "code");
+  const [drawer, setDrawer] = useState(false);
+  const [titleSlot, setTitleSlot] = useState(null);
+  const [provider, setProvider] = useState(() => localStorage.getItem("super-cage-provider") === "codex" ? "codex" : "claude");
+  useEffect(() => { localStorage.setItem("super-cage-provider", provider); }, [provider]);
   const drafts = useRef(new Map());
   const [expanded, setExpanded] = useState(() => new Map());
   const [catalog, setCatalog] = useState(null);
@@ -85,7 +99,7 @@ function App() {
     if (window.__cageDevices) setDevices(window.__cageDevices);
     return () => window.removeEventListener("cage-devices", update);
   }, []);
-  // A virtual machine on a Cage server keeps its portal name. Its remote browser
+  // A virtual machine on a Super Cage server keeps its portal name. Its remote browser
   // and Claude Desktop need a paired computer, so links open on the phone.
   const device = devices.devices.find(d => d.id === devices.current);
   const serverVM = device?.kind === "tenant";
@@ -109,7 +123,7 @@ function App() {
     setGate(error.message); setCatalog(null); setError("");
   }, []);
   useEffect(() => {
-    const goBack = () => { openBrowserRequest.current = null; pageGeneration.current++; setCurrent(route()); setDrawer(phoneWorkspace && !history.state?.cageCLI); setError(""); };
+    const goBack = () => { openBrowserRequest.current = null; pageGeneration.current++; setCurrent(route()); setDrawer(false); setError(""); };
     const visibility = () => setVisible(!document.hidden);
     const viewport = window.visualViewport;
     const resize = () => {
@@ -151,6 +165,9 @@ function App() {
     void load();
     return () => { clearTimeout(timer); controller.abort(); };
   }, [refresh, visible, restricted, current.session, current.tool, drawer]);
+  const envActive = drawer || current.tool === "environment" || (current.tool === "code" && !current.session);
+  const env = useEnvironment({ active: phoneWorkspace && envActive && !gate, visible, onDenied: restricted });
+  const envTone = env.status ? environmentSummary(env.status).tone : "";
   const open = (project, session = "", push = false) => {
     const next = {tool: "code", displayID: "", project, session};
     pageGeneration.current++;
@@ -159,11 +176,11 @@ function App() {
   const updateSession = useCallback((snapshot) => {
     setCatalog((old) => {
       if (!old) return old;
-      const { id, workspace, title, revision, updated_at, generation, pinned, custom_title, metadata_set, active } = snapshot;
+      const { id, workspace, title, revision, updated_at, generation, pinned, custom_title, metadata_set, active, provider } = snapshot;
       if (archivedSessions.current.has(id)) return old;
       const previous = old.sessions.find((s) => s.id === id);
       if (previous && previous.generation === generation && previous.revision >= revision) return old;
-      return { ...old, sessions: [{ id, workspace, title, revision, updated_at, generation, pinned, custom_title, metadata_set, active }, ...old.sessions.filter((s) => s.id !== id)] };
+      return { ...old, sessions: [{ id, workspace, title, revision, updated_at, generation, pinned, custom_title, metadata_set, active, ...(provider ? {provider} : {}) }, ...old.sessions.filter((s) => s.id !== id)] };
     });
   }, []);
   const projects = catalog?.projects || [];
@@ -203,18 +220,21 @@ function App() {
     if (kind === "pin") void mutateSession(kind, target, {pinned:!target.pinned});
     else { setSessionActionError(""); setSessionAction({kind, session:target}); }
   };
-  const start = async target => {
+  const start = async (target, first) => {
     if (!target || createBusy.current || !catalog.ready) return;
     createBusy.current = true; setCreating(true); setError("");
     const generation = pageGeneration.current;
     try {
-      if (createRequest.current?.workspace !== target.path) createRequest.current = {
-        id: crypto.randomUUID(), workspace: target.path, ...(catalog.shared_sessions ? {shared:true} : {}),
+      const kind = first?.provider === "codex" ? "codex" : "claude";
+      if (createRequest.current?.workspace !== target.path || (createRequest.current.provider || "claude") !== kind) createRequest.current = {
+        id: crypto.randomUUID(), workspace: target.path, ...(catalog.shared_sessions && kind === "claude" ? {shared:true} : {}),
+        ...(kind === "codex" ? {provider:"codex"} : {}),
       };
       const session = await request("/sessions", { body: createRequest.current });
       createRequest.current = null;
       if (generation !== pageGeneration.current) return;
       updateSession(session);
+      if (first?.text) drafts.current.set(session.id, {text:first.text, auto:true});
       setExpanded(previous => new Map(previous).set(target.path, true));
       open(target.path, session.id, true); setDrawer(false);
     } catch (error) {
@@ -234,6 +254,14 @@ function App() {
     }
     setDrawer(false);
   };
+  const goTool = (tool, fields = {}, push = true) => {
+    browserControls.current?.close();
+    const next = {tool, displayID:"", project:current.project, session:"", terminal:"", path:"", ...fields};
+    pageGeneration.current++;
+    saveRoute(next, push); setCurrent(next); setDrawer(false);
+  };
+  const chooseTool = (tool) => ["terminal", "files", "environment"].includes(tool) ? goTool(tool) : selectTool(tool);
+  const goHome = () => { open(current.project || project?.path || ""); setDrawer(false); };
   const leaveDisplay = () => {
     browserControls.current?.close();
     open(current.project, session);
@@ -246,8 +274,6 @@ function App() {
   const codeNavigation = <CodeNavigation catalog={catalog} project={project} sessions={sessions} current={session}
     creating={creating || actionBusy} onAction={chooseSessionAction} onProject={path => open(path)} onNew={() => start(project)} formatTime={displayTime}
     onSession={id => {open(sessions.find(session => session.id === id)?.workspace || project.path, id, true); setDrawer(false);}} />;
-  const activeTool = workspaceTools.find(entry => entry.id === current.tool);
-  const ActiveToolIcon = ["settings", "archived"].includes(current.tool) ? Settings : activeTool?.icon || Terminal;
   const settingsPage = tool => {
     browserControls.current?.close();
     const next = {tool, displayID:"", project:current.project, session:""};
@@ -263,15 +289,21 @@ function App() {
     window.addEventListener("cage-open-archives", openArchives);
     return () => window.removeEventListener("cage-open-archives", openArchives);
   }, [current.project]);
-  return <main className={["mobile-app", phoneWorkspace && "phone-workspace", nativePhone && "native-phone"].filter(Boolean).join(" ")}>
+  return <main className={["mobile-app", phoneWorkspace && "phone-workspace", nativePhone && "native-phone", current.tool === "terminal" && current.terminal && "immersive"].filter(Boolean).join(" ")}>
     <header className="topbar workspace-topbar">
       {phoneWorkspace
-        ? <button type="button" className="icon-button" aria-haspopup="dialog" aria-expanded={drawer} aria-label="展开侧栏"
-          onClick={() => setDrawer(true)}><img className="brand-mark" src={cageLogo} alt="Cage" /></button>
-        : <a className="icon-button" href="/" aria-label="返回工作台"><img className="brand-mark" src={cageLogo} alt="Cage" /></a>}
-      {phoneWorkspace && (current.tool === "browser" || current.tool === "claude") && <div className="workspace-address-slot" ref={setAddressSlot} />}
+        ? <button type="button" className="icon-button menu-button" aria-haspopup="dialog" aria-expanded={drawer} aria-label="展开侧栏"
+          onClick={() => setDrawer(true)}><Menu size={21} strokeWidth={1.8} /></button>
+        : <a className="icon-button" href="/" aria-label="返回工作台"><Logo className="brand-mark" /></a>}
+      {phoneWorkspace && (current.tool === "browser" || current.tool === "claude")
+        ? <div className="workspace-address-slot" ref={setAddressSlot} />
+        : <div className="topbar-title" ref={setTitleSlot}>{!(current.tool === "code" && session) && <span className="topbar-title-text">{
+          current.tool === "terminal" ? "终端" : current.tool === "files" ? "文件" : current.tool === "environment" ? "环境"
+            : current.tool === "settings" ? "设置" : current.tool === "archived" ? "已归档会话" : current.tool === "desktop" ? "Claude Desktop"
+              : <><Logo className="title-logo" />Super Cage</>}</span>}</div>}
       <div className="top-actions">{phoneWorkspace
-        ? <span className="workspace-tool-icon" role="img" aria-label={activeTool?.name || "Claude Code"}><ActiveToolIcon size={19} aria-hidden="true" /></span>
+        ? <button type="button" className="icon-button" aria-label="新对话" title="新对话" onClick={goHome}
+          disabled={current.tool === "code" && !session}><SquarePen size={19} strokeWidth={1.8} /></button>
         : <div className="connection-host"><Monitor size={16} /><span>{catalog?.host || "连接电脑"}</span></div>}</div>
     </header>
     {gate ? <Notice onRetry={refreshAll}>{gate}</Notice> : !catalog
@@ -287,15 +319,27 @@ function App() {
         ? <RemoteDisplay controls={browserControls} key={current.displayID} id={current.displayID} tool={current.tool} addressSlot={addressSlot}
           start={openBrowserRequest.current?.id === current.displayID} initialURL={openBrowserRequest.current?.url || ""} visible={visible}
           onBack={leaveDisplay} onReopen={() => selectTool(current.tool, false, openBrowserRequest.current?.url)} />
+      : current.tool === "environment"
+        ? <EnvironmentView env={env} onDenied={restricted} />
+      : current.tool === "terminal"
+        ? <TerminalsView catalog={catalog} project={project} onProject={path => goTool("terminal", {project:path}, false)} terminalID={current.terminal}
+          visible={visible} onDenied={restricted} onOpen={id => goTool("terminal", {project:current.project, terminal:id})}
+          onBack={() => history.state?.cageCLI?.terminal ? history.back() : goTool("terminal", {project:current.project}, false)} />
+      : current.tool === "files"
+        ? <FilesView catalog={catalog} project={project} visible={visible} onDenied={restricted} path={current.path}
+          onProject={path => goTool("files", {project:path}, false)} onPath={path => goTool("files", {project:current.project, path}, true)} />
       : session
-        ? <Chat key={session} id={session} drafts={drafts.current} ready={catalog.ready} visible={visible} refresh={refresh}
+        ? <Chat key={session} id={session} drafts={drafts.current} ready={catalog.ready} visible={visible} refresh={refresh} titleSlot={titleSlot} catalog={catalog}
           onOpenWeb={url => openWeb(url, next => selectTool("browser", true, next))} onDenied={restricted} onMissing={missingSession} onSnapshot={updateSession} onBack={phoneWorkspace ? undefined : () => open(current.project)} />
       : phoneWorkspace
-        ? <div className="workspace-placeholder"><Terminal size={28} /><p>{project ? "在侧栏选择或新建会话" : "请选择远程工具"}</p></div>
+        ? <Home catalog={catalog} project={project} onProject={path => open(path)} provider={provider} onProvider={setProvider}
+          creating={creating} onStart={({project:target, provider:kind, text}) => start(target, {provider:kind, text})}
+          onSession={(path, id) => open(path, id, true)} onTool={chooseTool} environment={env.status}
+          onEnvironment={() => goTool("environment")} serverVM={serverVM} formatTime={displayTime} />
         : <section className="page-scroll">{error && <Notice onRetry={refreshAll}>{error}</Notice>}{codeNavigation}</section>}
-    {phoneWorkspace && <WorkspaceDrawer open={drawer} active={current.tool} name={serverVM ? device.name : catalog?.host || device?.name}
-      tools={serverVM ? [] : workspaceTools}
-      onClose={() => setDrawer(false)} onTool={selectTool} onSettings={() => settingsPage("settings")} nativePhone={nativePhone} onExit={exitWorkspace}>
+    {phoneWorkspace && <WorkspaceDrawer open={drawer} active={current.tool === "code" && !session ? "home" : current.tool} name={serverVM ? device.name : catalog?.host || device?.name}
+      tools={serverVM ? [] : workspaceTools} coreTools={workspaceCoreTools} envTone={envTone} onHome={goHome}
+      onClose={() => setDrawer(false)} onTool={chooseTool} onSettings={() => settingsPage("settings")} nativePhone={nativePhone} onExit={exitWorkspace}>
       {error && <Notice onRetry={refreshAll}>{error}</Notice>}
       {gate ? <Notice onRetry={refreshAll}>{gate}</Notice> : <ProjectTree catalog={catalog} projectPath={current.project}
         sessionID={current.tool === "code" ? session : ""} creating={creating || actionBusy} onNew={start} onAction={chooseSessionAction}
@@ -308,7 +352,7 @@ function App() {
   </main>;
 }
 
-function Chat({ id, drafts, ready, visible, refresh, onOpenWeb, onDenied, onMissing, onSnapshot, onBack }) {
+function Chat({ id, drafts, ready, visible, refresh, onOpenWeb, onDenied, onMissing, onSnapshot, onBack, titleSlot }) {
   const [session, setSession] = useState(null);
   const [readError, setReadError] = useState("");
   const [connectionError, setConnectionError] = useState("");
@@ -330,10 +374,13 @@ function Chat({ id, drafts, ready, visible, refresh, onOpenWeb, onDenied, onMiss
   const actionBusy = useRef(false);
   const transcript = useRef(null);
   const transcriptContext = useMemo(() => ({sessionID:id, openWeb:onOpenWeb}), [id, onOpenWeb]);
-  const composerInput = useRef(null);
   const follow = useRef(true);
   const last = session?.turns?.at(-1);
   const running = active(last?.status);
+  const codex = session?.provider === "codex";
+  const assistant = codex ? "Codex" : "Claude Code";
+  const attachments = useAttachments(session?.workspace || "");
+  const autoSend = useRef(!!drafts.get(id)?.auto);
   useEffect(() => {
     live.current = true;
     return () => { live.current = false; };
@@ -460,21 +507,19 @@ function Chat({ id, drafts, ready, visible, refresh, onOpenWeb, onDenied, onMiss
   useEffect(() => {
     if (follow.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight;
   }, [session?.revision]);
-  useEffect(() => {
-    const input = composerInput.current;
-    if (!input) return;
-    input.style.height = "24px";
-    input.style.height = Math.min(input.scrollHeight, 144) + "px";
-  }, [draft]);
   const send = async (event) => {
     event?.preventDefault();
-    if (actionBusy.current || confirming || readProgress || readError || running || !ready || !session || session.single_turn || session.can_send === false || !draft.trim()) return;
+    const attached = attachments.items.some(item => item.status === "done");
+    if (actionBusy.current || confirming || readProgress || readError || running || !ready || !session || session.single_turn || session.can_send === false || attachments.uploading || (!draft.trim() && !attached && !submission.current)) return;
     actionBusy.current = true; setBusy(true); setActionError("");
     setSendProgress("正在发送消息…");
     try {
       follow.current = true;
       const generation = latest.current?.generation;
-      submission.current ||= { request_id: crypto.randomUUID(), text: draft.trim() };
+      if (!submission.current) {
+        submission.current = { request_id: crypto.randomUUID(), text: (draft.trim() || "请查看附件。") + attachments.suffix() };
+        attachments.clear();
+      }
       drafts.set(id, {text:draft, pending:submission.current});
       const snapshot = await request(sessionPath(id) + "/messages", { body: submission.current });
       if (live.current) { accept(snapshot, generation); setReload(n => n + 1); }
@@ -490,6 +535,12 @@ function Chat({ id, drafts, ready, visible, refresh, onOpenWeb, onDenied, onMiss
       }
     } finally { actionBusy.current = false; if (live.current) setBusy(false); }
   };
+  useEffect(() => {
+    if (!autoSend.current || !session || !ready || session.can_send === false || session.single_turn || running || confirming || uncertain || !draft.trim()) return;
+    autoSend.current = false;
+    drafts.set(id, {text:draft});
+    void send();
+  });
   const stop = async () => {
     if (actionBusy.current || last?.status !== "running") return;
     actionBusy.current = true; setBusy(true); setActionError("");
@@ -519,12 +570,14 @@ function Chat({ id, drafts, ready, visible, refresh, onOpenWeb, onDenied, onMiss
     } finally { actionBusy.current = false; if (live.current) setBusy(false); }
   };
   return <>
-    <section className="chat-header">
-      <div className="title-line">{onBack && <button type="button" className="icon-button" aria-label="返回会话列表" onClick={onBack}><ArrowLeft size={18} /></button>}<h1>{session?.title || "Claude Code 会话"}</h1>{session && <Status value={last?.status} awaitingApproval={last?.status === "running" && last.approval} />}</div>
-      {session && <p className="note">{session.workspace}</p>}
-    </section>
+    {titleSlot ? createPortal(<span className="topbar-title-text chat-title"><span className="chat-title-name">{session?.title || assistant + " 会话"}</span>
+      {session && <Status value={last?.status} awaitingApproval={last?.status === "running" && last.approval} />}</span>, titleSlot)
+      : <section className="chat-header">
+        <div className="title-line">{onBack && <button type="button" className="icon-button" aria-label="返回会话列表" onClick={onBack}><ArrowLeft size={18} /></button>}<h1>{session?.title || assistant + " 会话"}</h1>{session && <Status value={last?.status} awaitingApproval={last?.status === "running" && last.approval} />}</div>
+        {session && <p className="note">{session.workspace}</p>}
+      </section>}
     {!uncertain && (readError || connectionError) && <Notice onRetry={retry} label="再次连接">{readError || connectionError}</Notice>}
-    {session && <SessionAccount id={id} request={request} onChanged={()=>setReload(n=>n+1)} compact />}
+    {session && !codex && <SessionAccount id={id} request={request} onChanged={()=>setReload(n=>n+1)} compact />}
     {(sendProgress || connectionProgress || readProgress) && <p className="note" role="status">{sendProgress || connectionProgress || readProgress}</p>}
     {session?.connection_notice && <Notice>{session.connection_notice}</Notice>}
     {session?.history_truncated && <p className="note">手机显示的历史已截断，完整内容保存在电脑 Claude Code 中。</p>}
@@ -532,7 +585,8 @@ function Chat({ id, drafts, ready, visible, refresh, onOpenWeb, onDenied, onMiss
       const box = e.currentTarget; follow.current = box.scrollHeight - box.scrollTop - box.clientHeight < 64;
     }}>
       {!session && !readError && <Empty icon={LoaderCircle} title="正在读取会话…" />}
-      {session && !session.turns?.length && <Empty icon={Terminal} title="发送第一条消息">Claude Code 会在所选项目中处理你的请求。</Empty>}
+      {session && <p className="chat-meta"><ProviderBadge provider={session.provider} />{session.workspace}</p>}
+      {session && !session.turns?.length && <div className="empty-art"><Doodle name="chat" className="empty-doodle" /><p>{draft.trim() && autoSend.current ? "正在连接 " + assistant + "，连接后自动发送…" : "发送第一条消息，" + assistant + " 会在这个项目里处理。"}</p></div>}
       <TranscriptContext.Provider value={transcriptContext}>{session?.turns?.map((turn) => <React.Fragment key={turn.id}>
         <article className="message user" aria-label="你的消息"><MessageBody text={turn.prompt} /></article>
         <article className="message" aria-label="回复">
@@ -549,23 +603,16 @@ function Chat({ id, drafts, ready, visible, refresh, onOpenWeb, onDenied, onMiss
         </article>
       </React.Fragment>)}</TranscriptContext.Provider>
     </section>
-    <form className="compose" onSubmit={send}>
+    <div className="compose">
       {actionError && <Notice onRetry={uncertain ? retry : undefined} label="再次连接">{actionError}</Notice>}
       {session?.single_turn && <p className="note">当前凭据或路由只能验证本轮。请返回会话列表，新建会话后继续。</p>}
-      {!ready && <p className="note">请在电脑上启动 Cage 环境。</p>}
-      <div className="composer-field">
-        <textarea ref={composerInput} aria-label="消息" rows="1" placeholder="给 Claude Code 发消息" value={draft} disabled={!session || session.single_turn || !ready || uncertain || busy}
-          onChange={(e) => {
-            const value = e.target.value;
-            if (value) drafts.set(id, {text:value}); else drafts.delete(id);
-            setDraft(value);
-          }} onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.nativeEvent.isComposing && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void send(); }
-          }} />
-        {running ? <button type="button" className="composer-action" aria-label={last.status === "stopping" ? "正在停止" : "停止运行"} title={last.status === "stopping" ? "正在停止" : "停止运行"} disabled={busy || last.status !== "running"} onClick={stop}><Square size={17} /></button>
-          : <button type="submit" className="composer-action" aria-label={uncertain ? "再次尝试发送" : "发送"} title={uncertain ? "再次尝试发送" : "发送"} disabled={busy || confirming || !!readProgress || !!readError || !ready || !session || session.single_turn || session.can_send === false || !draft.trim()}><ArrowUp size={21} /></button>}
-      </div>
-    </form>
+      {!ready && <p className="note">环境没有运行。打开侧栏里的「环境」启动后即可继续。</p>}
+      <Composer value={draft} placeholder={"给 " + assistant + " 发消息"} attachments={attachments}
+        disabled={!session || session.single_turn || !ready || uncertain || busy}
+        onChange={(value) => { if (value) drafts.set(id, {text:value}); else drafts.delete(id); setDraft(value); }}
+        onSubmit={() => void send()} running={running} stopping={last?.status === "stopping"} onStop={stop} busy={busy}
+        canSend={!(busy || confirming || !!readProgress || !!readError || !ready || !session || session.single_turn || session.can_send === false || attachments.uploading || (!draft.trim() && !attachments.items.some(item => item.status === "done")))} />
+    </div>
   </>;
 }
 
