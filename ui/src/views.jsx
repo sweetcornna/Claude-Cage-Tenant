@@ -855,7 +855,7 @@ export function TerminalPending({ error, onRetry }) {
       {error ? (
         <div className="terminal-pending-error" role="alert">
           <EmptyState compact title="终端没有打开"
-            action={<button className="quiet-button" onClick={onRetry}>重试</button>}>
+            action={<button className="primary" onClick={onRetry}>重试</button>}>
             {error}
           </EmptyState>
         </div>
