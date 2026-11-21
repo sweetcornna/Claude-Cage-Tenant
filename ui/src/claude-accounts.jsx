@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { Check, Pencil, Plus, RefreshCw, TerminalSquare, Timer } from "lucide-react";
 import { api } from "./api";
 import { InlineSelect } from "./inline-select";
+import { EmptyState } from "./drawings";
 import crabIcon from "./claude-account-crab.svg";
 import "./claude-accounts.css";
 
@@ -387,9 +388,9 @@ export function ClaudeAccountsPanel({ store, running, environmentBusy, tabs, log
     </div>
     <div className="claude-profile-list" role="region" aria-label="账号列表" tabIndex={0}>
       {accounts === null && !error && <p role="status">正在读取账号…</p>}
-      {accounts?.length === 0 && !detected && <div className="claude-profile-empty">
-        <img src={crabIcon} alt="" /><p>尚无已加入调度的账号。</p><small>加入第一个账号前，新终端沿用环境原有的登录。</small>
-      </div>}
+      {accounts?.length === 0 && !detected && <EmptyState drawing="key" title="账号列表还是空的" className="claude-profile-empty">
+        尚无已加入调度的账号。加入第一个账号前，新终端沿用环境原有的登录。
+      </EmptyState>}
       <QuotaClock accounts={visibleProfiles}>
         {detected && <DetectedProfile key={detected.identity} profile={detected} usageEnvironment={usageEnvironment} busy={busy || environmentBusy || !!environment}
           perform={perform} change={load}

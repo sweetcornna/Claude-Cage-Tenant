@@ -169,7 +169,7 @@ export function CodexAccountsPanel({ store, running, environmentBusy, tabs, logi
     if (await onConfirm({ title: `移除「${codexAccountName(profile) || "未命名账号"}」？`,
       body: (last ? "这是列表中的最后一个账号。移除后，新建 Codex 终端会沿用环境的 ~/.codex 登录。" : "此账号不再参与 Codex 终端的自动分配。") +
         "虚拟机中的登录资料和会话记录会保留在原目录。",
-      confirm: "移除账号" })) {
+      confirm: "移除账号", danger: true })) {
       await load({ action: "remove", id: profile.id });
     }
   };

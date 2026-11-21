@@ -8,11 +8,11 @@ import { BrowserDownloads } from "./browser-downloads";
 import { BrowserCookies } from "./browser-cookies";
 import { tabName } from "./workspace-state.mjs";
 import { shortcut } from "./platform.mjs";
-import logo from "./logo.png";
+import { BrandMark } from "./brand";
 
 export const ExpandSidebar = ({ onClick }) => <button className="icon-button sidebar-expand"
   aria-label="展开侧栏" onClick={onClick}>
-  <img className="sidebar-expand-logo" src={logo} alt="" />
+  <BrandMark size={20} className="sidebar-expand-logo" />
   <PanelLeftOpen className="sidebar-expand-icon" size={18} />
 </button>;
 

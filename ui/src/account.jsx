@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { api, native, nativeAvailable, writeClipboard } from "./api";
 import { getClientContext, isCloudWorkbench } from "./client-context.mjs";
-import logo from "./logo.png";
+import { BrandMark } from "./brand";
 import "./account.css";
 
 const AccountContext = createContext(null);
@@ -168,7 +168,7 @@ export function MacOSAccountGate({ children, onBack }) {
     catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }
-  return <main className="account-gate"><div className="account-brand"><img src={logo} alt="" />Super Cage</div><section className="account-entry">
+  return <main className="account-gate"><div className="account-brand"><BrandMark size={28} />Super Cage</div><section className="account-entry">
     <h1>设置 Super Cage 与 macOS 共用账密</h1>
     <p className="account-entry-intro">{account.trusted_local ? "先设置 Super Cage 用户名和密码，再继续客机安装。已有账户、文件和登录状态会保留。" : "输入当前 Super Cage 密码，确认用于 macOS 客机。已有客机保留用户名和用户目录。"}</p>
     <form onSubmit={submit}><fieldset disabled={busy}>
@@ -300,7 +300,7 @@ export function AccountGate({ children }) {
   return (
     <main className="account-gate">
       <div className="account-brand">
-        <img src={logo} alt="" />
+        <BrandMark size={28} />
         Super Cage
       </div>
       <section
@@ -308,7 +308,7 @@ export function AccountGate({ children }) {
         aria-label={creating ? isCloudWorkbench() ? "创建云端账户" : "创建本地账户" : "解锁 Super Cage"}
       >
         {creating ? (
-          <img className="account-welcome-logo" src={logo} alt="" />
+          <BrandMark size={64} className="account-welcome-logo" />
         ) : (
           account && <AccountAvatar account={account} large />
         )}

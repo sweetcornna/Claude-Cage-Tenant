@@ -1,19 +1,13 @@
 import { shortcut, primaryModifier } from "./platform.mjs";
-import logo from "./logo.png";
 import React, { useEffect, useRef, useState } from "react";
 import {
   Clock3,
-  FileCode2,
-  FolderOpen,
-  Globe2,
   LoaderCircle,
   MapPin,
   MoreHorizontal,
   Power,
   RefreshCw,
   RotateCcw,
-  Shield,
-  TerminalSquare,
   X,
 } from "lucide-react";
 import { api, normalizeURL, native, nativeAvailable } from "./api";
@@ -23,8 +17,7 @@ import { RemoteView, TerminalView, Modal } from "./views";
 import { keepSame, reuseItems, terminalListDue } from "./poll-state.mjs";
 import { usePasswordVault } from "./password-vault";
 import { SettingsPanel } from "./settings";
-import { SetupProgress } from "./setup-progress";
-import { GuestSystemPicker, validGuestChoice } from "./guest-system-picker";
+import { validGuestChoice } from "./guest-system-picker";
 import { AppearanceProvider } from "./appearance";
 import { EnvironmentShield } from "./environment-shield";
 import { TailscalePanel } from "./tailscale";
@@ -32,9 +25,7 @@ import { WorkspaceSidebar } from "./workspace-sidebar";
 import { useCLISessions, sessionsChanged } from "./cli-sessions";
 import { TerminalMenu } from "./terminal-menu";
 import { InitializationGate } from "./initialization";
-import { MacOSLogin } from "./macos-login";
 import { MacOSAppWindow } from "./macos-claude-window";
-import { ProjectRecovery } from "./project-recovery";
 import { ClaudeDesktop } from "./claude-desktop";
 import { ClaudeAccountsPanel, useClaudeAccounts } from "./claude-accounts";
 import { CodexAccountsPanel, useCodexAccounts } from "./codex-accounts";
@@ -61,6 +52,9 @@ import { EnvironmentRestartContext, SafetyChecklistContext, SafetyMessage } from
 import { networkState, isGuestLocalURL, needsEnvironmentRestart } from "./safety-state.mjs";
 import { needsProxySetup } from "./onboarding-state.mjs";
 import { NetworkLatency } from "./network-latency";
+import { WorkbenchHome } from "./workbench-home";
+import { BrandMark } from "./brand";
+import { Drawing } from "./drawings";
 import { useWindowVisibility } from "./window-visibility";
 import { AppUpdateButton, useAppUpdates } from "./app-updates";
 import "./appearance.css";
@@ -688,6 +682,7 @@ function App() {
         title: setupProgress ? "停止安装环境？" : "停止当前环境？",
         body: setupProgress ? "当前安装任务会停止。下次启动环境时可以继续安装。" : "请先保存文件。当前终端会话会结束，浏览器登录和项目文件会保留。",
         confirm: setupProgress ? "停止安装" : "停止环境",
+        danger: true,
       })
     )
       await action("/stop");
@@ -1265,6 +1260,8 @@ function App() {
   }
   const claudeLabels = new Map(claudeProfiles.accounts?.map((account) => [account.id, account.label || account.email]));
   const claudeNumbers = new Map(claudeProfiles.accounts?.map((account, index) => [account.id, index + 1]));
+  const numberedSessions = cliSessions.sessions.map((session) => ({ ...session,
+    claudeAccountNumber: claudeNumbers.get(session.account_id) }));
   const terminalAccountName = (tab) => claudeLabels.get(tab.claude_account_id) ||
     (tab.terminalKind === "claude-login" ? "新账号登录" : tab.claude_account_id ? "Claude 账号" : "");
   const displayTabs = orderedTabs(tabs, metadata).map((tab) =>
@@ -1422,7 +1419,7 @@ function App() {
                   {dialog.secondary}
                 </button>
               )}
-              <button className="primary" disabled={dialog.pending} onClick={() => finishDialog(true)}>
+              <button className={dialog.danger ? "danger-fill" : "primary"} disabled={dialog.pending} onClick={() => finishDialog(true)}>
                 {dialog.pending ? dialog.pendingLabel : dialog.confirm}
               </button>
             </>
@@ -1478,7 +1475,7 @@ function App() {
     return (
       <>
         <div className="boot-screen">
-          <Shield size={36} />
+          <Drawing name="plug" className="boot-drawing" />
           <h1>连接 Super Cage 工作台</h1>
           <p>{fatal}</p>
           <p className="muted">
@@ -1500,7 +1497,7 @@ function App() {
     return (
       <>
         <div className="boot-screen">
-          <div className="brand-mark">C</div>
+          <BrandMark size={56} />
           <h1>Super Cage</h1>
           <p>
             <LoaderCircle size={16} className="spin" />
@@ -1531,8 +1528,7 @@ function App() {
             projects={projects}
             projectGroups={groups}
             tabs={displayTabs}
-            sessions={cliSessions.sessions.map(session => ({ ...session,
-              claudeAccountNumber: claudeNumbers.get(session.account_id) }))}
+            sessions={numberedSessions}
             sessionError={cliSessions.error}
             sessionRefreshing={cliSessions.loading}
             onSessionRefresh={cliSessions.refresh}
@@ -1731,223 +1727,57 @@ function App() {
               </>
             )}
             {showHome && (
-              <div className="welcome">
-                <div className="welcome-content">
-                  <img className="welcome-logo" src={logo} alt="Super Cage" />
-                  {storageRecovery ? <>
-                    <h1>环境存储需要恢复</h1>
-                    <p className="welcome-subtitle"><SafetyMessage message={status.storage_recovery.error} /></p>
-                    <p className="field-help">在设置中恢复环境存储后，再启动浏览器和终端。诊断包可以从同一页面导出。</p>
-                    <button className="primary" onClick={() => openSettings("project")}>恢复环境存储</button>
-                  </> : setupProgress ? <>
-                    <h1>{status.job.error ? "环境安装未完成" : "正在安装 Super Cage 环境"}</h1>
-                    <SetupProgress job={status.job} onDetails={() => setDetails(true)}
-                      onStop={stop} onRetry={() => startEnvironment(status.job.kind === "guest-install" ? { guest_system: status.job.setup_progress.system } : {})} disconnected={Boolean(connectionError)} />
-                  </> : <>
-                  <h1>
-                    {busy
-                      ? status.job.kind === "stop"
-                        ? "正在停止 Super Cage 环境"
-                        : status.job.kind === "storage"
-                          ? "正在调整环境存储"
-                        : status.job.kind === "project"
-                          ? "正在打开项目"
-                          : "正在准备 Super Cage 环境"
-                      : running
-                        ? !status.ready
-                          ? "Super Cage 环境正在连接"
-                          : "Super Cage 环境已就绪"
-                        : setupProxy
-                          ? "为 Claude 准备独立工作区"
-                          : "先启动 Super Cage 环境"}
-                  </h1>
-                  <p className="welcome-subtitle">
-                    <SafetyMessage message={busy
-                      ? status.job.message
-                      : running
-                        ? !status.ready
-                          ? status.environment_update_error || "浏览器连接尚未就绪，可以恢复连接或继续使用终端。"
-                          : network.mode === "open"
-                            ? status.guest_system === "windows-remote" ? "环境已连接，网络检查通过。可以浏览网页或使用隔离 PowerShell。" : "环境已连接，网络检查通过。可以浏览网页或打开本地项目。"
-                            : `${network.label}。终端与${status.guest_system === "windows-remote" ? "隔离工作目录" : "本地文件"}仍可使用。`
-                        : setupProxy
-                          ? "先连接你的代理，再启动浏览器、终端和编辑器。无需安装额外的代理软件。"
-                          : "准备独立的浏览器和终端，完成网络检查后开始工作。"} />
-                  </p>
-                  {!running && !nativeGuestLabel && (
-                    <ol className="onboarding-steps" aria-label="开始使用 Super Cage">
-                      {["配置代理", "启动环境", "开始工作"].map(
-                        (label, index) => (
-                          <li
-                            key={label}
-                            aria-current={
-                              index === (setupProxy ? 0 : 1)
-                                ? "step"
-                                : undefined
-                            }
-                          >
-                            <span>{index + 1}</span>
-                            {label}
-                          </li>
-                        ),
-                      )}
-                    </ol>
-                  )}
-                  <div className="start-project-box">
-                    <div className="environment-summary">
-                      <EnvironmentShield
-                        healthy={status.ready && network.mode === "open"}
-                        size={24}
-                      />
-                      <span>
-                        <strong>Super Cage 隔离环境</strong>
-                        <small>
-                          {running
-                            ? runtimeLabel
-                            : setupProxy
-                              ? "自备代理订阅、YAML 配置或节点"
-                              : nativeGuestLabel ? `${nativeGuestLabel} 客机已安装` : "代理已配置，首次启动会下载开发环境"}
-                        </small>
-                      </span>
-                    </div>
-                    {!busy && !running && !account?.guest_system && status.local_vm_storage && !isRemoteClient() && <GuestSystemPicker system={guestSystem} onChange={setGuestSystem} />}
-                    {!running && !nativeGuestLabel && status.local_vm_storage && !isRemoteClient() && <button className="storage-entry text-button" disabled={busy} onClick={() => openSettings("project")}>选择环境存储位置</button>}
-                    <div className="start-project-footer">
-                      <span>
-                        <i className={`status-dot ${network.mode}`} />
-                        {busy
-                          ? runtimeLabel
-                          : running
-                            ? network.label
-                            : setupProxy
-                              ? "等待配置代理"
-                              : "环境已停止"}
-                      </span>
-                      <button
-                        className="primary"
-                        data-terminal-location="start"
-                        disabled={busy || Boolean(connectionError) || (!running && !setupProxy &&
-                          ((!account?.guest_system && status.local_vm_storage && !isRemoteClient() && guestSystem === undefined) || !validGuestChoice(guestSystem)))}
-                        onClick={(event) => {
-                          if (!running && guestSystem?.activate) {
-                            api("/environment/guest-systems/activate", {}).then(() => native("reconnect")).catch((e) => setToast(e.message));
-                          } else if (!running && setupProxy) openSettings("network");
-                          else if (!running || !status.ready)
-                            startEnvironment(!running && guestSystem?.guest_system === "debian-13" && !guestSystem.clone ? { guest_system: "debian-13" } : !running && guestSystem ? {
-                              guest_system: guestSystem.guest_system, media: guestSystem.media, sha256: guestSystem.sha256,
-                              clone_key: guestSystem.clone_key,
-                              editor_terms: guestSystem.editor_terms,
-                            } : {});
-                          else if (!workspace && projectsAvailable)
-                            setProjectDialog({ path: "" });
-                          else newTerminal(workspace, event.currentTarget);
-                        }}
-                      >
-                        {busy ? (
-                          <LoaderCircle size={16} className="spin" />
-                        ) : !running && setupProxy ? (
-                          <Globe2 size={16} />
-                        ) : !running ? (
-                          <Power size={16} />
-                        ) : !status.ready ? (
-                          <RefreshCw size={16} />
-                        ) : !workspace && projectsAvailable ? (
-                          <FolderOpen size={16} />
-                        ) : (
-                          <TerminalSquare size={16} />
-                        )}
-                        {busy
-                          ? "正在处理…"
-                          : !running
-                            ? setupProxy
-                              ? "配置网络与代理"
-                              : guestSystem?.activate ? "打开工作台" : guestSystem?.pending ? "继续安装" :
-                                guestSystem && guestSystem.guest_system !== "debian-13" ? "安装客户机" : "启动 Super Cage 环境"
-                            : !status.ready
-                              ? "恢复浏览器"
-                              : !workspace && projectsAvailable
-                                ? "打开项目"
-                                : "新建终端"}
-                      </button>
-                    </div>
-                    {terminalMenuAt("start")}
-                  </div>
-                  {running && (
-                    <div className="welcome-shortcuts">
-                      {macGuest && <MacOSLogin disabled={!status.ready || busy} />}
-                      <button onClick={newTerminalHere} data-terminal-location="shortcuts" aria-haspopup="menu" disabled={busy}>
-                        <TerminalSquare size={16} />
-                        新建终端
-                      </button>
-                      <button
-                        onClick={() => openEditor(contentWorkspace)}
-                        disabled={!status.ready || busy || !editorAvailable}
-                        title={editorAvailable ? undefined : "当前环境尚未接通文件编辑器，可使用 PowerShell 管理隔离工作目录中的文件"}
-                      >
-                        <FileCode2 size={16} />
-                        浏览文件
-                      </button>
-                    </div>
-                  )}
-                  {terminalMenuAt("shortcuts")}
-                  {!running && !nativeGuestLabel && (
-                    <p className="welcome-hint">
-                      {setupProxy
-                        ? "Super Cage 不提供代理或 Claude 账户。连接后，在 Super Cage 内完成 Claude 登录。"
-                        : "首次安装时可在操作详情中查看下载和配置进度；中断后可以继续安装。"}
-                    </p>
-                  )}
-                  {running && status.ready && (
-                    <p className="welcome-hint">
-                      {status.guest_system === "windows-remote" ? "PowerShell 和浏览器无需 Claude 登录。只有使用 Claude 时才需要登录账户。" : <>打开项目后，在终端输入 <code>claude</code>，按提示登录你的账户。</>}
-                      <br />
-                      {status.guest_system === "windows-remote" ? "文件保存在云端隔离工作目录中，不会挂载你的本地文件夹。" : isCloudWorkbench() ? "打开的项目位于云端，编辑和删除会直接影响云端文件。" : "打开的项目与本机共享，编辑和删除文件会同步。"}
-                    </p>
-                  )}
-                  </>}
-                  {status.project_error && (
-                    <div className="start-error" role="alert">
-                      <strong>部分项目文件夹尚未连接</strong>
-                      <p>环境和浏览器可继续使用。</p>
-                      {status.project_errors?.length ? (
-                        <ul className="project-connection-errors">
-                          {status.project_errors.map(({ path, message, recovery }) => (
-                            <li key={path}>
-                              <strong>{projectName(path, groups)}</strong>
-                              <span className="project-error-path">{path}</span>
-                              <p>{message}</p>
-                              <ProjectRecovery recovery={recovery} disabled={!status.ready || busy}
-                                onRetry={() => setProjectDialog({ path })} onSettings={() => openSettings("project")} />
-                            </li>
-                          ))}
-                        </ul>
-                      ) : <p>{status.project_error}</p>}
-                    </div>
-                  )}
-                  {!storageRecovery && !setupProgress && status.job?.error && (
-                    <div className="start-error" role="alert">
-                      <strong>{status.job.message || "本次操作未完成"}</strong>
-                      <p><SafetyMessage message={status.job.error} /></p>
-                      {status.can_restore && (
-                        <button
-                          className="text-button"
-                          onClick={() => openSettings("project")}
-                        >
-                          查看恢复选项
-                        </button>
-                      )}
-                    </div>
-                  )}
-                  {!setupProgress && status.job?.log && (
-                    <button
-                      className="text-button details-link"
-                      onClick={() => setDetails(true)}
-                    >
-                      查看操作详情
-                    </button>
-                  )}
-                </div>
-              </div>
+              <WorkbenchHome
+                status={status}
+                storageRecovery={storageRecovery}
+                setupProgress={setupProgress}
+                busy={busy}
+                running={running}
+                setupProxy={setupProxy}
+                network={network}
+                runtimeLabel={runtimeLabel}
+                nativeGuestLabel={nativeGuestLabel}
+                guestSystem={guestSystem}
+                onGuestSystem={setGuestSystem}
+                account={account}
+                connectionError={connectionError}
+                workspace={workspace}
+                projectsAvailable={projectsAvailable}
+                macGuest={macGuest}
+                editorAvailable={editorAvailable}
+                contentWorkspace={contentWorkspace}
+                groups={groups}
+                projects={projects}
+                sessions={numberedSessions}
+                tabs={tabs}
+                openingSession={openingSession}
+                onSessionOpen={openSessionTerminal}
+                onSettings={openSettings}
+                onDetails={() => setDetails(true)}
+                onStop={stop}
+                onRetrySetup={() => startEnvironment(status.job.kind === "guest-install" ? { guest_system: status.job.setup_progress.system } : {})}
+                primaryDisabled={busy || Boolean(connectionError) || (!running && !setupProxy &&
+                  ((!account?.guest_system && status.local_vm_storage && !isRemoteClient() && guestSystem === undefined) || !validGuestChoice(guestSystem)))}
+                onPrimary={(event) => {
+                  if (!running && guestSystem?.activate) {
+                    api("/environment/guest-systems/activate", {}).then(() => native("reconnect")).catch((e) => setToast(e.message));
+                  } else if (!running && setupProxy) openSettings("network");
+                  else if (!running || !status.ready)
+                    startEnvironment(!running && guestSystem?.guest_system === "debian-13" && !guestSystem.clone ? { guest_system: "debian-13" } : !running && guestSystem ? {
+                      guest_system: guestSystem.guest_system, media: guestSystem.media, sha256: guestSystem.sha256,
+                      clone_key: guestSystem.clone_key,
+                      editor_terms: guestSystem.editor_terms,
+                    } : {});
+                  else if (!workspace && projectsAvailable)
+                    setProjectDialog({ path: "" });
+                  else newTerminal(workspace, event.currentTarget);
+                }}
+                onNewTerminal={newTerminal}
+                onNewTerminalHere={newTerminalHere}
+                onEditor={openEditor}
+                onOpenProject={(path) => setProjectDialog({ path })}
+                terminalMenuAt={terminalMenuAt}
+              />
             )}
           </main>
           <footer className="status-bar">
@@ -1993,8 +1823,7 @@ function App() {
             <span className="status-feedback" role="status">
               {/* The footer's own restart button sits beside this text. */}
               <EnvironmentRestartContext.Provider value={null}>
-              <SafetyMessage message={toast ||
-                (busy
+              <SafetyMessage message={(busy
                   ? status.job.message
                   : running
                     ? needsEnvironmentRestart(status.job?.error)
@@ -2184,6 +2013,13 @@ function App() {
           onOpenPage={openBrowserPage}
           onConfirm={confirm}
         />
+      )}
+      {toast && (
+        <div className="toast" role="status" key={toast}>
+          <EnvironmentRestartContext.Provider value={null}>
+            <SafetyMessage message={toast} />
+          </EnvironmentRestartContext.Provider>
+        </div>
       )}
       {dialogs}
     </div>
