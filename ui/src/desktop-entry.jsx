@@ -4,6 +4,7 @@ import { installDiagnostics } from "./diagnostics.mjs";
 import { DiagnosticBoundary } from "./diagnostics.jsx";
 import { ClientRoot } from "./remote-hosts";
 import { native } from "./api";
+import "./tokens.css";
 import "./style.css";
 import { IconHints } from "./icon-hints.jsx";
 

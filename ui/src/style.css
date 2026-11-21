@@ -1,38 +1,9 @@
 :root {
-  font-family: var(
-    --ui-font-family,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    "PingFang SC",
-    sans-serif
-  );
+  font-family: var(--font-sans);
   color: var(--ink);
   background: var(--paper);
-
   font-synthesis: none;
   font-size: var(--ui-font-size, 14px);
-  --workbench-header-height: 40px;
-  /* Quiet desktop chrome; the active work surface carries the visual emphasis. */
-  --chrome: #f7f7f7;
-  --chrome-dark: #f0f0f0;
-  --line: #e8e8e8;
-  --accent: #343434;
-  --paper: #ffffff;
-  --ink: #363636;
-  --strong: #202020;
-  --muted: #737373;
-  --focus: #909090;
-  --input: #ffffff;
-  --hover: #eeeeee;
-  --selected: #e9e9e9;
-  --selection: #d5e5ff;
-  --button: #242424;
-  --button-ink: #ffffff;
-  --link: #414141;
-  --success: #27835c;
-  --danger: #c43d3d;
-  --sidebar-width: 272px;
 }
 .safety-body {
   display: flex;
