@@ -98,6 +98,8 @@ function viewOf(session) {
 
 // Serves /api/cli/sessions* for a workbench fixture. state.codexSessions holds
 // the sessions; tests change an owner there to move a session between states.
+// state.codexRefusals["<id>/<action>"] = [status, text] makes the next call of
+// that action refuse with the server's text (a refusal the UI shows in place).
 // A held list (after + wait) answers 204 after state.codexHoldMs (500 ms by
 // default) when nothing changed, so a long-poll loop does not spin.
 export async function codexSessionsRoute(route, request, url, body, state) {
@@ -130,6 +132,11 @@ export async function codexSessionsRoute(route, request, url, body, state) {
     return route.fulfill({ json: viewOf(session) });
   }
   if (request.method() !== "POST") return text(route, 405, "Method Not Allowed");
+  const refusal = state.codexRefusals?.[session.id + "/" + action];
+  if (refusal) {
+    delete state.codexRefusals[session.id + "/" + action];
+    return text(route, ...refusal);
+  }
   if (action === "account") return route.fulfill({ json: { session: { id: session.id }, supported: false, candidates: [] } });
   if (action === "open") {
     if (session.archived) return text(route, 410, "此会话已归档，请先在设置中的已归档会话撤销归档");

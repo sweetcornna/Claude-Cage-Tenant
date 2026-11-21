@@ -3,7 +3,7 @@
 // list re-render when it changes (audit UI-4). An unchanged answer causes no
 // state change at all: the snapshot object stays the same.
 import { codexCapabilities, sessionListPath } from "./session-provider.mjs";
-import { afterOutcome, initialPoll, LIST_INTERVAL_MS, pollQuery } from "./session-poll.mjs";
+import { afterOutcome, initialPoll, LIST_INTERVAL_MS, pollQuery, requestDeadline, requestDeadlineMs } from "./session-poll.mjs";
 import { reuseItems, sameValue } from "./poll-state.mjs";
 
 const idle = Object.freeze({ sessions: Object.freeze([]), error: "", loading: false,
@@ -42,13 +42,16 @@ export function createSessionList({ request, now = () => Date.now(), setTimer = 
     lastStart = started;
     controller = new AbortController();
     const signal = controller.signal;
+    const deadline = requestDeadline(signal, requestDeadlineMs(wait), { setTimer, clearTimer });
     let outcome;
     let answer = null;
     try {
-      answer = await request(sessionListPath({ after, wait }), { signal });
+      answer = await request(sessionListPath({ after, wait }), { signal: deadline.signal });
       outcome = answer ? { status: 200, revision: answer.revision } : { status: 204 };
-    } catch (error) {
+    } catch (failure) {
       if (signal.aborted || own !== generation) return;
+      // No answer in time: an error like any other, so the loop backs off and asks again.
+      const error = deadline.expired() ? new Error("会话列表暂时没有回应，正在重试") : failure;
       outcome = error?.status ? { status: error.status, error: true } : { error: true };
       if (!(outcome.status === 400 || outcome.status === 404) || !wait) {
         publish({ error: error?.message || "会话列表暂未更新", loading: false,
@@ -56,6 +59,7 @@ export function createSessionList({ request, now = () => Date.now(), setTimer = 
             ? snapshot.sessions.map((session) => ({ ...session, active: false, running: false })) : snapshot.sessions });
       }
     } finally {
+      deadline.done();
       if (own === generation) controller = null;
     }
     if (!running || own !== generation) return;

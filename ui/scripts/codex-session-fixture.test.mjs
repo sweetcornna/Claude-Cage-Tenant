@@ -129,3 +129,15 @@ test("menu sessions, metadata, purge and the older server", async () => {
   assert.equal(old.revision, undefined);
   assert.equal(old.capabilities, undefined);
 });
+
+test("a set refusal answers the next call of that action once, in the server's words", async () => {
+  const state = fresh();
+  seedCodexSessions(state);
+  state.codexRefusals = { [ids[0] + "/open"]: [409, "这段会话所用的 Codex 账号已移除，无法继续"] };
+  const refused = await call(state, "POST", "/api/cli/sessions/" + ids[0] + "/open", {});
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body, "这段会话所用的 Codex 账号已移除，无法继续");
+  assert.equal(state.codexSessions[0].owner, "", "a refused open binds nothing");
+  const opened = await json(state, "POST", "/api/cli/sessions/" + ids[0] + "/open", {});
+  assert.equal(opened.owner, "desktop");
+});

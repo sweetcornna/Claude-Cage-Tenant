@@ -160,3 +160,45 @@ test("a notice shows no session as running", async () => {
   assert.equal(list.getSnapshot().error, "无法确认");
   list.stop();
 });
+
+test("a held request that never answers is dropped after its wait plus 10 s and asked again", async () => {
+  const h = harness();
+  const list = createSessionList(h.env);
+  list.start();
+  await h.advance(0);
+  answer(h.calls[0], { sessions: [{ id: "a", running: true }], notice: "", revision: rev(1) });
+  await h.advance(1000);
+  assert.equal(query(h.calls[1]).wait, "25");
+  // A half-open connection: no answer, no error.
+  await h.advance(34999);
+  assert.equal(h.inFlight().length, 1, "still waiting within wait + 10 s");
+  await h.advance(1);
+  assert.equal(h.calls[1].aborted, true, "dropped at wait + 10 s");
+  assert.equal(list.getSnapshot().error, "会话列表暂时没有回应，正在重试");
+  assert.equal(list.getSnapshot().sessions[0].running, false);
+  await h.advance(999);
+  assert.equal(h.calls.length, 2, "backs off 1 s like any error");
+  await h.advance(1);
+  assert.equal(h.calls.length, 3);
+  assert.equal(query(h.calls[2]).after, rev(1), "still held: the revision is kept");
+  answer(h.calls[2], { sessions: [{ id: "a", running: true }], notice: "", revision: rev(2) });
+  await h.flush();
+  assert.equal(list.getSnapshot().error, "");
+  // An answered request leaves no deadline behind.
+  await h.advance(1000);
+  answer(h.calls[3], null);
+  await h.advance(40000);
+  assert.notEqual(h.calls[3].aborted, true, "the deadline of an answered request does not fire");
+  list.stop();
+});
+
+test("a plain request gets 35 s too", async () => {
+  const h = harness();
+  const list = createSessionList(h.env);
+  list.start();
+  await h.advance(0);
+  await h.advance(35000);
+  assert.equal(h.calls[0].aborted, true);
+  assert.equal(list.getSnapshot().error, "会话列表暂时没有回应，正在重试");
+  list.stop();
+});

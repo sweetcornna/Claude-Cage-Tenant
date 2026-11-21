@@ -4,7 +4,7 @@ import { api } from "./api";
 import { useSessionSnapshot } from "./cli-sessions";
 import { EmptyState } from "./drawings";
 import { ProviderMark } from "./provider-mark";
-import { afterOutcome, initialPoll, pollQuery } from "./session-poll.mjs";
+import { afterOutcome, initialPoll, pollQuery, requestDeadline, requestDeadlineMs } from "./session-poll.mjs";
 import { canContinueInTerminal, canStopFromPane, codexSessionAccountLabel, codexStateWord, CONTINUE_HINTS, PHONE_OWNER_NOTICES, READONLY_REASONS,
   sessionOwner, sessionViewPath } from "./session-provider.mjs";
 import { MessageBody, ToolActivity, TranscriptContext } from "./mobile-cli/transcript.jsx";
@@ -27,10 +27,11 @@ function useSessionView(id, held, nonce) {
     const run = async () => {
       const started = Date.now();
       const wait = latest ? pollQuery(poll).wait : 0;
+      const deadline = requestDeadline(controller.signal, requestDeadlineMs(wait));
       let outcome;
       try {
         const next = await api(sessionViewPath(id, latest ? { after: latest.revision, epoch: latest.generation, wait } : {}).replace(/^\/api/, ""),
-          undefined, undefined, {}, { signal: controller.signal, empty: true });
+          undefined, undefined, {}, { signal: deadline.signal, empty: true });
         if (next) {
           latest = next;
           setView(next);
@@ -40,7 +41,10 @@ function useSessionView(id, held, nonce) {
       } catch (failure) {
         if (controller.signal.aborted) return;
         outcome = failure.status ? { status: failure.status } : { error: true };
-        if (!(wait && (failure.status === 400 || failure.status === 404))) setError(failure.message);
+        if (deadline.expired()) setError("会话暂时没有回应，正在重试");
+        else if (!(wait && (failure.status === 400 || failure.status === 404))) setError(failure.message);
+      } finally {
+        deadline.done();
       }
       if (controller.signal.aborted) return;
       const step = afterOutcome(poll, outcome, { started, ended: Date.now(), wait, interval: isActive(latest) ? 1000 : 4000 });

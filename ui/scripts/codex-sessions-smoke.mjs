@@ -1,9 +1,11 @@
 // Codex sessions in the workbench, against the isolated fixture
 // (codex-session-fixture.mjs, one session per owner state):
-// list (four owner states, held list) -> open an idle one (POST /open, bound
-// tab, no Claude veil or account reads) -> the phone-owned one read-only with
-// its reason -> stop a desktop turn -> archive -> restore and purge from the
-// archived list -> an older server keeps the plain Codex terminal.
+// list (four owner states, held list) -> a refused open shown under its row
+// -> open an idle one (POST /open, bound tab, no Claude veil or account reads)
+// -> the phone-owned one read-only with its reason (a stale stop refused in
+// place, then stopped) -> stop a desktop turn -> archive -> restore and purge
+// from the archived list (a refused purge shown in place) -> the menu makes a
+// Codex session -> an older server keeps the plain Codex terminal.
 // Light and dark screenshots of each state at 1440x900 and 1000x700.
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
@@ -63,7 +65,14 @@ for (const mode of ["light", "dark"]) {
     await both("list");
     checks.push(mode + ": list with four owner states");
 
-    // 2. Open the idle one: POST /open, the bound tab, no Claude veil, no account reads.
+    // 2. A refusal shows under the row in the server's words; the row stays usable.
+    state.codexRefusals = { "c0d3c0d3-0000-4000-8000-000000000001/open": [409, "这段会话所用的 Codex 账号已移除，无法继续"] };
+    await sidebar.getByRole("button", { name: rowName(title.idle) }).click();
+    await sidebar.locator("#session-open-error-c0d3c0d3-0000-4000-8000-000000000001")
+      .filter({ hasText: "无法打开 Codex 会话：这段会话所用的 Codex 账号已移除，无法继续" }).waitFor();
+    await shot("open-refused");
+    checks.push(mode + ": a refused open is shown under its row");
+    // Open the idle one: POST /open, the bound tab, no Claude veil, no account reads.
     const opened = page.waitForRequest((request) => request.method() === "POST" && request.url().includes("/cli/sessions/c0d3c0d3-0000-4000-8000-000000000001/open"));
     await sidebar.getByRole("button", { name: rowName(title.idle) }).click();
     await opened;
@@ -99,6 +108,11 @@ for (const mode of ["light", "dark"]) {
     // Stop the phone's turn from the pane; the pane follows the view.
     await sidebar.getByRole("button", { name: rowName(title.phone) }).click();
     await pane.getByRole("heading", { name: title.phone }).waitFor();
+    // A stale turn: the server's refusal in the pane, the turn untouched.
+    state.codexRefusals = { "c0d3c0d3-0000-4000-8000-000000000003/stop": [409, "本轮运行状态已变化，请重新读取"] };
+    await pane.getByRole("button", { name: "停止本轮" }).click();
+    await pane.getByRole("alert").filter({ hasText: "本轮运行状态已变化，请重新读取" }).waitFor();
+    await shot("stop-refused");
     const phoneStop = page.waitForRequest((request) => request.method() === "POST" && request.url().endsWith("000000000003/stop"));
     await pane.getByRole("button", { name: "停止本轮" }).click();
     assert.match((await phoneStop).postData(), /c0d3c0d3-1000-4000-8000-000000000003/);
@@ -146,6 +160,12 @@ for (const mode of ["light", "dark"]) {
     await externalRow.getByRole("button", { name: "删除会话" }).click();
     await archive.getByText(`永久删除“${title.external}”及其 Codex 原始对话？此操作无法撤销。`).waitFor();
     await shot("purge-confirm");
+    // The guest refuses while another process holds it: the reason in place, the row kept.
+    state.codexRefusals = { "c0d3c0d3-0000-4000-8000-000000000004/purge": [400, "这段会话正在电脑的 Codex 终端中打开，请先关闭该终端再删除"] };
+    await archive.getByRole("group", { name: "确认永久删除会话" }).getByRole("button", { name: "永久删除" }).click();
+    await archive.getByRole("alert").filter({ hasText: "这段会话正在电脑的 Codex 终端中打开，请先关闭该终端再删除" }).waitFor();
+    await archive.getByRole("heading", { name: title.external }).waitFor();
+    await shot("purge-refused");
     const purged = page.waitForRequest((request) => request.method() === "POST" && request.url().endsWith("000000000004/purge"));
     await archive.getByRole("group", { name: "确认永久删除会话" }).getByRole("button", { name: "永久删除" }).click();
     assert.match((await purged).postData(), /"confirm":true/);
@@ -154,11 +174,29 @@ for (const mode of ["light", "dark"]) {
     await idleRow.getByRole("button", { name: "取消归档" }).click();
     await restored;
     await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: "返回工作台", exact: true }).first().click().catch(() => {});
+    const back = page.getByRole("button", { name: "返回工作台", exact: true });
+    if (await back.count()) await back.first().click();
     await sidebar.getByRole("button", { name: rowName(title.idle) }).waitFor();
     checks.push(mode + ": restore and purge with the neutral copy");
 
-    // 7. An older server: no capabilities, no Codex rows, today's plain Codex terminal.
+    // 7. The menu makes a Codex session where the server says it can: a bound tab at once.
+    await sidebar.getByRole("button", { name: "工作台", exact: true }).click();
+    await page.locator('[data-terminal-location="start"]').click();
+    const sessionMenu = page.getByRole("menu", { name: "新建终端" });
+    await sessionMenu.getByRole("menuitem", { name: "Codex 会话" }).waitFor();
+    await shot("menu-session");
+    const made = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/terminals");
+    await sessionMenu.getByRole("menuitem", { name: "Codex 会话" }).click();
+    const making = await made;
+    assert.equal(new URL(making.url()).searchParams.get("providers"), "claude,codex", "the menu opts in to sessions");
+    assert.equal(JSON.parse(making.postData()).kind, "codex");
+    const madeTab = sidebar.getByRole("tab", { name: rowName("新 Codex 会话") });
+    await madeTab.waitFor();
+    assert.equal(await madeTab.getAttribute("aria-selected"), "true");
+    await page.locator(".terminal-lane:not([hidden]) .terminal-detail").filter({ hasText: /^Codex · / }).waitFor();
+    checks.push(mode + ": the menu makes a Codex session");
+
+    // 8. An older server: no capabilities, no Codex rows, today's plain Codex terminal.
     state.codexOlderServer = true;
     await page.reload();
     await page.getByRole("heading", { name: "Super Cage 环境已就绪" }).waitFor();

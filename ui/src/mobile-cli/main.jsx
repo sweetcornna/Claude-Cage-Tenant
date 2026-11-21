@@ -21,7 +21,7 @@ import { SessionAccount } from "../session-account";
 import "./mobile.css";
 import "./super.css";
 import { IconHints } from "../icon-hints.jsx";
-import { afterOutcome, HOLD_SECONDS, initialPoll, MIN_SPACING_MS, pollQuery } from "../session-poll.mjs";
+import { afterOutcome, HOLD_SECONDS, initialPoll, MIN_SPACING_MS, pollQuery, requestDeadline, requestDeadlineMs } from "../session-poll.mjs";
 import { keepSame } from "../poll-state.mjs";
 import { MessageBody, ToolActivity, TranscriptContext } from "./transcript";
 
@@ -150,7 +150,6 @@ function App() {
   useEffect(() => {
     if (!visible) return;
     const controller = new AbortController();
-    const options = { signal: controller.signal };
     const expectedAccess = accessGeneration.current;
     let timer;
     // The session list is held by the server while it is unchanged
@@ -164,11 +163,14 @@ function App() {
       const expectedCatalog = catalogGeneration.current;
       const { after, wait } = pollQuery(poll);
       const started = Date.now();
+      // A list that never answers is dropped and asked again (with backoff).
+      const deadline = requestDeadline(controller.signal, requestDeadlineMs(wait));
+      const timed = { signal: deadline.signal };
       let outcome;
       try {
         const fresh = !projects || started - projectsAt >= 5000;
-        const [info, list] = await Promise.all([fresh ? request("/projects", options) : projects,
-          request("/sessions" + (after ? "?after=" + encodeURIComponent(after) + (wait ? "&wait=" + wait : "") : ""), options)]);
+        const [info, list] = await Promise.all([fresh ? request("/projects", timed) : projects,
+          request("/sessions" + (after ? "?after=" + encodeURIComponent(after) + (wait ? "&wait=" + wait : "") : ""), timed)]);
         if (controller.signal.aborted || expectedAccess !== accessGeneration.current || expectedCatalog !== catalogGeneration.current) return;
         if (fresh) { projects = info; projectsAt = started; }
         if (list) {
@@ -188,10 +190,12 @@ function App() {
           sessionHold.supported = false;
           outcome = { status: error.status };
         } else {
-          setError(error.message);
+          setError(deadline.expired() ? "会话列表暂时没有回应，正在重试" : error.message);
           setCatalog(previous => previous && ({...previous, sessions:previous.sessions.map(session => ({...session, active:false}))}));
           outcome = { error: true };
         }
+      } finally {
+        deadline.done();
       }
       const step = afterOutcome(poll, outcome, { started, ended: Date.now(), wait, interval: 5000 });
       poll = step.poll;
@@ -455,8 +459,10 @@ function Chat({ id, drafts, ready, visible, refresh, onOpenWeb, onDenied, onMiss
     const after = incrementalRead ? "?after=" + encodeURIComponent(latest.current.revision)
       + (generation ? "&epoch=" + encodeURIComponent(generation) : "") + (wait ? "&wait=" + wait : "") : "";
     const started = Date.now();
+    // A read that never answers is dropped and retried like a lost connection.
+    const deadline = requestDeadline(signal, requestDeadlineMs(wait));
     try {
-      const snapshot = await request(sessionPath(id) + after, { signal });
+      const snapshot = await request(sessionPath(id) + after, { signal: deadline.signal });
       if (signal.aborted || !live.current) return;
       if (snapshot) accept(snapshot, generation);
       if (snapshot && checking && checkApproval.current === checking && latest.current?.turns?.at(-1)?.approval?.id === checking.id) {
@@ -484,6 +490,8 @@ function Chat({ id, drafts, ready, visible, refresh, onOpenWeb, onDenied, onMiss
         setReadError(sessionFailureMessage(error) + (retryableSessionError(error) ? " 已自动重连5次，仍未恢复。可以稍后再次连接。" : ""));
       }
       return null;
+    } finally {
+      deadline.done();
     }
   }, [id, accept, onDenied, onMissing]);
   useEffect(() => {

@@ -29,6 +29,33 @@ export function pollQuery(poll, wait = HOLD_SECONDS) {
   return { after: poll.revision, wait };
 }
 
+// A request gets its wait plus this before the client gives up on it: a
+// request that never answers (a half-open connection after the computer
+// slept, a stalled tunnel) would otherwise hold the loop for good, since a
+// loop never starts a second request while one is in flight. The server
+// answers a held request by its wait (internal/workbench/session_hold.go).
+export const REQUEST_SLACK_MS = 10000;
+export const requestDeadlineMs = (wait) => (wait > 0 ? wait : HOLD_SECONDS) * 1000 + REQUEST_SLACK_MS;
+
+// The signal of one request: aborted with parent, or once ms have passed
+// (expired() tells the two apart). Call done() when the request has ended.
+export function requestDeadline(parent, ms, { setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+  const controller = new AbortController();
+  let expired = false;
+  const follow = () => controller.abort(parent.reason);
+  if (parent?.aborted) follow();
+  else parent?.addEventListener("abort", follow, { once: true });
+  const timer = setTimer(() => {
+    expired = true;
+    controller.abort(new Error("请求超时"));
+  }, ms);
+  return {
+    signal: controller.signal,
+    expired: () => expired,
+    done() { clearTimer(timer); parent?.removeEventListener("abort", follow); },
+  };
+}
+
 export const backoffDelay = (failures) => ERROR_BACKOFF_MS[Math.min(Math.max(failures, 1), ERROR_BACKOFF_MS.length) - 1];
 
 // The next state and the delay before the next request after one outcome:

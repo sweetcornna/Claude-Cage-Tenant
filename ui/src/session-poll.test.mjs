@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { afterOutcome, backoffDelay, initialPoll, pollQuery } from "./session-poll.mjs";
+import { afterOutcome, backoffDelay, initialPoll, pollQuery, requestDeadline, requestDeadlineMs } from "./session-poll.mjs";
 
 const at = (started, ended, wait = 0, interval = 5000) => ({ started, ended, wait, interval });
 
@@ -67,4 +67,36 @@ test("errors back off 1, 2, 5 s and more, capped, and a success resets", () => {
 test("numeric view revisions are kept as text", () => {
   const view = afterOutcome(initialPoll(), { status: 200, revision: 7 }, at(0, 10, 0, 1000));
   assert.deepEqual(pollQuery(view.poll), { after: "7", wait: 25 });
+});
+
+test("a request's deadline: its wait plus 10 s, or 35 s without a wait", () => {
+  assert.equal(requestDeadlineMs(25), 35000);
+  assert.equal(requestDeadlineMs(5), 15000);
+  assert.equal(requestDeadlineMs(0), 35000);
+});
+
+test("the deadline signal follows its parent and expires on its own", () => {
+  const timers = [];
+  const clock = { setTimer: (fn) => { timers.push(fn); return timers.length; }, clearTimer: (id) => { timers[id - 1] = null; } };
+  const parent = new AbortController();
+  const first = requestDeadline(parent.signal, 1000, clock);
+  parent.abort(new Error("stop"));
+  assert.equal(first.signal.aborted, true);
+  assert.equal(first.expired(), false, "aborted by its parent, not expired");
+  first.done();
+
+  const other = new AbortController();
+  const second = requestDeadline(other.signal, 1000, clock);
+  timers[1]();
+  assert.equal(second.signal.aborted, true);
+  assert.equal(second.expired(), true);
+  assert.equal(other.signal.aborted, false, "the parent goes on");
+  second.done();
+
+  const third = requestDeadline(other.signal, 1000, clock);
+  third.done();
+  assert.equal(timers[2], null, "done clears the timer");
+  other.abort();
+  assert.equal(third.signal.aborted, false, "done stops following the parent");
+  assert.equal(requestDeadline(parent.signal, 1000, clock).signal.aborted, true, "an aborted parent aborts at once");
 });
